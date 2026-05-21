@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional, Union
 import lazyllm
 from lazyllm import LOG
 import lazyllm.tracing.collect.configs  # noqa: F401
-from lazyllm.tracing import enable_trace, get_trace_context, set_trace_context
+from lazyllm.tracing import current_trace, enable_trace, get_trace_context, set_trace_context
 from lazyllm.tracing.collect import runtime as tracing_runtime
 from fastapi.responses import StreamingResponse
 from chat.components.process.sensitive_filter import SensitiveFilter
@@ -23,7 +23,8 @@ rag_sem = asyncio.Semaphore(MAX_CONCURRENCY)
 sensitive_filter = SensitiveFilter(SENSITIVE_WORDS_PATH)
 
 
-def _run_ppl_with_trace(ppl, ppl_args, *, session_id, dataset, mode_tag, trace_enabled, model_config):
+def _run_ppl_with_trace(ppl, ppl_args, *, session_id, dataset, mode_tag,
+                        trace_enabled, model_config, trace_id=None, trace_context=None):
     lazyllm.globals._init_sid(sid=session_id)
     lazyllm.locals._init_sid(sid=session_id)
     inject_model_config(model_config)
@@ -32,14 +33,19 @@ def _run_ppl_with_trace(ppl, ppl_args, *, session_id, dataset, mode_tag, trace_e
         return ppl(*ppl_args), None
 
     captured: Dict[str, Any] = {}
+    metadata = trace_context if isinstance(trace_context, dict) else None
 
     def run_chat_pipeline(*args, **kwargs):
+        trace = current_trace()
+        if trace and metadata:
+            trace.update_metadata(metadata)
         out = ppl(*args, **kwargs)
         captured['trace_id'] = get_trace_context().trace_id
         return out
 
     result = enable_trace(
         run_chat_pipeline, *ppl_args,
+        trace_id=trace_id,
         session_id=session_id,
         request_tags=[f'dataset:{dataset}', f'mode:{mode_tag}'],
         module_trace={'default': True},
@@ -51,10 +57,12 @@ def _run_ppl_with_trace(ppl, ppl_args, *, session_id, dataset, mode_tag, trace_e
     return result, trace_id
 
 
-def _set_request_trace(enabled: bool, *, session_id: str, dataset: str, mode_tag: str) -> None:
+def _set_request_trace(enabled: bool, *, session_id: str, dataset: str,
+                       mode_tag: str, trace_id: Optional[str] = None) -> None:
     set_trace_context({
         'enabled': bool(enabled),
         'sampled': True,
+        'trace_id': trace_id,
         'session_id': session_id,
         'request_tags': [f'dataset:{dataset}', f'mode:{mode_tag}'],
         'module_trace': {'default': True},
@@ -190,7 +198,9 @@ async def handle_chat(query: str, history: Optional[List[Dict[str, Any]]],
                       environment_context: Optional[Dict[str, Any]] = None,
                       user_id: Optional[str] = None,
                       model_config: Optional[Dict[str, Any]] = None,
-                      tool_config: Optional[Dict[str, str]] = None) -> Union[Dict[str, Any], StreamingResponse]:
+                      tool_config: Optional[Dict[str, str]] = None,
+                      trace_id: Optional[str] = None,
+                      trace_context: Optional[Dict[str, Any]] = None) -> Union[Dict[str, Any], StreamingResponse]:
     priority = LAZYMIND_LLM_PRIORITY if priority is None else priority
 
     start_time = time.time()
@@ -239,20 +249,34 @@ async def handle_chat(query: str, history: Optional[List[Dict[str, Any]]],
 
     async def event_stream(params: Dict[str, Any]) -> Any:
         nonlocal first_frame_logged
+        actual_trace_id = trace_id if trace else None
+        trace_metadata = trace_context if isinstance(trace_context, dict) else None
+        metadata_applied = False
         try:
             async with rag_sem:
                 _init_session()
-                async_result, trace_id = await asyncio.to_thread(
-                    _run_ppl_with_trace, agentic_rag, (params,),
+                _set_request_trace(
+                    bool(trace),
                     session_id=session_id, dataset=dataset,
                     mode_tag='stream_reasoning' if reasoning else 'stream',
-                    trace_enabled=trace, model_config=model_config,
+                    trace_id=trace_id,
                 )
-                if trace_id is not None:
+                async_result = agentic_rag(params)
+                if actual_trace_id is not None:
                     yield _sse_line(
-                        _resp(200, 'success', _attach_trace_info({}, trace_id), 0.0)
+                        _resp(200, 'success', _attach_trace_info({}, actual_trace_id), 0.0)
                     )
                 async for chunk in async_result:
+                    if trace:
+                        active_trace = current_trace()
+                        if active_trace:
+                            if trace_metadata and not metadata_applied:
+                                active_trace.update_metadata(trace_metadata)
+                                metadata_applied = True
+                            if actual_trace_id is None:
+                                actual_trace_id = active_trace.trace_id
+                        if actual_trace_id is None:
+                            actual_trace_id = get_trace_context().trace_id
                     now = time.time()
                     if not first_frame_logged:
                         first_cost = round(now - start_time, 3)
@@ -296,6 +320,17 @@ async def handle_chat(query: str, history: Optional[List[Dict[str, Any]]],
 
         cost = round(time.time() - start_time, 3)
         final_resp['cost'] = cost
+        if trace and actual_trace_id is None:
+            active_trace = current_trace()
+            if active_trace:
+                if trace_metadata and not metadata_applied:
+                    active_trace.update_metadata(trace_metadata)
+                actual_trace_id = active_trace.trace_id
+            if actual_trace_id is None:
+                actual_trace_id = get_trace_context().trace_id
+        if actual_trace_id:
+            final_resp['data'] = _attach_trace_info(final_resp['data'], actual_trace_id)
+            _flush_trace_exporter()
         yield _sse_line(final_resp)
 
         log_chat_request(query, session_id, filters, other_files, databases, image_files,
