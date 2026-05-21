@@ -232,6 +232,10 @@ async def handle_chat(query: str, history: Optional[List[Dict[str, Any]]],
         environment_context=environment_context,
         user_id=user_id,
     )
+    if isinstance(trace_context, dict):
+        query_params['trace_context'] = dict(trace_context)
+    if trace_id:
+        query_params['trace_id'] = trace_id
 
     def _init_session():
         lazyllm.globals._init_sid(sid=session_id)
