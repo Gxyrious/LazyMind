@@ -16,6 +16,7 @@ x-mirror-args: &mirror-args
   BASE_LAZYMIND_IMAGE: ${BASE_LAZYMIND_IMAGE:-base_lazymind}
 
 x-trace-config: &trace-config
+  TZ: ${TX:-Asia/Shanghai}
   LANGFUSE_HOST: ${LANGFUSE_HOST:-}
   LANGFUSE_BASE_URL: ${LANGFUSE_BASE_URL:-}
   LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
