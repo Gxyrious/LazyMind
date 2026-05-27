@@ -57,16 +57,10 @@ def get_eval_queue(
         pending = {}
         iterator = iter(enumerate(cases))
 
-        def submit_next() -> bool:
-            if cancel and cancel():
-                return False
-            try:
-                i, case = next(iterator)
-            except StopIteration:
-                return False
+        def submit(case: dict, attempt: int = 1) -> None:
             pending[executor.submit(
                 _build_eval_item,
-                {**case, '_order': i},
+                case,
                 target_chat_url,
                 dataset_name,
                 eval_filters,
@@ -74,7 +68,16 @@ def get_eval_queue(
                 model_config,
                 scene,
                 case_trace_context,
-            )] = case
+            )] = (case, attempt)
+
+        def submit_next() -> bool:
+            if cancel and cancel():
+                return False
+            try:
+                i, case = next(iterator)
+            except StopIteration:
+                return False
+            submit({**case, '_order': i})
             return True
 
         while len(pending) < workers and submit_next():
@@ -86,10 +89,18 @@ def get_eval_queue(
             if not done_futures:
                 continue
             future = done_futures.pop()
-            pending.pop(future, None)
+            case, attempt = pending.pop(future)
             try:
                 item = future.result()
             except Exception as exc:
+                if attempt < 3 and not (cancel and cancel()):
+                    _log.warning(
+                        'rag eval item failed case_id=%s retry %s/3: %s',
+                        case.get('case_id'), attempt + 1,
+                        exc
+                    )
+                    submit(case, attempt + 1)
+                    continue
                 _log.warning('rag eval item failed: %s', exc)
                 item = None
             if item:
