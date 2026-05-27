@@ -14,7 +14,7 @@ from typing import Any, Dict
 
 import lazyllm
 from lazyllm import loop, once_wrapper
-from lazyllm.tracing import set_trace_context
+from lazyllm.tracing import current_trace, set_trace_context
 from lazyllm.tools.agent.functionCall import FunctionCall
 from lazyllm.tools.fs.client import FS
 
@@ -337,6 +337,7 @@ async def _agentic_forward_stream(
     worker_done = threading.Event()
     output_lock = threading.Lock()
     streamed_text = False
+    trace_metadata_applied = False
     text_scanner, citation_plugin = _build_stream_citation_scanner(runtime_params)
 
     lazyllm.globals._init_sid(global_sid)
@@ -345,6 +346,18 @@ async def _agentic_forward_stream(
     _clear_orphaned_lazyllm_queue_lock()
     lazyllm.FileSystemQueue().clear()
     lazyllm.FileSystemQueue.get_instance('think').clear()
+
+    def _apply_trace_metadata() -> None:
+        nonlocal trace_metadata_applied
+        if trace_metadata_applied:
+            return
+        metadata = runtime_params.get('trace_context')
+        if not isinstance(metadata, dict):
+            return
+        trace = current_trace()
+        if trace:
+            trace.update_metadata(metadata)
+            trace_metadata_applied = True
 
     def _drain_stream_frames() -> list[dict[str, Any]]:
         nonlocal streamed_text
@@ -381,6 +394,7 @@ async def _agentic_forward_stream(
     def _emit_event(event: dict[str, Any]) -> None:
         if closed.is_set():
             return
+        _apply_trace_metadata()
         with output_lock:
             _flush_stream_frames_to_queue()
             tool_event = dict(event)
@@ -409,6 +423,7 @@ async def _agentic_forward_stream(
                 history=history,
                 stream_event_callback=_emit_event,
             )
+            _apply_trace_metadata()
             if not closed.is_set():
                 with output_lock:
                     _flush_stream_frames_to_queue()
