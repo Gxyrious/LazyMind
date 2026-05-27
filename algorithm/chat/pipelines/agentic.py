@@ -77,7 +77,7 @@ def _augment_query_with_attached_images(query: str, config: dict[str, Any]) -> s
         rewriter = QueryImageRewriter(
             vlm=AutoModel(model='vlm', config=get_config_path()),
         )
-        out = rewriter.forward(payload)
+        out = rewriter(payload)
         if isinstance(out, dict):
             nq = out.get('query')
             if isinstance(nq, str) and nq.strip():
