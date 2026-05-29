@@ -67,7 +67,11 @@ def compare_evals(
     metrics: Iterable[str] = DEFAULT_METRICS,
     top_k: int = 5,
     primary_metric: str = 'answer_correctness',
+    baseline_algorithm_version: str = 'baseline',
+    candidate_algorithm_version: str | None = None,
 ) -> dict:
+    metrics = tuple(metrics)
+    candidate_algorithm_version = candidate_algorithm_version or str(report_b.get('algorithm_version') or '')
     idx_a, idx_b = (_index_cases(report_a), _index_cases(report_b))
     aligned = sorted(set(idx_a) & set(idx_b))
     if not aligned:
@@ -98,15 +102,51 @@ def compare_evals(
     for k in aligned:
         av, bv = (idx_a[k].get(primary_metric), idx_b[k].get(primary_metric))
         if isinstance(av, (int, float)) and isinstance(bv, (int, float)):
-            deltas.append((k, round(float(bv) - float(av), 6), float(av), float(bv)))
+            delta = round(float(bv) - float(av), 6)
+            if delta != 0:
+                deltas.append((k, delta, float(av), float(bv)))
     deltas.sort(key=lambda x: abs(x[1]), reverse=True)
+    top_diff_cases = []
+    for k, d, a, b in deltas:
+        a_case, b_case = idx_a[k], idx_b[k]
+        metric_changes = {}
+        for metric in metrics:
+            av, bv = a_case.get(metric), b_case.get(metric)
+            if isinstance(av, (int, float)) and isinstance(bv, (int, float)):
+                metric_changes[metric] = {'a': av, 'b': bv, 'delta': round(bv - av, 6)}
+        top_diff_cases.append({
+            'case_key': k,
+            'query': str(a_case.get('question') or a_case.get('query')
+                         or b_case.get('question') or b_case.get('query') or ''),
+            'a': a,
+            'b': b,
+            'delta': d,
+            'conclusion': 'improved' if d > 0 else 'regressed',
+            'baseline': {
+                'algorithm_version': baseline_algorithm_version,
+                'trace_id': str(a_case.get('trace_id') or ''),
+                'trace_status': (
+                    str(a_case.get('trace_status') or '') or ('success' if a_case.get('trace_id') else 'trace_missing')
+                ),
+                'score': float(a_case.get(primary_metric)),
+            },
+            'candidate': {
+                'algorithm_version': candidate_algorithm_version,
+                'trace_id': str(b_case.get('trace_id') or ''),
+                'trace_status': (
+                    str(b_case.get('trace_status') or '') or ('success' if b_case.get('trace_id') else 'trace_missing')
+                ),
+                'score': float(b_case.get(primary_metric)),
+            },
+            'metric_changes': metric_changes,
+        })
     return {
         'aligned_cases': len(aligned),
         'unique_to_a': sorted(set(idx_a) - set(idx_b))[:top_k],
         'unique_to_b': sorted(set(idx_b) - set(idx_a))[:top_k],
         'metrics': metric_diffs,
         'missing_metrics': missing_metrics,
-        'top_diff_cases': [{'case_key': k, 'delta': d, 'a': a, 'b': b} for (k, d, a, b) in deltas[:top_k]],
+        'top_diff_cases': top_diff_cases,
     }
 
 

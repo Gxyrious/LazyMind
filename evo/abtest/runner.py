@@ -278,7 +278,7 @@ def _phase_run_eval(c: _Ctx) -> None:
         model_config=c.inputs.model_config,
         persist_report=False,
         attempt_id=c.inputs.abtest_id,
-        scene='abtest',
+        scene='abtest_candidate',
         report_id=eval_id,
         algorithm_version=c.inputs.apply_id,
         resume=_has_eval_partial(c),
@@ -326,7 +326,12 @@ def _eval_phase_workers(eval_options: dict[str, Any], key: str, default: int) ->
 def _phase_compare(c: _Ctx) -> None:
     base = _load_baseline_report(c)
     new = json.loads(c.ws.eval_path(c.state['new_eval_id']).read_text(encoding='utf-8'))
-    diff = compare_evals(base, new, primary_metric=c.inputs.policy.primary_metric)
+    diff = compare_evals(
+        base, new,
+        primary_metric=c.inputs.policy.primary_metric,
+        baseline_algorithm_version='baseline',
+        candidate_algorithm_version=c.inputs.apply_id,
+    )
     diff.update(judge_verdict(diff, c.inputs.policy))
     c.state['summary'] = diff
 

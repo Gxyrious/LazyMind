@@ -1,9 +1,20 @@
 from __future__ import annotations
+from dataclasses import asdict
 import json
 from pathlib import Path
+from typing import Iterator
 from fastapi import APIRouter, HTTPException
 from evo.service.core import store as _store
+from evo.service.threads.model import (
+    TraceCompareResponse,
+    TraceContext,
+    TraceDetailResponse,
+    TraceSummary,
+)
 from evo.service.threads.workspace import ThreadWorkspace
+from lazyllm.tracing.consume import get_single_trace
+from lazyllm.tracing.datamodel.structured import ExecutionStep, StructuredTrace
+from lazyllm.tracing.semantics import SemanticType
 
 
 def build_results_router(*, base_dir: Path, store: _store.FsStateStore) -> APIRouter:
@@ -93,6 +104,17 @@ def build_results_router(*, base_dir: Path, store: _store.FsStateStore) -> APIRo
                 ws.dir
                 / 'abtests'
                 / i]]
+
+    @router.get('/traces/{trace_id}')
+    def trace_detail(thread_id: str, trace_id: str) -> dict:
+        _ws(base_dir, thread_id)
+        return asdict(_build_trace_detail(trace_id))
+
+    @router.get('/traces-compare')
+    def trace_compare(thread_id: str, a: str, b: str) -> dict:
+        _ws(base_dir, thread_id)
+        return asdict(_build_trace_compare(a, b))
+
     return router
 
 
@@ -129,6 +151,108 @@ def _eval_report(path: Path, row: dict | None = None) -> dict:
         'metrics': summary['averages'],
         'case_details_summary': summary,
     }
+
+
+def _build_trace_detail(trace_id: str) -> TraceDetailResponse:
+    trace = None
+    if trace_id:
+        try:
+            trace = get_single_trace(trace_id)
+        except Exception:
+            trace = None
+    trace_status = 'success' if trace else 'trace_missing'
+    return TraceDetailResponse(
+        trace_id=trace_id,
+        trace_status=trace_status,
+        context=_trace_context(trace),
+        query=_trace_query(trace),
+        summary=_trace_summary(trace, trace_status),
+        trace=trace,
+    )
+
+
+def _build_trace_compare(a: str, b: str) -> TraceCompareResponse:
+    side_a = _build_trace_detail(a)
+    side_b = _build_trace_detail(b)
+    return TraceCompareResponse(
+        case_id=side_a.context.case_id or side_b.context.case_id,
+        query=side_a.query or side_b.query,
+        a=side_a,
+        b=side_b,
+    )
+
+
+def _trace_context(trace: StructuredTrace | None) -> TraceContext:
+    context = trace.metadata.metadata if trace and isinstance(trace.metadata.metadata, dict) else {}
+    return TraceContext(
+        scene=str(context.get('scene') or ''),
+        report_id=str(context.get('report_id') or ''),
+        dataset_id=str(context.get('dataset_id') or ''),
+        case_id=str(context.get('case_id') or ''),
+        knowledge_base_id=str(context.get('knowledge_base_id') or ''),
+        algorithm_version=str(context.get('algorithm_version') or ''),
+    )
+
+
+def _trace_query(trace: StructuredTrace | None) -> str:
+    raw_data = trace.execution_tree.raw_data if trace and trace.execution_tree else None
+    inputs = raw_data.input if raw_data else None
+    if isinstance(inputs, str):
+        try:
+            inputs = json.loads(inputs)
+        except json.JSONDecodeError:
+            return inputs
+    if isinstance(inputs, dict):
+        args = inputs.get('args')
+        if isinstance(args, list) and args and isinstance(args[0], str):
+            return args[0]
+    return ''
+
+
+def _trace_summary(trace: StructuredTrace | None, trace_status: str) -> TraceSummary:
+    tree = trace.execution_tree if trace else None
+    metadata = trace.metadata if trace else None
+    nodes = list(_walk_tree(tree)) if tree else []
+    status = str((metadata.status if metadata else '') or (tree.status if tree else '') or trace_status)
+    return TraceSummary(
+        status=status,
+        latency_ms=metadata.latency_ms if metadata else None,
+        round_count=_agent_round_count(tree),
+        tool_call_count=_tool_call_count(nodes),
+        retrieval_count=sum(1 for node in nodes if node.semantic_type == SemanticType.RETRIEVER),
+        rerank_count=sum(1 for node in nodes if node.semantic_type == SemanticType.RERANK),
+    )
+
+
+def _walk_tree(node: ExecutionStep | None) -> Iterator[ExecutionStep]:
+    if node is None:
+        return
+    yield node
+    for child in node.children:
+        yield from _walk_tree(child)
+
+
+def _agent_round_count(root: ExecutionStep | None) -> int:
+    def visit(node: ExecutionStep, in_agent: bool) -> int:
+        semantic_type = node.semantic_type
+        in_agent = in_agent or semantic_type == SemanticType.AGENT
+        if in_agent and semantic_type in (SemanticType.TOOL, SemanticType.RETRIEVER, SemanticType.RERANK):
+            return 0
+        return int(in_agent and semantic_type == SemanticType.LLM) + sum(visit(child, in_agent) for child in node.children)
+
+    return visit(root, False) if root else 0
+
+
+def _tool_call_count(nodes: list[ExecutionStep]) -> int:
+    count = 0
+    for node in nodes:
+        if node.semantic_type != SemanticType.TOOL:
+            continue
+        raw_input = node.raw_data.input
+        args = raw_input.get('args') if isinstance(raw_input, dict) else None
+        tool_calls = args[0] if isinstance(args, list) and args else None
+        count += len(tool_calls) if isinstance(tool_calls, list) else 1
+    return count
 
 
 def _case_details_summary(cases: list[dict]) -> dict:
