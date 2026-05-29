@@ -13,7 +13,8 @@ from evo.service.threads.model import (
 )
 from evo.service.threads.workspace import ThreadWorkspace
 from lazyllm.tracing.consume import get_single_trace
-from lazyllm.tracing.datamodel.structured import ExecutionStep, StructuredTrace
+from lazyllm.tracing.consume.reconstruction.extractors.utils import parse_jsonish, query_from_input
+from lazyllm.tracing.datamodel.structured import ExecutionStep, RawData, StructuredTrace
 from lazyllm.tracing.semantics import SemanticType
 
 
@@ -164,8 +165,8 @@ def _build_trace_detail(trace_id: str) -> TraceDetailResponse:
     return TraceDetailResponse(
         trace_id=trace_id,
         trace_status=trace_status,
-        context=_trace_context(trace),
-        query=_trace_query(trace),
+        context=_trace_context(trace.metadata.metadata if trace else None),
+        query=_trace_query(trace.execution_tree.raw_data if trace and trace.execution_tree else None),
         summary=_trace_summary(trace, trace_status),
         trace=trace,
     )
@@ -182,8 +183,8 @@ def _build_trace_compare(a: str, b: str) -> TraceCompareResponse:
     )
 
 
-def _trace_context(trace: StructuredTrace | None) -> TraceContext:
-    context = trace.metadata.metadata if trace and isinstance(trace.metadata.metadata, dict) else {}
+def _trace_context(metadata: dict | None) -> TraceContext:
+    context = metadata if isinstance(metadata, dict) else {}
     return TraceContext(
         scene=str(context.get('scene') or ''),
         report_id=str(context.get('report_id') or ''),
@@ -194,18 +195,11 @@ def _trace_context(trace: StructuredTrace | None) -> TraceContext:
     )
 
 
-def _trace_query(trace: StructuredTrace | None) -> str:
-    raw_data = trace.execution_tree.raw_data if trace and trace.execution_tree else None
-    inputs = raw_data.input if raw_data else None
-    if isinstance(inputs, str):
-        try:
-            inputs = json.loads(inputs)
-        except json.JSONDecodeError:
-            return inputs
-    if isinstance(inputs, dict):
-        args = inputs.get('args')
-        if isinstance(args, list) and args and isinstance(args[0], str):
-            return args[0]
+def _trace_query(raw_data: RawData | None) -> str:
+    inputs = parse_jsonish(raw_data.input) if raw_data else None
+    query = query_from_input(inputs)
+    if isinstance(query, str):
+        return query
     return ''
 
 
@@ -248,7 +242,7 @@ def _tool_call_count(nodes: list[ExecutionStep]) -> int:
     for node in nodes:
         if node.semantic_type != SemanticType.TOOL:
             continue
-        raw_input = node.raw_data.input
+        raw_input = parse_jsonish(node.raw_data.input)
         args = raw_input.get('args') if isinstance(raw_input, dict) else None
         tool_calls = args[0] if isinstance(args, list) and args else None
         count += len(tool_calls) if isinstance(tool_calls, list) else 1
