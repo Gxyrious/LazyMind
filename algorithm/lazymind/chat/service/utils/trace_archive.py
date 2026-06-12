@@ -1,10 +1,15 @@
+"""Background maintenance for local trace files (archive old JSONL, delete expired ZIP)."""
+
 import logging
 import threading
-import time
 
 _logger = logging.getLogger(__name__)
 
 _MAINTAIN_LOCAL_TRACES_INTERVAL = 86400  # 24 hours
+
+_stop_event = threading.Event()
+_thread: threading.Thread | None = None
+_lock = threading.Lock()
 
 
 def _run_once():
@@ -21,16 +26,22 @@ def _run_once():
         _logger.warning('local trace maintenance failed', exc_info=True)
 
 
-def start_local_trace_maintenance():
+def start_local_trace_maintenance(interval: int = _MAINTAIN_LOCAL_TRACES_INTERVAL):
+    global _thread
+
     from lazyllm.configs import config
     if config['trace_backend'] != 'local':
         return
 
-    def _loop():
-        _run_once()
-        while True:
-            time.sleep(_MAINTAIN_LOCAL_TRACES_INTERVAL)
-            _run_once()
+    with _lock:
+        if _thread is not None and _thread.is_alive():
+            return
+        _stop_event.clear()
 
-    t = threading.Thread(target=_loop, name='local-trace-maintenance', daemon=True)
-    t.start()
+        def _loop():
+            _run_once()
+            while not _stop_event.wait(interval):
+                _run_once()
+
+        _thread = threading.Thread(target=_loop, name='local-trace-maintenance', daemon=True)
+        _thread.start()
