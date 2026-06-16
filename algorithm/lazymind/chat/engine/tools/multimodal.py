@@ -7,7 +7,7 @@ from lazyllm import AutoModel, fc_register
 from lazyllm.components.formatter import encode_query_with_filepaths
 
 from lazymind.chat.engine.prompts import VISION_EXTRACT_DEFAULT_INSTRUCTION
-from lazymind.chat.engine.tools.infra import handle_tool_errors, tool_success
+from lazymind.chat.engine.tools.infra import handle_tool_errors, tool_error, tool_success
 from lazymind.chat.engine.tools.infra.image_generation_support import (
     _DEFAULT_BATCH_SIZE,
     _DEFAULT_IMAGE_SIZE,
@@ -16,13 +16,15 @@ from lazymind.chat.engine.tools.infra.image_generation_support import (
     run_image_model,
 )
 
+_SUPPORTED_IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.tiff', '.tif'}
+
 
 @handle_tool_errors
 def vision_extractor(url: str, instruction: Optional[str] = None) -> Dict[str, Any]:
     """Extract a text description from an image reachable at the given URL.
 
-    Uses the configured VLM endpoint (role ``vlm`` in runtime_models)
-    with LazyLLM multimodal file-path encoding.
+    Supports common image formats (JPEG, PNG, GIF, WebP, BMP, TIFF).
+    Uses a vision-language model to describe visual content in natural language.
 
     Args:
         url: Short image ref (filename), local filesystem path, or a
@@ -31,12 +33,12 @@ def vision_extractor(url: str, instruction: Optional[str] = None) -> Dict[str, A
             description prompt.
 
     Returns:
-        A unified tool payload whose ``result`` contains the extracted
+        A unified tool payload whose result contains the extracted
         description and resolved local path.
     """
     raw = str(url or '').strip()
     if not raw:
-        raise ValueError('url is required')
+        return tool_error('vision_extractor', 'url is required')
 
     local_path = resolve_tool_image_path(raw)
     if not local_path:
