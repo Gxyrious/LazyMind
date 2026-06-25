@@ -333,6 +333,7 @@ services:
       LAZYMIND_RESOURCE_UPDATE_ENABLED: "true"
       LAZYMIND_AUTH_SERVICE_INTERNAL_TOKEN: ${LAZYMIND_AUTH_SERVICE_INTERNAL_TOKEN:-dev-internal-service-token}
       LAZYMIND_OFFICE_CONVERT_WORKERS: "4"
+      LAZYMIND_PLUGIN_MODE: ${LAZYMIND_PLUGIN_MODE:-manual}
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8000/health || exit 1"]
       interval: 10s

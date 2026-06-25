@@ -287,9 +287,34 @@ def get_artifact(key: str, sort_order: Optional[int] = None, task_ref: Optional[
         plugin_session_id = ''
 
     if plugin_session_id and sort_order is not None:
-        result = _get_plugin_artifact_by_sort_order(ctx, key, plugin_session_id, sort_order)
+        # Local in-memory buffer takes priority — catches same-step writes
+        # (e.g. tool A's save_artifact followed by tool B's get_artifact in the
+        # same plugin step, before Go commits to slot_revisions at step boundary).
+        local_rows = ctx.local_artifacts(keys=[key])
+        if local_rows:
+            matched = [r for r in local_rows if r.get('seq') == sort_order]
+            if matched:
+                result = tool_success('get_artifact', {
+                    'status': 'ok', 'key': key, 'artifacts': matched,
+                })
+            else:
+                result = tool_success('get_artifact', {
+                    'status': 'empty',
+                    'message': f"No artifact found for key '{key}' at sort_order={sort_order}.",
+                })
+        else:
+            result = _get_plugin_artifact_by_sort_order(
+                ctx, key, plugin_session_id, sort_order,
+            )
     elif plugin_session_id and sort_order is None:
-        result = _get_plugin_artifact_all(ctx, key, plugin_session_id)
+        # Same priority for the no-sort-order path: local buffer first, then DB.
+        local_rows = ctx.local_artifacts(keys=[key])
+        if local_rows:
+            result = tool_success('get_artifact', {
+                'status': 'ok', 'key': key, 'artifacts': local_rows,
+            })
+        else:
+            result = _get_plugin_artifact_all(ctx, key, plugin_session_id)
     elif sort_order is not None:
         # Ordinary SubAgent: read from sub_agent_artifacts.
         rows = ctx.local_artifacts(keys=[key]) or ctx.db.load_artifacts(ctx.task_id, keys=[key])
