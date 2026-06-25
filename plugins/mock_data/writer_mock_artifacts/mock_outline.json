@@ -1,0 +1,199 @@
+{
+  "schema": "lazyllm.writer.WritingOutline",
+  "schema_version": "0.1",
+  "data": {
+    "outline_id": "outline-ce-001",
+    "title": "星辰大帝",
+    "nodes": [
+      {
+        "node_id": "prologue",
+        "title": "楔子 · 星辰陨落",
+        "level": 0,
+        "instruction": "以史诗笔触描写太古星辰大帝陨落的宏大场景，点明星辰本源被封印于一个无名婴儿体内的关键设定。文字需苍凉厚重，营造万古布局的宿命感。",
+        "constraints": {
+          "min_words": 500,
+          "max_words": 800,
+          "pov": "第三人称全知",
+          "tone": "史诗、苍凉"
+        },
+        "children": [],
+        "meta": {}
+      },
+      {
+        "node_id": "ch01",
+        "title": "第一章 · 废柴少年",
+        "level": 1,
+        "instruction": "引入主角林星辰：十六岁，星陨城林家旁支子弟，灵力测试连续三年倒数第一。通过日常场景建立「废柴」形象和家族轻视的氛围。结尾埋下觉醒伏笔——深夜修炼时体内星魂异动。",
+        "constraints": {
+          "min_words": 2500,
+          "max_words": 3500,
+          "pov": "第三人称限知（林星辰视角）",
+          "tone": "压抑→转折"
+        },
+        "children": [],
+        "meta": {}
+      },
+      {
+        "node_id": "ch02",
+        "title": "第二章 · 炼星诀",
+        "level": 1,
+        "instruction": "星魂觉醒后引导林星辰获得上古功法《炼星诀》，开启真正的修炼之路。通过第一次引星入体的描写展示修炼体系的魅力。结尾以突破引星境三层、震惊家族为本章高潮。",
+        "constraints": {
+          "min_words": 2800,
+          "max_words": 4000,
+          "pov": "第三人称限知",
+          "tone": "热血、成长"
+        },
+        "children": [],
+        "meta": {}
+      },
+      {
+        "node_id": "ch03",
+        "title": "第三章 · 宗门大选",
+        "level": 1,
+        "instruction": "青云宗十年一度的弟子选拔开始。林星辰报名参加，在灵力测试和实战考核中展现出惊人实力，从被嘲笑的废柴逆袭为黑马。引入宗门体系、同辈竞争关系。",
+        "constraints": {
+          "min_words": 3000,
+          "max_words": 4000,
+          "pov": "第三人称限知",
+          "tone": "紧张、爽快"
+        },
+        "children": [],
+        "meta": {}
+      },
+      {
+        "node_id": "ch04",
+        "title": "第四章 · 秘境试炼",
+        "level": 1,
+        "instruction": "林星辰进入青云宗上古秘境试炼。秘境中九死一生，最终在秘境核心获得上古星器「陨星剑」。引入星器品级体系，铺垫后续剧情需要的装备基础。",
+        "constraints": {
+          "min_words": 3200,
+          "max_words": 4500,
+          "pov": "第三人称限知",
+          "tone": "冒险、紧张"
+        },
+        "children": [],
+        "meta": {}
+      },
+      {
+        "node_id": "ch05",
+        "title": "第五章 · 魔道来袭",
+        "level": 1,
+        "instruction": "幽冥教突袭青云宗，目标正是林星辰体内的星辰本源。宗门陷入危机，林星辰与同门并肩作战，在绝境中突破凝星境，配合陨星剑击退魔道主力。",
+        "constraints": {
+          "min_words": 3500,
+          "max_words": 5000,
+          "pov": "第三人称限知",
+          "tone": "热血、悲壮"
+        },
+        "children": [],
+        "meta": {}
+      },
+      {
+        "node_id": "ch06",
+        "title": "第六章 · 九州天骄",
+        "level": 1,
+        "instruction": "代表青云宗参加九州天骄大会。介绍九州各大势力的天才弟子，通过多场战斗展现林星辰的实力成长，同时埋下后续帝路争锋的对手关系。",
+        "constraints": {
+          "min_words": 4000,
+          "max_words": 5500,
+          "pov": "第三人称限知",
+          "tone": "竞技、热血"
+        },
+        "children": [],
+        "meta": {}
+      },
+      {
+        "node_id": "ch07",
+        "title": "第七章 · 古墓遗迹",
+        "level": 1,
+        "instruction": "天骄大会后，林星辰循线索找到太古星辰大帝之墓。在墓中获悉自己身世真相——他是大帝选定的传人，体内封印的本源是万年前大帝毕生修为所化。",
+        "constraints": {
+          "min_words": 3500,
+          "max_words": 5000,
+          "pov": "第三人称限知",
+          "tone": "神秘、震撼"
+        },
+        "children": [],
+        "meta": {}
+      },
+      {
+        "node_id": "ch08",
+        "title": "第八章 · 九重天劫",
+        "level": 1,
+        "instruction": "融合部分本源后，林星辰冲击化星境，引来九重天劫。描写雷劫的恐怖和林星辰的顽强抵抗。渡劫成功后修为暴涨至化星境巅峰，但本源融合带来的副作用开始显现。",
+        "constraints": {
+          "min_words": 3000,
+          "max_words": 4500,
+          "pov": "第三人称限知",
+          "tone": "紧张、宏大"
+        },
+        "children": [],
+        "meta": {}
+      },
+      {
+        "node_id": "ch09",
+        "title": "第九章 · 星域战场",
+        "level": 1,
+        "instruction": "域外天魔入侵九州，林星辰被征召进入远古星域战场。描写大规模修士战争的惨烈，林星辰在战场上领悟星辰法则，突破碎星境。",
+        "constraints": {
+          "min_words": 4000,
+          "max_words": 6000,
+          "pov": "第三人称限知",
+          "tone": "宏大、悲壮"
+        },
+        "children": [],
+        "meta": {}
+      },
+      {
+        "node_id": "ch10",
+        "title": "第十章 · 星辰本源",
+        "level": 1,
+        "instruction": "在星域战场深处发现星辰本源全部真相——本源并非单纯传承，而是太古大帝对抗域外天魔的终极武器。林星辰必须在融合本源与保持自我之间做出选择。",
+        "constraints": {
+          "min_words": 3500,
+          "max_words": 5000,
+          "pov": "第三人称限知",
+          "tone": "抉择、深沉"
+        },
+        "children": [],
+        "meta": {}
+      },
+      {
+        "node_id": "ch11",
+        "title": "第十一章 · 帝路争锋",
+        "level": 1,
+        "instruction": "本源真相曝光后，九州各大势力纷纷出手争夺。林星辰同时面对幽冥教、天剑宗、万妖谷等多方势力的围剿。与在天骄大会上结识的盟友并肩作战。",
+        "constraints": {
+          "min_words": 4500,
+          "max_words": 6000,
+          "pov": "第三人称限知",
+          "tone": "高潮、激烈"
+        },
+        "children": [],
+        "meta": {}
+      },
+      {
+        "node_id": "ch12",
+        "title": "第十二章 · 星辰大帝",
+        "level": 1,
+        "instruction": "最终决战。林星辰完全融合星辰本源，突破星帝境。击败各方势力后，并未称霸九州，而是选择以大帝之力守护九州，抵御域外天魔。留下开放式结尾：更大的威胁仍在星域之外。",
+        "constraints": {
+          "min_words": 4000,
+          "max_words": 5500,
+          "pov": "第三人称限知",
+          "tone": "宏大、释然、留白"
+        },
+        "children": [],
+        "meta": {}
+      }
+    ],
+    "meta": {}
+  },
+  "meta": {
+    "created_by": "generate_outline",
+    "created_at": "2025-06-24T10:00:00Z",
+    "task_id": "task-ce-001",
+    "artifact_path": "artifacts/outline-ce-001.json"
+  }
+}
