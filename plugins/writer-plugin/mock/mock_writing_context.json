@@ -1,0 +1,55 @@
+{
+  "schema": "lazyllm.writer.WritingContext",
+  "schema_version": "0.1",
+  "data": {
+    "context_id": "ctx-demo-001",
+    "doc_id": null,
+    "document_summary": {
+      "summary": "本文围绕「星辰大帝」展开，按章节逐段铺陈太古星辰大帝陨落、少年林星辰觉醒星魂、修炼《炼星诀》、穿越星隐山脉、抵抗域外天魔逐步升级的完整主线。",
+      "key_points": [
+        "世界观设定：九州大陆、星辰本源、灵脉体系",
+        "章节主线：废柴少年觉醒 → 宗门崛起 → 远征魔域",
+        "人物成长：林星辰从灵力倒数第一到洞穿星图传承"
+      ],
+      "structure_summary": "楔子（星辰陨落）→ 主体章节（觉醒·成长·宗门·远征）→ 终章（再战天魔）"
+    },
+    "block_summaries": [],
+    "facts": [
+      {
+        "fact_id": "f-worldview",
+        "key": "世界观",
+        "value": "九州大陆以灵脉为基，强者借星辰本源沟通天地法则",
+        "source": [],
+        "applies_to_block_ids": [],
+        "locked": true
+      },
+      {
+        "fact_id": "f-protagonist",
+        "key": "主角",
+        "value": "林星辰，星陨城林家旁支子弟，体内暗藏星辰本源",
+        "source": [],
+        "applies_to_block_ids": [],
+        "locked": true
+      },
+      {
+        "fact_id": "f-thrust",
+        "key": "主线",
+        "value": "觉醒《炼星诀》→ 征讨域外天魔 → 守望九州",
+        "source": [],
+        "applies_to_block_ids": [],
+        "locked": false
+      }
+    ],
+    "style_profile": {
+      "tone": "史诗、克制",
+      "formality": "书面体",
+      "audience": "玄幻长篇读者",
+      "notes": ["第三人称限知", "长篇章节式"]
+    },
+    "relation_graph": null,
+    "meta": {
+      "mock": true,
+      "mock_source": "plugins/writer-plugin/mock/mock_writing_context.json"
+    }
+  }
+}

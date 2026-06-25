@@ -36,9 +36,8 @@ import httpx
 CORE = os.environ.get("LAZYMIND_CORE_URL", "http://core:8000")
 DEFAULT_USER = "0f1b91fe-821a-403f-96c0-8ce4b386079f"  # test user with model providers configured
 DEFAULT_TOPIC = (
-    "请写一篇关于「时间自动机的主动学习」的技术综述报告，面向形式化方法方向的研究生，"
-    "要求覆盖基本概念、经典主动学习算法（如 L* 及其时态扩展、基于区分性测试的方法）"
-    "和主要挑战，约 3000~4000 字。"
+    "请写一篇关于『星辰大帝』的玄幻长篇小说，约 6000 字，"
+    "覆盖楔子与前 12 章的世界观设定、主角成长与核心矛盾。"
 )
 
 EXPECTED_STEPS = ["build_context", "plan_outline", "write_draft", "review_draft", "finalize_report"]

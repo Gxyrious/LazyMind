@@ -1,9 +1,5 @@
 initial: __start__
 
-# Each step's SubAgent calls the doc-named Writer Tools with artifact KEYS only.
-# Tools read inputs and persist outputs themselves (key in / confirmation out), so the
-# LLM never relays structured payload. Mocks live in scripts/tools.py.
-
 transitions:
   __start__:
     - to: build_context
@@ -33,11 +29,15 @@ steps:
   build_context:
     label: Build Context
     prompt: |
-      按顺序调用两个工具：
+      {{user_input}}
+
+      {{runtime_instruction}}
+
+      你的任务：调用以下工具完成本 step。
       1. `profile_resources(query="{{user_input}}")`
       2. `create_writing_context(resource_profiles_key="resource_profiles", query="{{user_input}}")`
-      工具会自行保存 artifact，你只需按上述调用即可。
-      {{runtime_instruction}}
+
+      工具会自行把产物落库到 artifact。等两个工具都返回确认串后，调用 advance_step。
     tools:
       - profile_resources
       - create_writing_context
@@ -46,15 +46,17 @@ steps:
         content_type: json
         slot_id: writing_context_slot
     acceptance_criteria: |
-      writing_context artifact must be saved as non-empty Markdown covering topic,
-      audience, subtopics, style/depth, and key terms (≥ 200 Chinese characters).
+      writing_context artifact must be saved and contain non-empty topic, audience,
+      and subtopics/style fields.
 
   plan_outline:
     label: Plan Outline
     prompt: |
-      调用 `generate_outline(writing_context_key="writing_context")`。
-      工具会自行保存 outline artifact。
+      {{user_input}}
+
       {{runtime_instruction}}
+
+      你的任务：调用 `generate_outline(writing_context_key="writing_context")`，等待确认串后调用 advance_step。
     tools:
       - generate_outline
     inputs:
@@ -65,17 +67,21 @@ steps:
         content_type: json
         slot_id: outline_slot
     acceptance_criteria: |
-      outline artifact must be saved as non-empty Markdown with ≥ 3 top-level sections,
-      each annotated with a one-line purpose.
+      outline artifact must be saved with ≥ 3 top-level sections, each with a
+      one-line purpose.
 
   write_draft:
     label: Write Draft
     prompt: |
-      按顺序调用两个工具：
+      {{user_input}}
+
+      {{runtime_instruction}}
+
+      你的任务：按顺序调用两个工具。
       1. `generate_section_instructions(outline_key="outline", writing_context_key="writing_context")`
       2. `generate_draft_section(section_instructions_key="section_instructions", writing_context_key="writing_context")`
-      第二个工具会逐章生成并保存每条 draft_section，同时装配 draft。
-      {{runtime_instruction}}
+
+      等两个工具都返回确认串后，调用 advance_step。
     tools:
       - generate_section_instructions
       - generate_draft_section
@@ -92,15 +98,17 @@ steps:
         content_type: json
         slot_id: draft_slot
     acceptance_criteria: |
-      draft artifact must be saved as non-empty Markdown covering all outline sections
-      with substantive prose (≥ 2000 Chinese characters).
+      draft and draft_section artifacts must be saved with substantive prose
+      following the outline.
 
   review_draft:
     label: Review Draft
     prompt: |
-      调用 `check_consistency(draft_key="draft", writing_context_key="writing_context")`。
-      工具会自行保存 review_report artifact。
+      {{user_input}}
+
       {{runtime_instruction}}
+
+      你的任务：调用 `check_consistency(draft_key="draft", writing_context_key="writing_context")`，等待确认串后调用 advance_step。
     tools:
       - check_consistency
     inputs:
@@ -113,15 +121,17 @@ steps:
         content_type: json
         slot_id: review_slot
     acceptance_criteria: |
-      review_report artifact must be saved as non-empty Markdown with a score,
-      a summary, and a list of issues with severity and suggestions.
+      review_report artifact must be saved with a numeric score, summary, and a
+      list of issues.
 
   finalize_report:
     label: Finalize Report
     prompt: |
-      调用 `generate_writing_output(draft_key="draft", review_report_key="review_report", writing_context_key="writing_context")`。
-      工具会自行保存 final_report artifact。
+      {{user_input}}
+
       {{runtime_instruction}}
+
+      你的任务：调用 `generate_writing_output(draft_key="draft", review_report_key="review_report", writing_context_key="writing_context")`，等待确认串后调用 advance_step。
     tools:
       - generate_writing_output
     inputs:
@@ -136,5 +146,5 @@ steps:
         content_type: json
         slot_id: final_report_slot
     acceptance_criteria: |
-      final_report artifact must be saved as non-empty, self-contained Markdown
-      representing the polished article (≥ 2000 Chinese characters).
+      final_report artifact must be saved as a self-contained polished Markdown
+      article.
