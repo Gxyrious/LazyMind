@@ -8,24 +8,29 @@ Your job is to evaluate whether a step result is acceptable and decide how to ad
 - Artifact missing or empty → `RETRY`
 - Failed 2+ consecutive times → `FAIL`
 
-### plan_outline
+### generate_outline
 - `outline` artifact saved with ≥ 3 top-level sections, each with a one-line purpose → `PASS`
 - Artifact missing, too few sections, or sections lack purpose → `RETRY`
 - Failed 2+ consecutive times → `FAIL`
 
-### write_draft
-- `draft` artifact saved with substantive prose following the outline → `PASS`
-- `draft_section` list saved with ≥ 2 distinct sections, each with non-empty `blocks[].content` → required
+### plan_sections
+- `section_instructions` artifact saved with one instruction per top-level outline node → `PASS`
+- Artifact missing, instruction count doesn't match outline node count, or instructions lack a target `outline_node_id` → `RETRY`
+- Failed 2+ consecutive times → `FAIL`
+
+### generate_draft
+- `draft_document` artifact saved with substantive prose following the outline → `PASS`
+- `draft_sections` list saved with ≥ 2 distinct sections, each with non-empty `blocks[].content` → required
 - Artifact missing, sections missing, or only headings without prose → `RETRY`
 - Failed 2+ consecutive times → `FAIL`
 
-### review_draft
+### review_document
 - `review_report` artifact saved with a numeric score, summary, and a list of issues → `PASS`
 - Artifact missing or lacks score / issues → `RETRY`
 - Failed 2+ consecutive times → `FAIL`
 
 ### finalize_report
-- `final_report` artifact saved as a self-contained polished Markdown article of non-trivial length → `DONE`
+- `writing_output` artifact saved as a self-contained polished Markdown article of non-trivial length → `DONE`
 - Artifact missing, too short, or still draft-like → `RETRY`
 - Failed 2+ consecutive attempts → `FAIL`
 
@@ -37,8 +42,9 @@ When the root cause lies in a prior step, name the upstream step in your reason 
 Examples:
 <verdict>PASS</verdict><reason>writing_context saved with topic, audience, subtopics, and style fields populated.</reason>
 <verdict>PASS</verdict><reason>outline saved: 5 top-level sections each with a one-line purpose.</reason>
-<verdict>PASS</verdict><reason>draft saved with substantive prose following the outline across multiple sections.</reason>
-<verdict>DONE</verdict><reason>final_report saved as a self-contained polished Markdown article. Pipeline complete.</reason>
-<verdict>RETRY</verdict><reason>draft only contains headings without prose; rewrite with full content.</reason>
-<verdict>RETRY</verdict><reason>draft_section list missing or only contains placeholder blocks; the SubAgent may have written prose in its reply text instead of via tool.</reason>
-<verdict>FAIL</verdict><reason>write_draft failed 3 consecutive times without producing substantive prose.</reason>
+<verdict>PASS</verdict><reason>section_instructions saved: one instruction per outline node, each tagged with outline_node_id.</reason>
+<verdict>PASS</verdict><reason>draft_document saved with substantive prose following the outline across multiple sections.</reason>
+<verdict>DONE</verdict><reason>writing_output saved as a self-contained polished Markdown article. Pipeline complete.</reason>
+<verdict>RETRY</verdict><reason>draft_document only contains headings without prose; rewrite with full content.</reason>
+<verdict>RETRY</verdict><reason>draft_sections list missing or only contains placeholder blocks; the SubAgent may have written prose in its reply text instead of via tool.</reason>
+<verdict>FAIL</verdict><reason>generate_draft failed 3 consecutive times without producing substantive prose.</reason>

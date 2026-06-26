@@ -40,11 +40,12 @@ DEFAULT_TOPIC = (
     "覆盖楔子与前 12 章的世界观设定、主角成长与核心矛盾。"
 )
 
-EXPECTED_STEPS = ["build_context", "plan_outline", "write_draft", "review_draft", "finalize_report"]
-FINAL_ARTIFACT_KEY = "final_report"
+EXPECTED_STEPS = ["build_context", "generate_outline", "plan_sections",
+                 "generate_draft", "review_document", "finalize_report"]
+FINAL_ARTIFACT_KEY = "writing_output"
 MIN_FINAL_CHARS = 2000
 
-# Per-step soft time budget. write_draft / finalize_report can be long when the model
+# Per-step soft time budget. generate_draft / finalize_report can be long when the model
 # generates a sizable article plus reads a large upstream draft, so keep this generous.
 STEP_TIMEOUT_SEC = 420
 ADVANCE_TIMEOUT_SEC = 30
@@ -193,7 +194,6 @@ def _unwrap_value(v: Any) -> Any:
     if isinstance(v, dict) and "data" in v and isinstance(v["data"], (dict, list)):
         return v["data"]
     return v
-    return v
 
 
 def run_e2e(topic: str, user_id: str) -> int:
@@ -216,48 +216,49 @@ def run_e2e(topic: str, user_id: str) -> int:
         keys = sorted(artifacts.keys())
         _log(f"artifacts produced: {keys}")
 
-        for required in ["writing_context", "outline", "draft_section", "draft",
-                         "review_report", "final_report"]:
+        for required in ["writing_context", "outline", "section_instructions",
+                         "draft_sections", "draft_document",
+                         "review_report", "writing_output"]:
             if required not in artifacts:
                 _log(f"FAIL: missing artifact {required!r}")
                 return 3
 
-        # draft_section must be a list of >= 2 DraftSection items with distinct titles.
+        # draft_sections must be a list of >= 2 DraftSection items with distinct titles.
         # With key-in/key-out the LLM never relays payload, so each item is the exact
         # DraftSection dict the mock produced — assert strict shape.
-        sections = artifacts["draft_section"]
+        sections = artifacts["draft_sections"]
         if not isinstance(sections, list) or len(sections) < 2:
-            _log(f"FAIL: draft_section should be a list with >=2 items, got {type(sections).__name__}")
+            _log(f"FAIL: draft_sections should be a list with >=2 items, got {type(sections).__name__}")
             return 4
         sec_models = [_unwrap_value(s) for s in sections]
         for i, s in enumerate(sec_models):
             if not isinstance(s, dict) or "title" not in s or "blocks" not in s:
-                _log(f"FAIL: draft_section[{i}] not a DraftSection shape: {list(s)[:6] if isinstance(s,dict) else type(s).__name__}")
+                _log(f"FAIL: draft_sections[{i}] not a DraftSection shape: {list(s)[:6] if isinstance(s,dict) else type(s).__name__}")
                 return 5
         sec_titles = [s["title"] for s in sec_models]
         if len(set(sec_titles)) < 2:
-            _log(f"FAIL: draft_section items are identical (titles={sec_titles!r})")
+            _log(f"FAIL: draft_sections items are identical (titles={sec_titles!r})")
             return 5
-        _log(f"✓ draft_section list has {len(sections)} distinct sections: {sec_titles}")
+        _log(f"✓ draft_sections list has {len(sections)} distinct sections: {sec_titles}")
 
-        # final_report must be the exact WritingOutput shape (content + output_format).
+        # writing_output must be the exact WritingOutput shape (content + output_format).
         final = _unwrap_value(artifacts[FINAL_ARTIFACT_KEY])
         if not isinstance(final, dict) or "content" not in final or "output_format" not in final:
-            _log(f"FAIL: final_report not a WritingOutput shape (got {type(final).__name__})")
+            _log(f"FAIL: writing_output not a WritingOutput shape (got {type(final).__name__})")
             return 6
         if not str(final.get("content", "")).strip():
-            _log("FAIL: final_report.content is empty")
+            _log("FAIL: writing_output.content is empty")
             return 7
 
-        # draft must be a DraftDocument whose sections match the draft_section list.
-        draft = _unwrap_value(artifacts["draft"])
+        # draft_document must be a DraftDocument whose sections match the draft_sections list.
+        draft = _unwrap_value(artifacts["draft_document"])
         if not isinstance(draft, dict) or not isinstance(draft.get("sections"), list):
-            _log("FAIL: draft not a DraftDocument with sections list")
+            _log("FAIL: draft_document not a DraftDocument with sections list")
             return 8
         if len(draft["sections"]) != len(sections):
-            _log(f"FAIL: draft.sections ({len(draft['sections'])}) != draft_section list ({len(sections)})")
+            _log(f"FAIL: draft_document.sections ({len(draft['sections'])}) != draft_sections list ({len(sections)})")
             return 9
-        _log(f"✓ draft assembled with {len(draft['sections'])} sections")
+        _log(f"✓ draft_document assembled with {len(draft['sections'])} sections")
 
         _log("=== FINAL REPORT (WritingOutput.content, first 600 chars) ===")
         print(str(final.get("content", ""))[:600], flush=True)

@@ -1,9 +1,9 @@
 id: writer-plugin
 name: AI Writer
 description: >
-  撰写长篇文章或技术报告。工作流分五步：解析写作意图与边界、
-  生成大纲、撰写全文初稿、审阅初稿并给出修订意见、产出最终成稿。
-  每一步都支持通过状态机自环进行整体重跑。
+  撰写长篇文章或技术报告。工作流分六步：解析写作意图与边界、
+  生成大纲、为每章规划写作指令、撰写全文初稿、审阅初稿并给出修订意见、
+  产出最终成稿。每一步都支持通过状态机自环进行整体重跑。
 
 when_to_use: >
   当用户希望撰写、起草、生成一篇较长的文章、报告、技术文档、综述、
@@ -25,12 +25,14 @@ tool_scripts:
 steps:
   - id: build_context
     label: Build Context
-  - id: plan_outline
-    label: Plan Outline
-  - id: write_draft
-    label: Write Draft
-  - id: review_draft
-    label: Review Draft
+  - id: generate_outline
+    label: Generate Outline
+  - id: plan_sections
+    label: Plan Sections
+  - id: generate_draft
+    label: Generate Draft
+  - id: review_document
+    label: Review Document
   - id: finalize_report
     label: Finalize Report
 
@@ -57,6 +59,16 @@ ui:
           cardinality: single
           artifact_key: outline
 
+    - id: plan_sections
+      label: Plan Sections
+      layout: list
+      slots:
+        - id: section_instructions_slot
+          label: Section Instructions
+          type: text
+          cardinality: list
+          artifact_key: section_instructions
+
     - id: draft
       label: Draft
       layout: list
@@ -66,13 +78,13 @@ ui:
           type: text
           cardinality: list
           ordered: true
-          artifact_key: draft_section
+          artifact_key: draft_sections
 
         - id: draft_slot
           label: Full Draft
           type: text
           cardinality: single
-          artifact_key: draft
+          artifact_key: draft_document
 
     - id: review
       label: Review
@@ -92,27 +104,30 @@ ui:
           label: Final Report
           type: text
           cardinality: single
-          artifact_key: final_report
+          artifact_key: writing_output
 
 i18n:
   zh-CN:
     name: AI 写作
     steps:
       build_context: {label: 解析写作意图}
-      plan_outline: {label: 生成大纲}
-      write_draft: {label: 撰写初稿}
-      review_draft: {label: 审阅初稿}
+      generate_outline: {label: 生成大纲}
+      plan_sections: {label: 规划章节指令}
+      generate_draft: {label: 撰写初稿}
+      review_document: {label: 审阅文档}
       finalize_report: {label: 产出成稿}
     tabs:
       context: {label: 写作上下文}
       outline: {label: 大纲}
+      plan_sections: {label: 章节指令}
       draft: {label: 初稿}
       review: {label: 审阅}
-      result: {label: 最终报告}
+      result: {label: 最终成稿}
     slots:
       writing_context_slot: {label: 写作上下文}
       outline_slot: {label: 大纲}
+      section_instructions_slot: {label: 章节指令}
       draft_sections_slot: {label: 章节草稿}
       draft_slot: {label: 完整初稿}
       review_slot: {label: 审阅报告}
-      final_report_slot: {label: 最终报告}
+      final_report_slot: {label: 最终成稿}

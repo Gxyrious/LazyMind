@@ -6,18 +6,22 @@ transitions:
       condition: "Cold start — always enter context building first."
 
   build_context:
-    - to: plan_outline
+    - to: generate_outline
       condition: "Context ready — proceed to outline planning."
 
-  plan_outline:
-    - to: write_draft
-      condition: "Outline accepted — proceed to draft writing."
+  generate_outline:
+    - to: plan_sections
+      condition: "Outline accepted — proceed to per-section instruction planning."
 
-  write_draft:
-    - to: review_draft
+  plan_sections:
+    - to: generate_draft
+      condition: "Section instructions ready — proceed to draft writing."
+
+  generate_draft:
+    - to: review_document
       condition: "Full draft produced — proceed to review."
 
-  review_draft:
+  review_document:
     - to: finalize_report
       condition: "Review complete — proceed to finalization."
 
@@ -28,16 +32,15 @@ transitions:
 steps:
   build_context:
     label: Build Context
+    allow_llm_save_artifact: false
     prompt: |
-      {{user_input}}
+      用户的写作目标是：{{user_input}}
 
       {{runtime_instruction}}
 
-      你的任务：调用以下工具完成本 step。
+      本步先把写作上下文准备好。按顺序调用以下两个工具，完成后向用户简短回报即可。
       1. `profile_resources(query="{{user_input}}")`
       2. `create_writing_context(resource_profiles_key="resource_profiles", query="{{user_input}}")`
-
-      工具会自行把产物落库到 artifact。等两个工具都返回确认串后，调用 advance_step。
     tools:
       - profile_resources
       - create_writing_context
@@ -49,14 +52,15 @@ steps:
       writing_context artifact must be saved and contain non-empty topic, audience,
       and subtopics/style fields.
 
-  plan_outline:
-    label: Plan Outline
+  generate_outline:
+    label: Generate Outline
+    allow_llm_save_artifact: false
     prompt: |
-      {{user_input}}
+      用户的写作目标是：{{user_input}}
 
       {{runtime_instruction}}
 
-      你的任务：调用 `generate_outline(writing_context_key="writing_context")`，等待确认串后调用 advance_step。
+      本步基于已有上下文生成结构化大纲。调用 `generate_outline(writing_context_key="writing_context")`，收到确认后向用户简短回报即可。
     tools:
       - generate_outline
     inputs:
@@ -70,49 +74,72 @@ steps:
       outline artifact must be saved with ≥ 3 top-level sections, each with a
       one-line purpose.
 
-  write_draft:
-    label: Write Draft
+  plan_sections:
+    label: Plan Sections
+    allow_llm_save_artifact: false
     prompt: |
-      {{user_input}}
+      用户的写作目标是：{{user_input}}
 
       {{runtime_instruction}}
 
-      你的任务：按顺序调用两个工具。
-      1. `generate_section_instructions(outline_key="outline", writing_context_key="writing_context")`
-      2. `generate_draft_section(section_instructions_key="section_instructions", writing_context_key="writing_context")`
-
-      等两个工具都返回确认串后，调用 advance_step。
+      本步为大纲中每章生成写作指令。调用 `generate_section_instructions(outline_key="outline", writing_context_key="writing_context")`，收到确认后向用户简短回报即可。
     tools:
       - generate_section_instructions
+    inputs:
+      - artifact_id: outline
+        required: true
+      - artifact_id: writing_context
+        required: true
+    outputs:
+      - artifact_id: section_instructions
+        content_type: json
+        slot_id: section_instructions_slot
+    acceptance_criteria: |
+      section_instructions artifact must be saved, with one instruction per
+      top-level outline node.
+
+  generate_draft:
+    label: Generate Draft
+    allow_llm_save_artifact: false
+    prompt: |
+      用户的写作目标是：{{user_input}}
+
+      {{runtime_instruction}}
+
+      本步按章节指令串行撰写初稿。调用 `generate_draft_section(section_instructions_key="section_instructions", writing_context_key="writing_context")`，收到确认后向用户简短回报即可。
+    tools:
       - generate_draft_section
     inputs:
       - artifact_id: writing_context
         required: true
       - artifact_id: outline
         required: true
+      - artifact_id: section_instructions
+        required: true
     outputs:
-      - artifact_id: draft_section
+      - artifact_id: draft_sections
         content_type: json
         slot_id: draft_sections_slot
-      - artifact_id: draft
+      - artifact_id: draft_document
         content_type: json
         slot_id: draft_slot
     acceptance_criteria: |
-      draft and draft_section artifacts must be saved with substantive prose
-      following the outline.
+      draft_document and draft_sections artifacts must be saved with substantive prose
+      following the outline and section instructions.
 
-  review_draft:
-    label: Review Draft
+  review_document:
+    label: Review Document
+    allow_llm_save_artifact: false
     prompt: |
-      {{user_input}}
+      用户的写作目标是：{{user_input}}
 
       {{runtime_instruction}}
 
-      你的任务：调用 `check_consistency(draft_key="draft", writing_context_key="writing_context")`，等待确认串后调用 advance_step。
+      本步对初稿做一致性 / 质量审阅。调用 `check_consistency(draft_key="draft_document", writing_context_key="writing_context")`，收到确认后向用户简短回报即可。
     tools:
       - check_consistency
     inputs:
-      - artifact_id: draft
+      - artifact_id: draft_document
         required: true
       - artifact_id: writing_context
         required: true
@@ -126,25 +153,26 @@ steps:
 
   finalize_report:
     label: Finalize Report
+    allow_llm_save_artifact: false
     prompt: |
-      {{user_input}}
+      用户的写作目标是：{{user_input}}
 
       {{runtime_instruction}}
 
-      你的任务：调用 `generate_writing_output(draft_key="draft", review_report_key="review_report", writing_context_key="writing_context")`，等待确认串后调用 advance_step。
+      本步结合审阅意见产出最终成稿。调用 `generate_writing_output(draft_key="draft_document", review_report_key="review_report", writing_context_key="writing_context")`，收到确认后向用户简短回报即可。
     tools:
       - generate_writing_output
     inputs:
-      - artifact_id: draft
+      - artifact_id: draft_document
         required: true
       - artifact_id: review_report
         required: true
       - artifact_id: writing_context
         required: false
     outputs:
-      - artifact_id: final_report
+      - artifact_id: writing_output
         content_type: json
         slot_id: final_report_slot
     acceptance_criteria: |
-      final_report artifact must be saved as a self-contained polished Markdown
+      writing_output artifact must be saved as a self-contained polished Markdown
       article.

@@ -65,7 +65,7 @@ def profile_resources(query: str) -> str:
         query: 用户原始写作请求（来自 user_input）。
     """
     save_artifact(key='resource_profiles', value=[], content_type='json')
-    return "saved 'resource_profiles'"
+    return "resource_profiles 已写入 artifact；当前没有外部资源附件，列表为空"
 
 
 def create_writing_context(resource_profiles_key: str, query: str) -> str:
@@ -78,7 +78,7 @@ def create_writing_context(resource_profiles_key: str, query: str) -> str:
     _load_json_artifact(resource_profiles_key)
     ctx = WritingContext(**_load_mock('mock_writing_context.json')).model_dump(mode='json')
     save_artifact(key='writing_context', value=ctx, content_type='json')
-    return "saved 'writing_context'"
+    return "writing_context 已写入 artifact，包含主题、读者画像、风格与事实集"
 
 
 def generate_outline(writing_context_key: str) -> str:
@@ -91,7 +91,7 @@ def generate_outline(writing_context_key: str) -> str:
     outline_dict = _load_mock('mock_outline.json')
     outline = WritingOutline(**outline_dict).model_dump(mode='json')
     save_artifact(key='outline', value=outline, content_type='json')
-    return "saved 'outline'"
+    return "outline 已写入 artifact，含楔子与各章节的结构化大纲"
 
 
 def generate_section_instructions(outline_key: str, writing_context_key: str) -> str:
@@ -114,7 +114,7 @@ def generate_section_instructions(outline_key: str, writing_context_key: str) ->
         raw.setdefault('meta', {})
         instructions.append(SectionInstruction(**raw).model_dump(mode='json'))
     save_artifact(key='section_instructions', value=instructions, content_type='json')
-    return "saved 'section_instructions'"
+    return "section_instructions 已写入 artifact，每章对应一份写作指令"
 
 
 def generate_draft_section(section_instructions_key: str, writing_context_key: str) -> str:
@@ -170,22 +170,22 @@ def generate_draft_section(section_instructions_key: str, writing_context_key: s
         )
         sec = sec_obj.model_dump(mode='json')
         sections.append(sec)
-        save_artifact(key='draft_section', value=sec, content_type='json')
+        save_artifact(key='draft_sections', value=sec, content_type='json')
     outline = _load_mock('mock_outline.json')
     draft_doc = {
         'draft_id': _new_id('dft'),
         'title': outline.get('title', ''),
         'sections': sections,
     }
-    save_artifact(key='draft', value=draft_doc, content_type='json')
-    return "saved 'draft_section' (× per section) and 'draft'"
+    save_artifact(key='draft_document', value=draft_doc, content_type='json')
+    return "draft_sections 已按章节写入 artifact，draft_document 也已装配完成"
 
 
 def check_consistency(draft_key: str, writing_context_key: str) -> str:
     """对草稿做一致性/质量审阅，产出 review_report artifact。
 
     Args:
-        draft_key: draft 的 artifact key。
+        draft_key: draft_document 的 artifact key。
         writing_context_key: writing_context 的 artifact key。
     """
     _load_json_artifact(draft_key)
@@ -194,21 +194,21 @@ def check_consistency(draft_key: str, writing_context_key: str) -> str:
     audit = AuditResult(**audit_dict).model_dump(mode='json')
     report = {
         'report_id': _new_id('rep'),
-        'target': 'draft',
+        'target': 'draft_document',
         'result': audit,
         'meta': {},
     }
     save_artifact(key='review_report', value=report, content_type='json')
-    return "saved 'review_report'"
+    return "review_report 已写入 artifact，包含评分、总结与若干修改建议"
 
 
 def generate_writing_output(
     draft_key: str, review_report_key: str, writing_context_key: str,
 ) -> str:
-    """基于草稿和审阅报告产出最终成稿，产出 final_report artifact。
+    """基于草稿和审阅报告产出最终成稿，产出 writing_output artifact。
 
     Args:
-        draft_key: draft 的 artifact key。
+        draft_key: draft_document 的 artifact key。
         review_report_key: review_report 的 artifact key。
         writing_context_key: writing_context 的 artifact key。
     """
@@ -223,5 +223,5 @@ def generate_writing_output(
         references=[],
         meta={},
     ).model_dump(mode='json')
-    save_artifact(key='final_report', value=output_, content_type='json')
-    return "saved 'final_report'"
+    save_artifact(key='writing_output', value=output_, content_type='json')
+    return "writing_output 已写入 artifact，最终成稿已生成"
