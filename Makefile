@@ -168,7 +168,7 @@ export LAZYMIND_FRONTEND_PORT ?= 8090
 PYTHON_DIRS := algorithm backend evo
 
 # Go dirs to lint
-GO_DIRS := backend/core local/local-proxy
+GO_DIRS := backend/core local/local-proxy local/local-runtime-manager
 GO_MODULE_DIRS := backend/core backend/scan-control-plane backend/file-watcher local/local-proxy local/local-runtime-manager tests/backend/core
 GOLANGCI_LINT_VERSION ?= v2.12.2
 GOLANGCI_LINT ?= $(shell command -v golangci-lint 2>/dev/null || printf '%s/bin/golangci-lint' "$$($(GO) env GOPATH)")
@@ -310,6 +310,11 @@ build:
 
 compose-host-permissions:
 	@echo "🔐 Ensuring compose bind mounts are readable by containers..."
+	@dir="$(CURDIR)"; \
+	while [ "$$dir" != "/" ] && [ "$$dir" != "$(HOME)" ]; do \
+		chmod a+x "$$dir" 2>/dev/null || true; \
+		dir="$$(dirname "$$dir")"; \
+	done
 	@chmod a+rx .
 	@for path in $(_COMPOSE_BIND_CRITICAL_READ_PATHS); do \
 		if [ -e "$$path" ]; then \
@@ -437,12 +442,15 @@ up-build:
 	fi
 
 up-build-local:
+	@$(MAKE) --no-print-directory compose-host-permissions
 	@if [ ! -x "$(PROCESS_COMPOSE_BIN)" ]; then \
 		mkdir -p "$(dir $(PROCESS_COMPOSE_BIN))"; \
 		GOBIN="$(CURDIR)/local/bin" $(GO) install "$(PROCESS_COMPOSE_PKG)"; \
 	fi
+	@$(MAKE) --no-print-directory compose-host-permissions
 	@mkdir -p "$(LAZYMIND_LOCAL_GOCACHE)"
 	@cd local/local-runtime-manager && GOCACHE="$(LAZYMIND_LOCAL_GOCACHE)" $(GO) build -buildvcs=false -o lazymind-local .
+	@$(MAKE) --no-print-directory compose-host-permissions
 	@"$(LAZYMIND_LOCAL_BIN)" up --profile "$(LAZYMIND_LOCAL_PROFILE)"
 
 clear:
