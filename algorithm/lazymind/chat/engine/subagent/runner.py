@@ -142,23 +142,16 @@ def _resolve_runtime_tools(explicit: Optional[List[str]], plugin_id: Optional[st
     return build_agent_tools(list(DEFAULT_TOOLS))
 
 
-def _build_subagent_tools(extra_tools: Optional[List[Any]],
-                         allow_llm_save_artifact: bool = True) -> List[Any]:
+def _build_subagent_tools(extra_tools: Optional[List[Any]]) -> List[Any]:
     """Combine mandatory SubAgent infra tools with optional domain tools.
 
     save_artifact, get_artifact, list_artifacts, list_knowledge_bases,
     read_user_attachment, and find_user_attachment are always included regardless of
     the explicit tools list — they are the SubAgent's core interface and must never
     be stripped by plugin tool configurations.
-
-    When allow_llm_save_artifact is False (set by a plugin step declaring
-    allow_llm_save_artifact: false in state.yml), save_artifact is removed from the
-    base set so the LLM cannot save artifacts directly; only the step's tools may.
     """
-    base = []
-    if allow_llm_save_artifact:
-        base.append(subagent_tools.save_artifact)
-    base += [
+    base = [
+        subagent_tools.save_artifact,
         subagent_tools.get_artifact,
         subagent_tools.list_artifacts,
         subagent_tools.list_knowledge_bases,
@@ -307,11 +300,7 @@ def _objective_prompt(ctx: SubAgentContext, db: Optional['SubAgentDB'] = None) -
     if ctx.params:
         # Filter out partial_indices from params: it contains internal 0-based list_index
         # values which would confuse the AI (it should use 1-based sort_order instead).
-        # _allow_llm_save_artifact is an internal flag set by run_subagent_stream.
-        display_params = {
-            k: v for k, v in ctx.params.items()
-            if k not in ('partial_indices', '_allow_llm_save_artifact')
-        }
+        display_params = {k: v for k, v in ctx.params.items() if k != 'partial_indices'}
         lines.append(f'Parameters: {json.dumps(display_params, ensure_ascii=False)}')
     # Inject artifact context: plugin session reads from slot revisions with sort_order;
     # ordinary SubAgent reads from sub_agent_artifacts of prior succeeded steps.
@@ -337,64 +326,58 @@ def _objective_prompt(ctx: SubAgentContext, db: Optional['SubAgentDB'] = None) -
         )
         if sort_order_hints:
             lines.append(sort_order_hints)
-    # Determine if the LLM is allowed to call save_artifact in this step. When a
-    # plugin step declares allow_llm_save_artifact: false in state.yml, the
-    # step's plugin tools own artifact production and the LLM must not call
-    # The value is resolved once in run_subagent_stream and stashed on ctx.params.
-    allow_llm_save_artifact = bool(ctx.params.get('_allow_llm_save_artifact', True))
-    if allow_llm_save_artifact:
-        lines.append(
-            'You MUST call save_artifact for EACH of the following keys before you finish — '
-            'do NOT skip this step even if you have already written the results in plain text: '
-            + ', '.join(ctx.output_artifact_keys)
-        )
-        lines.append(
-            'IMPORTANT: Writing results in your reply text does NOT count as saving an artifact. '
-            'You must explicitly call save_artifact(key=..., value=...) for every required key. '
-            'The task is considered INCOMPLETE and will be marked as FAILED if any required artifact '
-            'key is missing. Do not write a final summary until all save_artifact calls are done.'
-        )
-        lines.append(
-            '## Overwrite vs. Append for list slots\n'
-            'save_artifact has an optional sort_order parameter (1-based):\n'
-            '- Omit sort_order → append a new item at the end of the list.\n'
-            '- Pass sort_order=N → overwrite the item currently at display position N.\n'
-            'If the objective says the user wants to replace a specific item '
-            '(e.g. "重新收集第二张图", "replace item 3", "redo position N"), '
-            'you MUST pass sort_order=N. Omitting it will append a new item instead of replacing.'
-        )
-        lines.append(
-            'After all required artifacts are saved, write a final summary that contains the '
-            'actual results and key findings — not only a reference to the artifacts. '
-            'For example, if you searched for information, include the information itself. '
-            'The summary must be self-contained and directly usable by the caller without '
-            'opening any artifact.'
-        )
-        lines.append(
-            '## Artifact local editing guide\n'
-            '### When to use patch_artifact vs save_artifact\n'
-            '- Targeted edits (fix a paragraph, update a field, rename a section): '
-            'use patch_artifact instead of regenerating the full content.\n'
-            '- Full rewrite: use save_artifact directly.\n'
-            '- You decide based on task semantics; the framework imposes no size restriction.\n'
-            '\n'
-            '### patch_artifact usage\n'
-            '- patch_artifact edits a local draft only — changes are NOT committed yet.\n'
-            '- After all edits are done, call save_artifact to commit (creates a new revision).\n'
-            '- If you forget to call save_artifact, the framework auto-commits all pending '
-            'drafts when the step ends.\n'
-            '- patch failed (old_str not found): call get_artifact with start_line/end_line '
-            'to read the relevant lines, confirm the exact text, then retry.\n'
-            '- To discard all uncommitted edits and revert to the last saved version: '
-            'call discard_draft(key).\n'
-            '\n'
-            '### Reading large artifacts in chunks\n'
-            '- get_artifact supports start_line and end_line parameters (1-based, inclusive).\n'
-            '- First call: get_artifact(key, start_line=1, end_line=1) — the response includes '
-            'total_lines so you can plan subsequent reads without loading the whole file.\n'
-            '- Chunked reads bypass the content-size truncation limit.\n'
-            '- Typical workflow: read target lines → identify old_str → call patch_artifact.'
-        )
+    lines.append(
+        'You MUST call save_artifact for EACH of the following keys before you finish — '
+        'do NOT skip this step even if you have already written the results in plain text: '
+        + ', '.join(ctx.output_artifact_keys)
+    )
+    lines.append(
+        'IMPORTANT: Writing results in your reply text does NOT count as saving an artifact. '
+        'You must explicitly call save_artifact(key=..., value=...) for every required key. '
+        'The task is considered INCOMPLETE and will be marked as FAILED if any required artifact '
+        'key is missing. Do not write a final summary until all save_artifact calls are done.'
+    )
+    lines.append(
+        '## Overwrite vs. Append for list slots\n'
+        'save_artifact has an optional sort_order parameter (1-based):\n'
+        '- Omit sort_order → append a new item at the end of the list.\n'
+        '- Pass sort_order=N → overwrite the item currently at display position N.\n'
+        'If the objective says the user wants to replace a specific item '
+        '(e.g. "重新收集第二张图", "replace item 3", "redo position N"), '
+        'you MUST pass sort_order=N. Omitting it will append a new item instead of replacing.'
+    )
+    lines.append(
+        'After all required artifacts are saved, write a final summary that contains the '
+        'actual results and key findings — not only a reference to the artifacts. '
+        'For example, if you searched for information, include the information itself. '
+        'The summary must be self-contained and directly usable by the caller without '
+        'opening any artifact.'
+    )
+    lines.append(
+        '## Artifact local editing guide\n'
+        '### When to use patch_artifact vs save_artifact\n'
+        '- Targeted edits (fix a paragraph, update a field, rename a section): '
+        'use patch_artifact instead of regenerating the full content.\n'
+        '- Full rewrite: use save_artifact directly.\n'
+        '- You decide based on task semantics; the framework imposes no size restriction.\n'
+        '\n'
+        '### patch_artifact usage\n'
+        '- patch_artifact edits a local draft only — changes are NOT committed yet.\n'
+        '- After all edits are done, call save_artifact to commit (creates a new revision).\n'
+        '- If you forget to call save_artifact, the framework auto-commits all pending '
+        'drafts when the step ends.\n'
+        '- patch failed (old_str not found): call get_artifact with start_line/end_line '
+        'to read the relevant lines, confirm the exact text, then retry.\n'
+        '- To discard all uncommitted edits and revert to the last saved version: '
+        'call discard_draft(key).\n'
+        '\n'
+        '### Reading large artifacts in chunks\n'
+        '- get_artifact supports start_line and end_line parameters (1-based, inclusive).\n'
+        '- First call: get_artifact(key, start_line=1, end_line=1) — the response includes '
+        'total_lines so you can plan subsequent reads without loading the whole file.\n'
+        '- Chunked reads bypass the content-size truncation limit.\n'
+        '- Typical workflow: read target lines → identify old_str → call patch_artifact.'
+    )
     return '\n'.join(lines)
 
 
@@ -542,25 +525,9 @@ async def run_subagent_stream(
 
         llm = AutoModel(model='llm')
         runtime_tools = _resolve_runtime_tools(tools, plugin_id=params.get('plugin_id') or None)
-        # For plugin_step tasks, honor allow_llm_save_artifact from state.yml:
-        # when false, save_artifact is removed from the LLM's visible tool list so
-        # only the step's plugin tools may produce artifacts.
-        allow_llm_save_artifact = True
-        if effective_agent_type == 'plugin_step':
-            try:
-                from lazymind.chat.plugin import plugin_loader as _loader
-                step_id: str = params.get('step_id', '')
-                plugin_id: str = params.get('plugin_id', '')
-                if plugin_id and step_id:
-                    sc = _loader.get_step_config(plugin_id, step_id)
-                    allow_llm_save_artifact = sc.get('allow_llm_save_artifact', True)
-            except Exception:
-                pass
-        # Stash on ctx.params so _objective_prompt can read.
-        ctx.params['_allow_llm_save_artifact'] = allow_llm_save_artifact
         agent = build_react_agent(
             llm=llm,
-            tools=_build_subagent_tools(runtime_tools, allow_llm_save_artifact=allow_llm_save_artifact),
+            tools=_build_subagent_tools(runtime_tools),
             force_summarize_context=ctx.objective,
         )
 
