@@ -75,7 +75,13 @@ steps:
     prompt: |
       {{runtime_instruction}}
 
-      本步为大纲中每章生成写作指令。调 get_artifact 取回 writing_context 和 outline，传给 generate_section_instructions，把返回的路径用 save_artifact(content_type='file', key='section_instructions') 落库。
+      本步为大纲中的章节分两批生成写作指令。调 get_artifact 取回 writing_context 和 outline。
+
+      第一批：调 generate_section_instructions(outline_path=<outline 路径>, writing_context_path=<writing_context 路径>, batch=1)，把返回的路径用 save_artifact(content_type='file', key='section_instructions') 落库。
+
+      第二批：调 generate_section_instructions(..., batch=2)，把返回的路径再次用 save_artifact(content_type='file', key='section_instructions') 落库。
+
+      两次调用返回不同的章节子集，合起来覆盖全部大纲节点。两次 save 都用同一个 key='section_instructions'，这样前端在同一个 slot 下看到两条结果。
     tools:
       - generate_section_instructions
     exclude_framework_tools:
@@ -91,16 +97,27 @@ steps:
         content_type: json
         slot_id: section_instructions_slot
     acceptance_criteria: |
-      section_instructions 已保存；条目数与 outline.nodes 节点数一一对应；每条至少含 outline_node_id、section_title、section_goal、required_points 字段。
+      section_instructions 已保存两次（batch=1 与 batch=2 各一次）；两次合起来条目数与 outline.nodes 节点数一一对应；每条至少含 outline_node_id、section_title、section_goal、required_points 字段。
 
   generate_draft:
     label: Generate Draft
     prompt: |
       {{runtime_instruction}}
 
-      本步按章节指令串行撰写初稿正文。调 get_artifact 取回 writing_context 和 section_instructions，传给 generate_draft_section。返回的 dict 包含 draft_sections_path 和 draft_document_path，分别 save_artifact(content_type='file') 落库。
+      本步按章节指令分两批串行撰写初稿正文，最后合并成完整文档。
+
+      取回指令：section_instructions 是 list 型产出，分两条。调 get_artifact(key='section_instructions', sort_order=1) 取回第一批指令路径，调 get_artifact(key='section_instructions', sort_order=2) 取回第二批指令路径。另调 get_artifact(key='writing_context') 取回 writing_context 路径。
+
+      第一批：调 generate_draft_section(section_instructions_path=<sort_order=1 的路径>, writing_context_path=<writing_context 路径>, batch=1)，把返回的路径用 save_artifact(content_type='file', key='draft_sections') 落库。
+
+      第二批：调 generate_draft_section(section_instructions_path=<sort_order=2 的路径>, writing_context_path=<writing_context 路径>, batch=2)，把返回的路径再次用 save_artifact(content_type='file', key='draft_sections') 落库。
+
+      合并：调 assemble_draft_document(draft_sections_path_1=<batch=1 的 draft_sections 路径>, draft_sections_path_2=<batch=2 的 draft_sections 路径>)，把返回的路径用 save_artifact(content_type='file', key='draft_document') 落库。
+
+      draft_sections 的两次 save 共用同一个 key（自动追加为两条），前端在同一个 ordered slot 下看到两批；draft_document 只 save 一次。
     tools:
       - generate_draft_section
+      - assemble_draft_document
     exclude_framework_tools:
       - read_user_attachment
       - find_user_attachment
@@ -119,7 +136,7 @@ steps:
         content_type: json
         slot_id: draft_slot
     acceptance_criteria: |
-      draft_sections 与 draft_document 已保存。draft_sections 至少 2 个 DraftSection，每个含 title 且 blocks 非空（每 block content 非空）。draft_document.sections 与 draft_sections 一一对应。
+      draft_sections 已保存两次（batch=1 与 batch=2 各一次），draft_document 已保存一次。两批 draft_sections 合计至少 2 个 DraftSection，每个含 title 且 blocks 非空（每 block content 非空）。draft_document.sections 与两批 draft_sections 合并后一一对应。
 
   review_document:
     label: Review Document

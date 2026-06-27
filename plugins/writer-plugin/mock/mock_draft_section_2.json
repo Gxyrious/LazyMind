@@ -31,7 +31,30 @@
             "为第七章身世揭秘埋下伏笔"
           ],
           "visual_needs": [],
-          "expected_blocks": ["突袭开场", "宗门血战", "绝境突破", "反击幽冥教", "战后余波"]
+          "expected_blocks": [
+            "突袭开场",
+            "宗门血战",
+            "绝境突破",
+            "反击幽冥教",
+            "战后余波"
+          ],
+          "source_refs": [
+            "writing_context#document_summary",
+            "writing_context#style_profile",
+            "outline#ch05"
+          ],
+          "pending_subtasks": [
+            "二审时核对《第五章 · 魔道来袭》required_points 的覆盖度",
+            "校验与相邻章节 relation_constraints 的衔接"
+          ],
+          "revision_notes": [
+            "《第五章 · 魔道来袭》初稿节奏偏快，待 review 阶段细化"
+          ],
+          "meta": {
+            "node_id": "ch05",
+            "priority": "normal",
+            "planning_owner": "plan_sections"
+          }
         },
         "draft": {
           "section_id": "sec-ch05",
@@ -42,17 +65,32 @@
               "heading": null,
               "content": "秘境试炼结束后第三天，幽冥教的黑色战旗便遮住了青云宗的天空。\n\n领队的是幽冥教四大护法之一——血冥子。一个身穿黑袍、面容枯瘦的中年男人，周身缠绕着浓郁得几乎化为实质的血煞之气。他的修为，赫然是化星境巅峰，比青云宗外门最强的莫问天长老还要高出一个小境界。\n\n「交出那个体内封印了星辰本源的小子，」血冥子的声音不大，却清晰传入了每一个青云宗弟子耳中，「否则——屠宗。」\n\n莫问天站在宗门大殿前，白须飘动，面沉如水：「青云宗立宗三千年，从未向魔道低过头。」\n\n战斗在刹那间爆发。",
               "subtasks": [],
-              "status": "drafted"
+              "status": "drafted",
+              "meta": {
+                "outline_node_id": "ch05",
+                "section_id": "sec-ch05",
+                "block_type": "narrative"
+              }
             },
             {
               "block_id": "blk-ch05-02",
               "heading": null,
               "content": "林星辰从未见过如此惨烈的战斗。\n\n青云宗的外门弟子像麦子一样成片倒下，幽冥教的魔修却越杀越多。苏婉的左臂被一道血刃斩断，墨玄的阵法被连续轰碎三次，灵力耗尽昏死过去。\n\n「林星辰！你快走——」苏婉用仅剩的右臂推了他一把。\n\n林星辰没有走。\n\n他握紧了陨星剑，向着血冥子冲了过去。\n\n血冥子甚至没有回头，只是随手一挥，一道血光便将他轰飞数十丈。但就在身体落地的一刹那，林星辰体内那颗沉寂许久的星辰本源，再次燃烧了起来。\n\n比上一次更强。\n\n比觉醒那天更猛烈。\n\n无穷的星辰之力从本源中涌出——不再走经脉，而是直接灌注进他的每一寸血肉。引星境九层的瓶颈瞬间碎裂，取而代之的是一股全新的力量——星光淬体。\n\n凝星境。\n\n陨星剑发出一声悠长的剑鸣，剑身上的星辰纹路尽数亮起。\n\n林星辰站起身，满身是血，但双眼亮如星辰。\n\n血冥子终于转过身来，眼神中第一次出现了凝重。",
               "subtasks": [],
-              "status": "drafted"
+              "status": "drafted",
+              "meta": {
+                "outline_node_id": "ch05",
+                "section_id": "sec-ch05",
+                "block_type": "narrative"
+              }
             }
           ],
-          "subtasks": []
+          "subtasks": [],
+          "meta": {
+            "outline_node_id": "ch05",
+            "draft_status": "drafted",
+            "draft_owner": "generate_draft_section"
+          }
         }
       },
       {
@@ -82,7 +120,30 @@
             "夺冠获得星域战场资格——连接第九章"
           ],
           "visual_needs": [],
-          "expected_blocks": ["大会开幕", "小组赛", "淘汰赛", "决赛对决", "夺冠"]
+          "expected_blocks": [
+            "大会开幕",
+            "小组赛",
+            "淘汰赛",
+            "决赛对决",
+            "夺冠"
+          ],
+          "source_refs": [
+            "writing_context#document_summary",
+            "writing_context#style_profile",
+            "outline#ch06"
+          ],
+          "pending_subtasks": [
+            "二审时核对《第六章 · 九州天骄》required_points 的覆盖度",
+            "校验与相邻章节 relation_constraints 的衔接"
+          ],
+          "revision_notes": [
+            "《第六章 · 九州天骄》初稿节奏偏快，待 review 阶段细化"
+          ],
+          "meta": {
+            "node_id": "ch06",
+            "priority": "normal",
+            "planning_owner": "plan_sections"
+          }
         },
         "draft": {
           "section_id": "sec-ch06",
@@ -93,17 +154,32 @@
               "heading": null,
               "content": "击退幽冥教后，林星辰的名声如野火般传遍了九州东部。恰逢五年一度的九州天骄大会在天剑城举办，青云宗破例为他留了一个名额。\n\n天骄大会汇集了九州七大势力二十五岁以下最顶尖的弟子。天剑宗的剑无双，号称百年不遇的剑道天才；万妖谷的白狐，本体是九尾天狐血脉；幽冥教的暗星，修炼的正是血冥子的独门功法——血影魔功。\n\n小组赛和淘汰赛，林星辰一路以碾压之势晋级。陨星剑配合凝星境七层的修为，几乎没有遇到像样的抵抗。进入四强时，他的对手是暗星。",
               "subtasks": [],
-              "status": "drafted"
+              "status": "drafted",
+              "meta": {
+                "outline_node_id": "ch06",
+                "section_id": "sec-ch06",
+                "block_type": "narrative"
+              }
             },
             {
               "block_id": "blk-ch06-02",
               "heading": null,
               "content": "决赛的对手是剑无双。\n\n天剑宗大师兄，凝星境巅峰，一柄「青霄剑」已是地阶上品。两人的战斗持续了整整一个时辰，从地面打到半空，又从半空打到天剑城的护城大阵边缘。\n\n最终，林星辰以陨星剑施展出上古剑招「星落」，一剑斩碎青霄剑的护体剑罡。\n\n剑无双收剑，抱拳：「我输了。」\n\n他顿了顿，又补了一句：「但下一次，不会再输。」\n\n林星辰笑道：「我等着。」\n\n天骄大会的冠军，从天剑宗手中易主。而作为奖励，林星辰获得了一枚天阶化星丹——以及进入远古星域战场的资格。",
               "subtasks": [],
-              "status": "drafted"
+              "status": "drafted",
+              "meta": {
+                "outline_node_id": "ch06",
+                "section_id": "sec-ch06",
+                "block_type": "narrative"
+              }
             }
           ],
-          "subtasks": []
+          "subtasks": [],
+          "meta": {
+            "outline_node_id": "ch06",
+            "draft_status": "drafted",
+            "draft_owner": "generate_draft_section"
+          }
         }
       },
       {
@@ -135,7 +211,31 @@
             "代价伏笔在第十章爆发"
           ],
           "visual_needs": [],
-          "expected_blocks": ["古墓发现", "闯关考验", "大帝残魂", "身世揭示", "情感冲击", "接受使命"]
+          "expected_blocks": [
+            "古墓发现",
+            "闯关考验",
+            "大帝残魂",
+            "身世揭示",
+            "情感冲击",
+            "接受使命"
+          ],
+          "source_refs": [
+            "writing_context#document_summary",
+            "writing_context#style_profile",
+            "outline#ch07"
+          ],
+          "pending_subtasks": [
+            "二审时核对《第七章 · 古墓遗迹》required_points 的覆盖度",
+            "校验与相邻章节 relation_constraints 的衔接"
+          ],
+          "revision_notes": [
+            "《第七章 · 古墓遗迹》初稿节奏偏快，待 review 阶段细化"
+          ],
+          "meta": {
+            "node_id": "ch07",
+            "priority": "normal",
+            "planning_owner": "plan_sections"
+          }
         },
         "draft": {
           "section_id": "sec-ch07",
@@ -146,17 +246,32 @@
               "heading": null,
               "content": "天骄大会结束后，林星辰没有返回青云宗。陨星剑的剑灵——那道白发残魂——在他夺冠那夜给了他一个坐标。\n\n星隐山脉，万年前大帝陨落之地。\n\n古墓的入口隐藏在山腹之中，被一座天然形成的星辰阵法笼罩。若非陨星剑共鸣，即便星海境强者也未必能找到。\n\n林星辰走入古墓，穿过九道刻满上古星纹的青铜巨门，最终来到一座空旷的地宫。地宫中央悬浮着一副透明的水晶棺，棺中无人，只有一枚黯淡的星核——那是大帝陨落后残留的最后一丝意志。\n\n星核感应到他的到来，骤然亮起。\n\n一道宏大而疲倦的声音在整个地宫中回荡：\n\n「你终于来了……本帝等了万年。」",
               "subtasks": [],
-              "status": "drafted"
+              "status": "drafted",
+              "meta": {
+                "outline_node_id": "ch07",
+                "section_id": "sec-ch07",
+                "block_type": "narrative"
+              }
             },
             {
               "block_id": "blk-ch07-02",
               "heading": null,
               "content": "大帝残魂将一切告诉了他。\n\n万年前，域外天魔撕裂世界壁垒入侵九州。大帝以一己之力击退了第一波入侵，但自身也到了油尽灯枯的边缘。他知道天魔终将卷土重来，于是在陨落前将毕生修为凝为星辰本源，封印于林氏血脉之中——不是随机选择，而是林家祖上是他的亲传弟子，血脉中天生有容纳星辰之力的天赋。\n\n「所以，我十六年来的废柴之名，是因为本源在封印我的修为？」林星辰的声音有些发颤。\n\n「是。」大帝残魂平静地回答，「若非如此，你出生那日便会爆体而亡。一个婴儿的身体，承受不住本帝的修为。」\n\n「那我现在——」\n\n「现在你可以选择。」残魂的身影开始变淡，「完全融合本源，继承本帝全部力量——代价是你的意志可能被本帝的残魂同化。或者，拒绝融合，以你自己的力量重新走一条路。」\n\n林星辰沉默了很久。\n\n「有没有第三条路？」他问。\n\n残魂没有回答。那缕万年前的大帝意志，在漫长的沉默中化作了漫天星辉。\n\n星核落入林星辰掌心，冰凉而沉重。",
               "subtasks": [],
-              "status": "drafted"
+              "status": "drafted",
+              "meta": {
+                "outline_node_id": "ch07",
+                "section_id": "sec-ch07",
+                "block_type": "narrative"
+              }
             }
           ],
-          "subtasks": []
+          "subtasks": [],
+          "meta": {
+            "outline_node_id": "ch07",
+            "draft_status": "drafted",
+            "draft_owner": "generate_draft_section"
+          }
         }
       },
       {
@@ -185,7 +300,30 @@
             "渡劫后实力足以进入星域战场——承接第九章"
           ],
           "visual_needs": [],
-          "expected_blocks": ["天劫来临", "前八重硬抗", "第九重紫色神雷", "渡劫成功", "副作用初现"]
+          "expected_blocks": [
+            "天劫来临",
+            "前八重硬抗",
+            "第九重紫色神雷",
+            "渡劫成功",
+            "副作用初现"
+          ],
+          "source_refs": [
+            "writing_context#document_summary",
+            "writing_context#style_profile",
+            "outline#ch08"
+          ],
+          "pending_subtasks": [
+            "二审时核对《第八章 · 九重天劫》required_points 的覆盖度",
+            "校验与相邻章节 relation_constraints 的衔接"
+          ],
+          "revision_notes": [
+            "《第八章 · 九重天劫》初稿节奏偏快，待 review 阶段细化"
+          ],
+          "meta": {
+            "node_id": "ch08",
+            "priority": "normal",
+            "planning_owner": "plan_sections"
+          }
         },
         "draft": {
           "section_id": "sec-ch08",
@@ -196,17 +334,32 @@
               "heading": null,
               "content": "从古墓出来后，林星辰服下了天骄大会奖励的天阶化星丹。他要冲击化星境。\n\n但他没有料到，体内本源的存在让这次突破的动静远超常人。\n\n当他冲破凝星境巅峰的那一刻，星隐山脉上空的天穹骤然变色。滚滚黑云从四面八方汇聚而来，云层深处有雷霆的闷响——那不是普通的雷声，而是仿佛有巨兽在云中低吼。\n\n「天劫？」林星辰抬头，「不对——这是传说中只有逆天之辈才会引来的九重天劫。」\n\n第一重雷劫落下时，他只是微微皱眉。\n\n第三重时，他握紧了陨星剑。\n\n第六重时，他的衣衫已被鲜血浸透。\n\n第九重——紫色灭世神雷从天而降，直径超过三丈的雷柱将整座山巅轰出一个深坑。林星辰躺在坑底，陨星剑斜插在身旁，剑身裂开了三道细纹。\n\n但他的嘴角在笑。\n\n因为他感觉到了——化星境巅峰的力量，正在他体内奔腾。",
               "subtasks": [],
-              "status": "drafted"
+              "status": "drafted",
+              "meta": {
+                "outline_node_id": "ch08",
+                "section_id": "sec-ch08",
+                "block_type": "narrative"
+              }
             },
             {
               "block_id": "blk-ch08-02",
               "heading": null,
               "content": "然而渡劫成功的喜悦没有持续太久。\n\n当林星辰盘坐调息时，他听到了。\n\n脑海中，多了一道不属于自己的声音——低沉、古老、带着不可抗拒的威严。\n\n「……融合……成为本帝……」\n\n那声音只出现了短短一瞬便消失了，但林星辰的后背已被冷汗浸透。他低头看向掌心的星核——它不再冰凉，而是微微发烫。\n\n融合本源的代价，已经开始显现。",
               "subtasks": [],
-              "status": "drafted"
+              "status": "drafted",
+              "meta": {
+                "outline_node_id": "ch08",
+                "section_id": "sec-ch08",
+                "block_type": "narrative"
+              }
             }
           ],
-          "subtasks": []
+          "subtasks": [],
+          "meta": {
+            "outline_node_id": "ch08",
+            "draft_status": "drafted",
+            "draft_owner": "generate_draft_section"
+          }
         }
       },
       {
@@ -235,7 +388,30 @@
             "本章首次正面描写域外天魔"
           ],
           "visual_needs": [],
-          "expected_blocks": ["进入战场", "第一次大规模战斗", "法则领悟", "突破碎星", "战场深处"]
+          "expected_blocks": [
+            "进入战场",
+            "第一次大规模战斗",
+            "法则领悟",
+            "突破碎星",
+            "战场深处"
+          ],
+          "source_refs": [
+            "writing_context#document_summary",
+            "writing_context#style_profile",
+            "outline#ch09"
+          ],
+          "pending_subtasks": [
+            "二审时核对《第九章 · 星域战场》required_points 的覆盖度",
+            "校验与相邻章节 relation_constraints 的衔接"
+          ],
+          "revision_notes": [
+            "《第九章 · 星域战场》初稿节奏偏快，待 review 阶段细化"
+          ],
+          "meta": {
+            "node_id": "ch09",
+            "priority": "normal",
+            "planning_owner": "plan_sections"
+          }
         },
         "draft": {
           "section_id": "sec-ch09",
@@ -246,17 +422,32 @@
               "heading": null,
               "content": "星域战场的入口悬浮在九州中央的天穹之上——那是一个直径百里的空间裂缝，裂缝对面是远古大帝开辟的缓冲空间。每当域外天魔入侵，九州各大势力的修士便在此狙击。\n\n林星辰踏入战场的第一眼，就看到了真正的炼狱。\n\n数以万计的修士组成战阵，以血肉之躯抵挡着一波接一波涌来的黑色潮水——那是域外天魔的低阶兵种「影魔」，个体实力不过引星境，但数量无穷无尽。战线后方的天空中是高阶修士与将级天魔的对决，每一次碰撞都炸开一片虚空涟漪。\n\n「新来的？」一个独臂老兵擦去嘴角的血沫，冲他咧嘴一笑，「别愣着，影魔不吃人，但它们能把你啃得骨头都不剩。」",
               "subtasks": [],
-              "status": "drafted"
+              "status": "drafted",
+              "meta": {
+                "outline_node_id": "ch09",
+                "section_id": "sec-ch09",
+                "block_type": "narrative"
+              }
             },
             {
               "block_id": "blk-ch09-02",
               "heading": null,
               "content": "林星辰在星域战场待了三个月。\n\n三个月里，他从一个只知道一对一单挑的天才少年，变成了能在万军之中杀出一条血路的战士。陨星剑的剑刃斩碎了三千影魔，也斩下了三头将级天魔的头颅。\n\n但真正改变他的，是在战场深处领悟的星辰法则。\n\n那一刻他恰好同时看到三颗星：一颗在战场上空、一颗在九州方向、一颗在天魔裂隙的深处。三颗星以极其微妙的引力互相牵引，构成一个精妙的平衡。\n\n林星辰恍然大悟。\n\n星辰之力不是要征服的，而是要与之共鸣的。\n\n他闭上眼，散开全部修为，让自己的气机与漫天星辰的频率融为一体——然后，在他身体周围，无数星辰虚影凭空浮现。\n\n碎星境。\n\n他终于触碰到了这个境界——一个可以粉碎星辰、也可以守护星辰的境界。",
               "subtasks": [],
-              "status": "drafted"
+              "status": "drafted",
+              "meta": {
+                "outline_node_id": "ch09",
+                "section_id": "sec-ch09",
+                "block_type": "narrative"
+              }
             }
           ],
-          "subtasks": []
+          "subtasks": [],
+          "meta": {
+            "outline_node_id": "ch09",
+            "draft_status": "drafted",
+            "draft_owner": "generate_draft_section"
+          }
         }
       },
       {
@@ -286,7 +477,30 @@
             "第三条路的设定影响第十二章结局走向——不是独裁而是守护"
           ],
           "visual_needs": [],
-          "expected_blocks": ["真相揭示", "两难抉择", "未来幻象", "开辟星海", "突破星海境"]
+          "expected_blocks": [
+            "真相揭示",
+            "两难抉择",
+            "未来幻象",
+            "开辟星海",
+            "突破星海境"
+          ],
+          "source_refs": [
+            "writing_context#document_summary",
+            "writing_context#style_profile",
+            "outline#ch10"
+          ],
+          "pending_subtasks": [
+            "二审时核对《第十章 · 星辰本源》required_points 的覆盖度",
+            "校验与相邻章节 relation_constraints 的衔接"
+          ],
+          "revision_notes": [
+            "《第十章 · 星辰本源》初稿节奏偏快，待 review 阶段细化"
+          ],
+          "meta": {
+            "node_id": "ch10",
+            "priority": "normal",
+            "planning_owner": "plan_sections"
+          }
         },
         "draft": {
           "section_id": "sec-ch10",
@@ -297,10 +511,20 @@
               "heading": null,
               "content": "战场深处有一座废弃的太古祭坛。祭坛上的铭文记录了万年前那场大战的完整真相。\n\n星辰本源不只是一份传承——它是一把钥匙。\n\n大帝在陨落前察觉到天魔裂隙背后还隐藏着更恐怖的存在——皇级天魔。所以他不仅封印了本源，还在本源中刻入了一道终极禁制：当本源被完全融合时，九州世界壁垒将获得一次短暂的绝对加固，足以将天魔裂隙永久封印。\n\n代价是融合者的神魂被彻底燃尽。\n\n「也就是说，」林星辰喃喃道，「不管我选融合还是拒绝，结果都是死。」\n\n融合=被本源燃尽。\n\n拒绝=天魔终将破开壁垒。\n\n他握紧了陨星剑，剑身上的裂纹在星光下格外刺眼。\n\n然后他想起了大帝残魂最后那句话——「或者，拒绝融合，以你自己的力量重新走一条路。」\n\n「不。」林星辰抬起头，目光穿透战场，直抵天魔裂隙的深处，「我不会拒绝——但我也不会被燃尽。」\n\n「我要开辟星海。把本源的力量炼化成我自己的——而不是让它来吞噬我。」\n\n星海境——修士体内自成一方小世界。若能在融合本源之前先开辟星海，就可以用星海容纳本源的全部力量而不被反噬。\n\n这第三条路，从来没有人成功过。\n\n但林星辰别无选择。",
               "subtasks": [],
-              "status": "drafted"
+              "status": "drafted",
+              "meta": {
+                "outline_node_id": "ch10",
+                "section_id": "sec-ch10",
+                "block_type": "narrative"
+              }
             }
           ],
-          "subtasks": []
+          "subtasks": [],
+          "meta": {
+            "outline_node_id": "ch10",
+            "draft_status": "drafted",
+            "draft_owner": "generate_draft_section"
+          }
         }
       },
       {
@@ -331,7 +555,30 @@
             "结尾突破星帝境——为第十二章最终决战蓄力"
           ],
           "visual_needs": [],
-          "expected_blocks": ["围剿开幕", "多线混战", "暗星对决", "剑无双反转", "突破契机"]
+          "expected_blocks": [
+            "围剿开幕",
+            "多线混战",
+            "暗星对决",
+            "剑无双反转",
+            "突破契机"
+          ],
+          "source_refs": [
+            "writing_context#document_summary",
+            "writing_context#style_profile",
+            "outline#ch11"
+          ],
+          "pending_subtasks": [
+            "二审时核对《第十一章 · 帝路争锋》required_points 的覆盖度",
+            "校验与相邻章节 relation_constraints 的衔接"
+          ],
+          "revision_notes": [
+            "《第十一章 · 帝路争锋》初稿节奏偏快，待 review 阶段细化"
+          ],
+          "meta": {
+            "node_id": "ch11",
+            "priority": "high",
+            "planning_owner": "plan_sections"
+          }
         },
         "draft": {
           "section_id": "sec-ch11",
@@ -342,17 +589,32 @@
               "heading": null,
               "content": "消息不知被谁泄露了。\n\n星辰本源的全部真相传遍了九州——不仅仅是传承，而是封印天魔裂隙的关键。于是，林星辰从英雄变成了通缉犯。\n\n幽冥教、天剑宗激进派、万妖谷——三大势力同时出兵，将他围困在星隐山脉。幽冥教要本源以开启裂隙（他们早已沦为天魔走狗），天剑宗激进派要强行夺走本源由他们来封印，万妖谷则是纯粹的趁火打劫。\n\n围攻者中，有当年天骄大会决赛的对手暗星——如今已是化星境巅峰，修炼血影魔功至大成。\n\n「林星辰，」暗星舔了舔嘴唇，「把本源交出来，我可以给你留个全尸。」\n\n「你废话还是这么多。」林星辰拔出了陨星剑。\n\n这一战打了七天七夜。",
               "subtasks": [],
-              "status": "drafted"
+              "status": "drafted",
+              "meta": {
+                "outline_node_id": "ch11",
+                "section_id": "sec-ch11",
+                "block_type": "narrative"
+              }
             },
             {
               "block_id": "blk-ch11-02",
               "heading": null,
               "content": "第五天，苏婉和墨玄带领青云宗残部杀入重围。苏婉的断臂处装上了一把义肢剑，剑招比断臂前更凌厉三分。\n\n第六天，一个意想不到的人出现了——剑无双。\n\n「我师父要我夺本源，」他拔剑站在林星辰身旁，剑尖却指向了天剑宗的追兵，「但我觉得师父错了。」\n\n后来九州史书记载了这一战：天剑宗大师兄阵前反戈，以一己之力挡住师门三十六位剑修，为林星辰争取了突破的时间。\n\n因为在第七天的日出时分，林星辰体内的星海，终于开辟了。\n\n他的气海深处诞生的不是一片虚无——而是满天星辰。\n\n星海境。\n\n「现在，」他抬起头，看向暗星，「我们继续刚才的话题。」\n\n暗星转身就跑。\n\n但星辰的速度更快。",
               "subtasks": [],
-              "status": "drafted"
+              "status": "drafted",
+              "meta": {
+                "outline_node_id": "ch11",
+                "section_id": "sec-ch11",
+                "block_type": "narrative"
+              }
             }
           ],
-          "subtasks": []
+          "subtasks": [],
+          "meta": {
+            "outline_node_id": "ch11",
+            "draft_status": "drafted",
+            "draft_owner": "generate_draft_section"
+          }
         }
       },
       {
@@ -382,7 +644,30 @@
             "开放式结尾为续作（域外天魔皇级）留空间"
           ],
           "visual_needs": [],
-          "expected_blocks": ["突破帝境", "终战", "选择守护", "登临帝位", "开放式结尾"]
+          "expected_blocks": [
+            "突破帝境",
+            "终战",
+            "选择守护",
+            "登临帝位",
+            "开放式结尾"
+          ],
+          "source_refs": [
+            "writing_context#document_summary",
+            "writing_context#style_profile",
+            "outline#ch12"
+          ],
+          "pending_subtasks": [
+            "二审时核对《第十二章 · 星辰大帝》required_points 的覆盖度",
+            "校验与相邻章节 relation_constraints 的衔接"
+          ],
+          "revision_notes": [
+            "《第十二章 · 星辰大帝》初稿节奏偏快，待 review 阶段细化"
+          ],
+          "meta": {
+            "node_id": "ch12",
+            "priority": "high",
+            "planning_owner": "plan_sections"
+          }
         },
         "draft": {
           "section_id": "sec-ch12",
@@ -393,17 +678,32 @@
               "heading": null,
               "content": "开辟星海后，林星辰将掌心的星核按进了胸口。\n\n这一次，本源的力量不再像洪水一样蛮横地冲击他的经脉——星海像一个无边无际的容器，毫无波澜地接纳了太古大帝的全部修为。\n\n没有挣扎。\n\n没有同化。\n\n大帝的残魂在星海中化作满天星斗，每一颗星星都是万年前的一段记忆、一个招式、一份感悟。它们不再是威胁，而是传承——真正的传承。\n\n星帝境。\n\n九州万年未曾出现过的最高境界，在这个注定不平凡的夜晚，重新降临人间。\n\n林星辰睁开眼时，发现自己已经不在星隐山脉。他站在九天之上——和万年前的大帝站在同一个位置。\n\n下方是九州大地，万家灯火。\n\n前方是天魔裂隙，漆黑如渊。\n\n而他身后，是漫天星辰。",
               "subtasks": [],
-              "status": "drafted"
+              "status": "drafted",
+              "meta": {
+                "outline_node_id": "ch12",
+                "section_id": "sec-ch12",
+                "block_type": "narrative"
+              }
             },
             {
               "block_id": "blk-ch12-02",
               "heading": null,
               "content": "各大势力的军队在山脚下停住了脚步。修为最高的几位掌门感受到了九天之上那股令人窒息的威压——比血冥子强百倍，比天劫更让人胆寒。\n\n那不是毁灭的气息。\n\n那是守护。\n\n林星辰没有杀任何人。他只是站在九天之上，将手按上了天魔裂隙的边缘。然后——天地变色。\n\n不是攻击，而是封印。\n\n以星帝境的全部修为为根基，以星辰本源为阵眼，他将整个天魔裂隙封进了一座由万千星辰构成的永恒阵法之中。裂隙没有消失——但任何天魔都无法再从中通过。\n\n做完这一切，他落回星隐山脉，气息已然跌落回了星海境。\n\n苏婉冲上前扶住他：「你这个疯子——为什么不用本源直接摧毁裂隙？」\n\n「因为封印可以加固，」林星辰喘着气，却笑了，「而摧毁——如果那道裂隙后面，真的有皇级天魔呢？」\n\n所有人沉默了。\n\n「喂。」剑无双抱着断剑，靠在树下，「你以后就是新的大帝了吧？」\n\n林星辰摇了摇头。\n\n「大帝是称号，不是名字。」他低头看着掌心的星核——此刻已化作一枚普通的透明晶石，里面封着一颗小小的星辰，「我叫林星辰。」\n\n「——星辰大帝这名字太难听了。」\n\n——\n\n那天夜里，林星辰独自坐在山巅，望着天魔裂隙的方向。封印很稳定，至少千年内不会有问题。\n\n但他没有告诉任何人——在封印裂隙的最后一刻，他从裂隙的深处感受到了一缕不该存在的意识。\n\n那缕意识冷漠、古老、强大到令人窒息——而且，它在看他。\n\n皇级天魔。\n\n不是传说。\n\n（全文完，待续。）",
               "subtasks": [],
-              "status": "drafted"
+              "status": "drafted",
+              "meta": {
+                "outline_node_id": "ch12",
+                "section_id": "sec-ch12",
+                "block_type": "narrative"
+              }
             }
           ],
-          "subtasks": []
+          "subtasks": [],
+          "meta": {
+            "outline_node_id": "ch12",
+            "draft_status": "drafted",
+            "draft_owner": "generate_draft_section"
+          }
         }
       }
     ]

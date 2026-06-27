@@ -1,10 +1,6 @@
-"""Writer-plugin tools.
-Each tool reads upstream artifact files by path
-(absolute or workspace-relative, as returned by get_artifact) and writes
-outputs to the SubAgent workspace, returning the output file's absolute
-path.  The LLM commits outputs at step end via
-save_artifact(content_type='file', value=<path>).  See
-docs/WriterAgent-Design.md for the v5 data models these mirror.
+"""Writer-plugin 工具函数。
+每个工具读取上游 artifact 文件，把输出写到 SubAgent 工作区，并返回输出文件的绝对路径，与 get_artifact 的返回一致。
+工具函数本身不负责落库，主 Agent 在 step 结束时调用 `save_artifact(content_type='file', value=<路径>)` 完成提交。
 """
 from __future__ import annotations
 
@@ -12,7 +8,7 @@ import json
 import os
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 from lazyllm import LOG
 
@@ -20,6 +16,7 @@ from lazymind.chat.engine.subagent.context import require_context
 from lazyllm.tools.writer.data_models import (
     AuditResult,
     DraftBlock,
+    DraftDocument,
     DraftSection,
     SectionInstruction,
     WritingContext,
@@ -45,10 +42,6 @@ def _load_mock(name: str) -> Any:
         return json.load(fh).get('data') or json.load(fh)
 
 
-def _read_text(name: str) -> str:
-    return (_MOCK_DIR / name).read_text(encoding='utf-8')
-
-
 def _write_artifact_file(key: str, payload: Any) -> str:
     path = _workspace_root() / f'{key}.json'
     text = payload if isinstance(payload, str) else json.dumps(payload, ensure_ascii=False, indent=2)
@@ -72,12 +65,6 @@ def _read_artifact_file(path: str) -> Any:
         raise
     LOG.info(f'[writer-tool] _read_artifact_file OK path={path} content={raw}')
     return data
-
-
-def _load_section_bundles() -> List[Dict[str, Any]]:
-    s1 = _load_mock('mock_draft_section_1.json')
-    s2 = _load_mock('mock_draft_section_2.json')
-    return s1['sections'] + s2['sections']
 
 
 def profile_resources(query: str) -> str:
@@ -126,98 +113,97 @@ def generate_outline(writing_context_path: str) -> str:
     return _write_artifact_file('outline', outline)
 
 
-def generate_section_instructions(outline_path: str, writing_context_path: str) -> str:
-    """基于大纲为每个顶层章节生成 SectionInstruction，产出 section_instructions artifact 的本地文件。
+def generate_section_instructions(outline_path: str, writing_context_path: str, batch: int) -> str:
+    """基于大纲为一批顶层章节生成 SectionInstruction，产出本批 section_instructions artifact 的本地文件。
+
+    本步分两批调用：batch=1 和 batch=2，每次返回不同的章节子集，调用方应分别对
+    section_instructions key 各 save_artifact 一次。
 
     Args:
         outline_path: outline 文件路径（绝对路径或 workspace 相对路径）。
         writing_context_path: writing_context 文件路径（绝对路径或 workspace 相对路径）。
+        batch: 批次号（1 或 2），决定取 mock_draft_section_{batch}.json 中的章节子集。
 
     Returns:
-        section_instructions 文件的绝对路径。请在 step 末尾对 section_instructions key
+        本批 section_instructions 文件的绝对路径。请在 step 末尾对 section_instructions key
         调 save_artifact(content_type='file', value=<此路径>) 以完成落库。
     """
-    LOG.info(f'[writer-tool] generate_section_instructions input outline_path={outline_path} writing_context_path={writing_context_path}')
+    LOG.info(f'[writer-tool] generate_section_instructions input outline_path={outline_path} writing_context_path={writing_context_path} batch={batch}')
     _read_artifact_file(outline_path)
     _read_artifact_file(writing_context_path)
-    instructions: List[Dict[str, Any]] = []
-    for sec in _load_section_bundles():
-        raw = dict(sec['instruction'])
-        raw['outline_node_id'] = sec['outline_node_id']
-        raw.setdefault('source_refs', [])
-        raw.setdefault('pending_subtasks', [])
-        raw.setdefault('revision_notes', [])
-        raw.setdefault('meta', {})
-        instructions.append(SectionInstruction(**raw).model_dump(mode='json'))
-    return _write_artifact_file('section_instructions', instructions)
+    bundle = _load_mock(f'mock_draft_section_{batch}.json')
+    instructions = [
+        SectionInstruction(**{**sec['instruction'], 'outline_node_id': sec['outline_node_id']}).model_dump(mode='json')
+        for sec in bundle['sections']
+    ]
+    return _write_artifact_file(f'section_instructions_{batch}', instructions)
 
 
-def generate_draft_section(section_instructions_path: str, writing_context_path: str) -> Dict[str, str]:
-    """按 section_instructions 逐章生成草稿：每章写为单独文件，装配为 draft_document 文件。
+def generate_draft_section(section_instructions_path: str, writing_context_path: str, batch: int) -> str:
+    """按本批 section_instructions 逐章生成草稿，产出本批 draft_sections artifact 的本地文件。
+
+    本步分两批调用：batch=1 和 batch=2，每次返回不同的章节草稿子集，调用方应分别对
+    draft_sections key 各 save_artifact 一次。全部章节的合并产物由 assemble_draft_document 单独装配。
 
     Args:
-        section_instructions_path: section_instructions 文件路径（绝对路径或 workspace 相对路径）。
+        section_instructions_path: 本批 section_instructions 文件路径（绝对路径或 workspace 相对路径）。
         writing_context_path: writing_context 文件路径（绝对路径或 workspace 相对路径）。
+        batch: 批次号（1 或 2），决定取 mock_draft_section_{batch}.json 中的章节子集。
 
     Returns:
-        包含 draft_sections_path 和 draft_document_path 的 dict。请在 step 末尾分别对
-        draft_sections 和 draft_document 两个 key 各调一次
-        save_artifact(content_type='file', value=<对应路径>) 以完成落库。
+        本批 draft_sections 文件的绝对路径。请在 step 末尾对 draft_sections key
+        调 save_artifact(content_type='file', value=<此路径>) 以完成落库。
     """
-    LOG.info(f'[writer-tool] generate_draft_section input section_instructions_path={section_instructions_path} writing_context_path={writing_context_path}')
-    instructions = _read_artifact_file(section_instructions_path)
+    LOG.info(f'[writer-tool] generate_draft_section input section_instructions_path={section_instructions_path} writing_context_path={writing_context_path} batch={batch}')
+    _read_artifact_file(section_instructions_path)
     _read_artifact_file(writing_context_path)
-    bundles_by_node = {b['outline_node_id']: b for b in _load_section_bundles()}
-    sections: List[Dict[str, Any]] = []
-    for instr in instructions:
-        node_id = instr['outline_node_id']
-        bundle = bundles_by_node.get(node_id, {})
-        draft = bundle.get('draft') or {}
-        section_id = draft.get('section_id', _new_id('sec'))
-        blocks_raw = draft.get('blocks', [])
-        if not draft:
-            blocks_raw = [{
-                'block_id': _new_id('b'),
-                'outline_node_id': node_id,
-                'section_id': section_id,
-                'heading': instr.get('section_title', '章节'),
-                'content': '(mock) 该章节未在 mock 数据中找到对应大纲节点。',
-                'subtasks': [],
-                'meta': {},
-            }]
-        blocks = [
-            DraftBlock(**{
-                'block_id': b.get('block_id', _new_id('b')),
-                'outline_node_id': node_id,
-                'section_id': b.get('section_id', section_id),
-                'heading': b.get('heading'),
-                'content': b.get('content', ''),
-                'subtasks': b.get('subtasks', []),
-                'meta': b.get('meta', {}),
-            }).model_dump(mode='json')
-            for b in blocks_raw
-        ]
-        sec_obj = DraftSection(
-            section_id=section_id,
-            outline_node_id=node_id,
-            title=draft.get('title', instr.get('section_title', '')),
-            instruction_id=instr.get('instruction_id'),
-            sub_sections=[],
-            blocks=blocks,
-            subtasks=draft.get('subtasks', []),
-            meta={},
-        )
-        sections.append(sec_obj.model_dump(mode='json'))
+    bundle = _load_mock(f'mock_draft_section_{batch}.json')
+    sections = [
+        DraftSection(
+            section_id=sec['draft'].get('section_id'),
+            outline_node_id=sec['outline_node_id'],
+            title=sec['draft'].get('title'),
+            instruction_id=sec['instruction'].get('instruction_id'),
+            blocks=[
+                DraftBlock(**{
+                    **b,
+                    'outline_node_id': sec['outline_node_id'],
+                    'section_id': sec['draft'].get('section_id'),
+                })
+                for b in sec['draft'].get('blocks', [])
+            ],
+            subtasks=sec['draft'].get('subtasks', []),
+            meta=sec['draft'].get('meta', {}),
+        ).model_dump(mode='json')
+        for sec in bundle['sections']
+    ]
+    return _write_artifact_file(f'draft_sections_{batch}', sections)
 
-    sections_path = _write_artifact_file('draft_sections', sections)
+
+def assemble_draft_document(draft_sections_path_1: str, draft_sections_path_2: str) -> str:
+    """合并两批 draft_sections 装配出完整的 DraftDocument，产出 draft_document artifact 的本地文件。
+
+    draft_document 是 cardinality=single 的产出，只在两批 draft_sections 都就绪后调用一次。
+
+    Args:
+        draft_sections_path_1: batch=1 的 draft_sections 文件路径（绝对路径或 workspace 相对路径）。
+        draft_sections_path_2: batch=2 的 draft_sections 文件路径（绝对路径或 workspace 相对路径）。
+
+    Returns:
+        draft_document 文件的绝对路径。请在 step 末尾对 draft_document key
+        调 save_artifact(content_type='file', value=<此路径>) 以完成落库。
+    """
+    LOG.info(f'[writer-tool] assemble_draft_document input draft_sections_path_1={draft_sections_path_1} draft_sections_path_2={draft_sections_path_2}')
+    sections_1 = _read_artifact_file(draft_sections_path_1)
+    sections_2 = _read_artifact_file(draft_sections_path_2)
     outline = _load_mock('mock_outline.json')
-    draft_doc = {
-        'draft_id': _new_id('dft'),
-        'title': outline.get('title', ''),
-        'sections': sections,
-    }
-    document_path = _write_artifact_file('draft_document', draft_doc)
-    return {'draft_sections_path': sections_path, 'draft_document_path': document_path}
+    draft_doc = DraftDocument(
+        draft_id=_new_id('dft'),
+        title=outline.get('title', ''),
+        sections=[*sections_1, *sections_2],
+        meta={},
+    ).model_dump(mode='json')
+    return _write_artifact_file('draft_document', draft_doc)
 
 
 def check_consistency(draft_path: str, writing_context_path: str) -> str:
@@ -265,7 +251,7 @@ def generate_writing_output(
     output_ = WritingOutput(
         output_id=_new_id('out'),
         title=draft.get('title', ''),
-        content=_read_text('mock_writing_output.md'),
+        content=(_MOCK_DIR / 'mock_writing_output.md').read_text(encoding='utf-8'),
         output_format='markdown',
         references=[],
         meta={},

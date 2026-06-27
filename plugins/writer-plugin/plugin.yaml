@@ -19,6 +19,7 @@ tool_scripts:
       - generate_outline
       - generate_section_instructions
       - generate_draft_section
+      - assemble_draft_document
       - check_consistency
       - generate_writing_output
 
