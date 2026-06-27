@@ -19,7 +19,7 @@ import (
 // resolveValuePaths normalises a human-uploaded value by ensuring it carries a stable
 // absolute path when the value contains a local file path.
 // Signed URL generation is intentionally NOT done here — signed URLs expire and must
-// be generated fresh on every API response (see signArtifactImagePath called from
+// be generated fresh on every API response (see enrichArtifactValue called from
 // enrichSlots and GetSlotItemVersionsByIndex).
 // Values that are not JSON objects with a path field are returned unchanged.
 func resolveValuePaths(raw json.RawMessage) json.RawMessage {
@@ -43,19 +43,10 @@ func resolveValuePaths(raw json.RawMessage) json.RawMessage {
 	return out
 }
 
-// signArtifactImagePath enriches an artifact value with a signed URL when it contains
-// a local file path. Works for both AI-generated artifacts and human-uploaded snapshots.
-// External http(s) URLs stored in the path field are moved to the url field for consistent
-// frontend handling. Local paths are signed fresh (avoiding stale signed URLs in the DB).
-// The path field is preserved alongside url so the algorithm layer can still read the file.
-// Values without a path field, or that already have a url field, are returned unchanged.
-// The contentType parameter is used only to skip non-image processing; pass "image" when
-// the content type is known, or pass "" to attempt signing for any path-bearing value.
-func signArtifactImagePath(raw json.RawMessage, contentType string) json.RawMessage {
+// enrichArtifactValue signs the local path for browser access.
+// The contentType parameter is unused.
+func enrichArtifactValue(raw json.RawMessage, contentType string) json.RawMessage {
 	if len(raw) == 0 {
-		return raw
-	}
-	if contentType != "" && contentType != "image" {
 		return raw
 	}
 	var m map[string]any
@@ -271,7 +262,7 @@ func enrichSlots(ctx context.Context, db *gorm.DB, sessionID string, slots []slo
 			haErr := db.WithContext(ctx).Where("id = ?", *slot.HumanArtifactID).First(&ha).Error
 			if haErr == nil {
 				resolvedContentType = resolveContentType(ha.ContentType, ha.Value)
-				resolved = signArtifactImagePath(ha.Value, resolvedContentType)
+				resolved = enrichArtifactValue(ha.Value, resolvedContentType)
 				resolvedCaption = ha.Caption
 			} else {
 				fmt.Printf("[enrichSlots] WARN: HumanArtifactID=%s not found for slot_id=%s list_index=%v: %v\n",
@@ -288,7 +279,7 @@ func enrichSlots(ctx context.Context, db *gorm.DB, sessionID string, slots []slo
 					if artifactsByTask[k][j].Seq == *slot.ArtifactSeq {
 						a := &artifactsByTask[k][j]
 						resolvedContentType = resolveContentType(a.ContentType, a.Value)
-						resolved = signArtifactImagePath(a.Value, resolvedContentType)
+						resolved = enrichArtifactValue(a.Value, resolvedContentType)
 						resolvedCaption = a.Caption
 						break
 					}
@@ -305,7 +296,7 @@ func enrichSlots(ctx context.Context, db *gorm.DB, sessionID string, slots []slo
 
 		// Legacy fallback: ContentSnapshot for pre-migration rows.
 		if resolved == nil && len(slot.ContentSnapshot) > 0 {
-			resolved = signArtifactImagePath(slot.ContentSnapshot, "")
+			resolved = enrichArtifactValue(slot.ContentSnapshot, "")
 		}
 
 		if resolved == nil {

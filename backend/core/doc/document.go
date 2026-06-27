@@ -133,7 +133,10 @@ func fileRelativePath(fullPath string) string {
 		return ""
 	}
 	cleanPath := filepath.Clean(p)
-	roots := []string{strings.TrimSpace(uploadRoot())}
+	roots := []string{
+		strings.TrimSpace(uploadRoot()),
+		strings.TrimSpace(subagentWorkspaceRoot()),
+	}
 	for _, root := range roots {
 		if root == "" {
 			continue
@@ -325,7 +328,19 @@ func GetSignedStaticFile(w http.ResponseWriter, r *http.Request) {
 		common.ReplyErr(w, "invalid signature", http.StatusForbidden)
 		return
 	}
-	fullPath := filepath.Join(uploadRoot(), filepath.FromSlash(relPath))
+	// The file may live under either the uploads root or the subagent workspace
+	// root; resolve to whichever actually exists on disk.
+	candidates := []string{
+		filepath.Join(uploadRoot(), filepath.FromSlash(relPath)),
+		filepath.Join(subagentWorkspaceRoot(), filepath.FromSlash(relPath)),
+	}
+	fullPath := candidates[0]
+	for _, c := range candidates {
+		if _, err := os.Stat(c); err == nil {
+			fullPath = c
+			break
+		}
+	}
 	inline := !strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("download")), "1") &&
 		!strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("download")), "true")
 	streamLocalFile(w, fullPath, filepath.Base(fullPath), "", inline)
