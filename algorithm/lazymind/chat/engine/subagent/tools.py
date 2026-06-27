@@ -121,6 +121,18 @@ def save_artifact(key: str, value: Any, content_type: str = 'text',
         A confirmation that the artifact was saved.
     """
     ctx = require_context()
+    # Reject keys not declared in this step's outputs. This stops the model from
+    # inventing its own artifact keys (e.g. dumping self-generated prose under a
+    # made-up key) instead of calling the plugin-declared tools.
+    if ctx.output_artifact_keys and key not in ctx.output_artifact_keys:
+        return tool_success('save_artifact', {
+            'status': 'error',
+            'message': (
+                f"Key '{key}' is not a declared output of this step "
+                f"(allowed: {', '.join(ctx.output_artifact_keys)}). "
+                f"Call the plugin tools declared in the objective and save only the declared keys."
+            ),
+        })
     ct = content_type if content_type in _CONTENT_TYPES else 'text'
     built, actual_ct = _build_artifact_value(value, ct)
     if source_tool:

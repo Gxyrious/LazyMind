@@ -110,8 +110,12 @@ def evaluate_step(
 
     try:
         llm = lazyllm.AutoModel(model='llm')
+        LOG.info(f'[DriverAgent][prompt] plugin={plugin_id} step={step_id} system_prompt_len={len(driver_prompt)} user_msg_len={len(user_msg)}')
+        LOG.info(f'[DriverAgent][user_msg] plugin={plugin_id} step={step_id} msg={user_msg}')
         response = llm(user_msg, system_prompt=driver_prompt)
-        return _parse_verdict(str(response or ''))
+        verdict, reason = _parse_verdict(str(response or ''))
+        LOG.info(f'[DriverAgent][response] plugin={plugin_id} step={step_id} verdict={verdict} reason={reason}')
+        return verdict, reason
     except Exception as exc:
         LOG.warning('[DriverAgent] LLM call failed for plugin=%s step=%s: %s', plugin_id, step_id, exc)
         return {'verdict': 'PASS', 'reason': 'DriverAgent unavailable; defaulting to PASS.'}

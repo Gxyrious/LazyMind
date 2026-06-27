@@ -78,15 +78,19 @@ def _resolve_plugin_step_tools(params: Dict[str, Any]) -> Optional[List[str]]:
         if _loader.get_plugin(plugin_id) is None:
             return None
         declared: List[str] = step_config.get('tools', [])
+        # Framework tools are always available unless the step explicitly
+        # excludes them via state.yml's `exclude_framework_tools` list.
         # Mirror _merge_tools from plugin_manager: prepend framework tools.
         _FRAMEWORK_TOOLS = [
             'save_artifact', 'get_artifact', 'list_artifacts',
             'list_knowledge_bases', 'read_user_attachment', 'find_user_attachment',
             'find_artifact', 'patch_artifact', 'discard_draft',
         ]
+        excluded = set(step_config.get('exclude_framework_tools', []) or [])
+        framework_tools = [t for t in _FRAMEWORK_TOOLS if t not in excluded]
         seen: set = set()
         merged: List[str] = []
-        for t in _FRAMEWORK_TOOLS + list(declared):
+        for t in framework_tools + list(declared):
             if t not in seen:
                 seen.add(t)
                 merged.append(t)
@@ -142,14 +146,14 @@ def _resolve_runtime_tools(explicit: Optional[List[str]], plugin_id: Optional[st
     return build_agent_tools(list(DEFAULT_TOOLS))
 
 
-def _build_subagent_tools(extra_tools: Optional[List[Any]]) -> List[Any]:
-    """Combine mandatory SubAgent infra tools with optional domain tools.
+def _build_subagent_tools(extra_tools: Optional[List[Any]],
+                          excluded: Optional[set] = None) -> List[Any]:
+    """Combine SubAgent infra tools with optional domain tools.
 
-    save_artifact, get_artifact, list_artifacts, list_knowledge_bases,
-    read_user_attachment, and find_user_attachment are always included regardless of
-    the explicit tools list — they are the SubAgent's core interface and must never
-    be stripped by plugin tool configurations.
+    The base set (save_artifact, get_artifact, ...) is always available unless a
+    step explicitly excludes some via state.yml's `exclude_framework_tools` list.
     """
+    excluded = excluded or set()
     base = [
         subagent_tools.save_artifact,
         subagent_tools.get_artifact,
@@ -161,9 +165,24 @@ def _build_subagent_tools(extra_tools: Optional[List[Any]]) -> List[Any]:
         subagent_tools.patch_artifact,
         subagent_tools.discard_draft,
     ]
+    base = [t for t in base if t.__name__ not in excluded]
     if extra_tools:
         base.extend(extra_tools)
     return base
+
+
+def _resolve_excluded_framework_tools(params: Dict[str, Any]) -> set:
+    """Read `exclude_framework_tools` from the step's state.yml config."""
+    try:
+        from lazymind.chat.plugin import plugin_loader as _loader
+        plugin_id: str = params.get('plugin_id', '')
+        step_id: str = params.get('step_id', '')
+        if not plugin_id or not step_id:
+            return set()
+        step_config = _loader.get_step_config(plugin_id, step_id)
+        return set(step_config.get('exclude_framework_tools', []) or [])
+    except Exception:
+        return set()
 
 
 _ZH_RE = re.compile('[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]')
@@ -292,7 +311,7 @@ def _objective_prompt(ctx: SubAgentContext, db: Optional['SubAgentDB'] = None) -
         'Only use the tools explicitly listed in your tool set.',
     ]
     if is_zh:
-        lines.append('You MUST respond and write all artifact content in Simplified Chinese(简体中文).')
+        lines.append('You MUST respond in Simplified Chinese(简体中文).')
     lines += [
         '',
         f'Objective: {ctx.objective}',
@@ -329,7 +348,9 @@ def _objective_prompt(ctx: SubAgentContext, db: Optional['SubAgentDB'] = None) -
     lines.append(
         'You MUST call save_artifact for EACH of the following keys before you finish — '
         'do NOT skip this step even if you have already written the results in plain text: '
-        + ', '.join(ctx.output_artifact_keys)
+        + ', '.join(ctx.output_artifact_keys) + '. '
+        'The value can be content you generated, or a file path returned by another tool '
+        '(use content_type="file" in that case; the artifact IS the path, no need to read the file).'
     )
     lines.append(
         'IMPORTANT: Writing results in your reply text does NOT count as saving an artifact. '
@@ -525,9 +546,10 @@ async def run_subagent_stream(
 
         llm = AutoModel(model='llm')
         runtime_tools = _resolve_runtime_tools(tools, plugin_id=params.get('plugin_id') or None)
+        excluded = _resolve_excluded_framework_tools(params)
         agent = build_react_agent(
             llm=llm,
-            tools=_build_subagent_tools(runtime_tools),
+            tools=_build_subagent_tools(runtime_tools, excluded=excluded),
             force_summarize_context=ctx.objective,
         )
 
@@ -548,6 +570,7 @@ async def run_subagent_stream(
             if kind == 'event':
                 item = payload
                 tag = item.get('tag')
+                LOG.info(f'[SubAgent][llm] task={task_id} step={ctx.params.get("step_id","")} tag={tag}')
                 # Persist tool steps for resume / breakpoint recovery.
                 if tag in ('tool_calls', 'tool_results'):
                     # Flush accumulated text/think as a single step before tool call.
@@ -573,6 +596,8 @@ async def run_subagent_stream(
                             if isinstance(tc, dict)
                         ]
                         if calls:
+                            for c in calls:
+                                LOG.info(f'[SubAgent][tool_call] task={task_id} tool={c["name"]} args={json.dumps(c["args"], ensure_ascii=False)}')
                             yield _sse({'type': 'tool_calls', 'task_id': task_id, 'tool_calls': calls})
                     elif tag == 'tool_results':
                         results = [
@@ -585,11 +610,14 @@ async def run_subagent_stream(
                             if isinstance(tr, dict)
                         ]
                         if results:
+                            for r in results:
+                                LOG.info(f'[SubAgent][tool_result] task={task_id} tool={r["name"]} result={r["result"][:500]}')
                             yield _sse({'type': 'tool_results', 'task_id': task_id, 'tool_results': results})
                     # Drain artifact events emitted synchronously by tools.
                     while emitted:
                         ev = emitted.pop(0)
                         ev['task_id'] = task_id
+                        LOG.info(f'[SubAgent][artifact] task={task_id} key={ev.get("artifact_key")} seq={ev.get("seq")}')
                         yield _sse(ev)
                     if tag == 'tool_results' and progress < 90:
                         progress = min(90, progress + 15)
@@ -598,6 +626,10 @@ async def run_subagent_stream(
                 # Translate all events (text/think/tool_calls/tool_results) via shared translator.
                 for frame in translator.feed(item):
                     ev_type = 'think' if frame.get('think') else 'text'
+                    chunk = frame.get('think') or frame.get('text') or ''
+                    if chunk:
+                        prefix = '[SubAgent][llm-think]' if ev_type == 'think' else '[SubAgent][llm-text]'
+                        LOG.info(f'{prefix} task={task_id} chunk={chunk}')
                     yield _sse({'type': ev_type, 'task_id': task_id,
                                 'think': frame.get('think'), 'text': frame.get('text')})
                     if ev_type == 'think':
