@@ -1,4 +1,5 @@
-"""Writer-plugin tools.  Each tool reads upstream artifact files by path
+"""Writer-plugin tools.
+Each tool reads upstream artifact files by path
 (absolute or workspace-relative, as returned by get_artifact) and writes
 outputs to the SubAgent workspace, returning the output file's absolute
 path.  The LLM commits outputs at step end via
@@ -57,19 +58,19 @@ def _write_artifact_file(key: str, payload: Any) -> str:
     return str(path)
 
 
-def _read_json(path: str) -> Any:
-    LOG.info(f'[writer-tool] _read_json begin path={path} exists={os.path.exists(path)}')
+def _read_artifact_file(path: str) -> Any:
+    LOG.info(f'[writer-tool] _read_artifact_file begin path={path} exists={os.path.exists(path)}')
     if not os.path.exists(path):
-        LOG.error(f'[writer-tool] _read_json FILE NOT FOUND path={path}')
+        LOG.error(f'[writer-tool] _read_artifact_file FILE NOT FOUND path={path}')
         raise FileNotFoundError(path)
     with open(path, 'r', encoding='utf-8') as fh:
         raw = fh.read()
     try:
         data = json.loads(raw)
     except ValueError:
-        LOG.error(f'[writer-tool] _read_json INVALID JSON path={path} raw={raw}')
+        LOG.error(f'[writer-tool] _read_artifact_file INVALID JSON path={path} raw={raw}')
         raise
-    LOG.info(f'[writer-tool] _read_json OK path={path} content={raw}')
+    LOG.info(f'[writer-tool] _read_artifact_file OK path={path} content={raw}')
     return data
 
 
@@ -104,7 +105,7 @@ def create_writing_context(resource_profiles_path: str, query: str) -> str:
         调 save_artifact(content_type='file', value=<此路径>) 以完成落库。
     """
     LOG.info(f'[writer-tool] create_writing_context input resource_profiles_path={resource_profiles_path}')
-    _read_json(resource_profiles_path)
+    _read_artifact_file(resource_profiles_path)
     ctx = WritingContext(**_load_mock('mock_writing_context.json')).model_dump(mode='json')
     return _write_artifact_file('writing_context', ctx)
 
@@ -120,7 +121,7 @@ def generate_outline(writing_context_path: str) -> str:
         调 save_artifact(content_type='file', value=<此路径>) 以完成落库。
     """
     LOG.info(f'[writer-tool] generate_outline input writing_context_path={writing_context_path}')
-    _read_json(writing_context_path)
+    _read_artifact_file(writing_context_path)
     outline = WritingOutline(**_load_mock('mock_outline.json')).model_dump(mode='json')
     return _write_artifact_file('outline', outline)
 
@@ -137,8 +138,8 @@ def generate_section_instructions(outline_path: str, writing_context_path: str) 
         调 save_artifact(content_type='file', value=<此路径>) 以完成落库。
     """
     LOG.info(f'[writer-tool] generate_section_instructions input outline_path={outline_path} writing_context_path={writing_context_path}')
-    _read_json(outline_path)
-    _read_json(writing_context_path)
+    _read_artifact_file(outline_path)
+    _read_artifact_file(writing_context_path)
     instructions: List[Dict[str, Any]] = []
     for sec in _load_section_bundles():
         raw = dict(sec['instruction'])
@@ -164,8 +165,8 @@ def generate_draft_section(section_instructions_path: str, writing_context_path:
         save_artifact(content_type='file', value=<对应路径>) 以完成落库。
     """
     LOG.info(f'[writer-tool] generate_draft_section input section_instructions_path={section_instructions_path} writing_context_path={writing_context_path}')
-    instructions = _read_json(section_instructions_path)
-    _read_json(writing_context_path)
+    instructions = _read_artifact_file(section_instructions_path)
+    _read_artifact_file(writing_context_path)
     bundles_by_node = {b['outline_node_id']: b for b in _load_section_bundles()}
     sections: List[Dict[str, Any]] = []
     for instr in instructions:
@@ -231,8 +232,8 @@ def check_consistency(draft_path: str, writing_context_path: str) -> str:
         调 save_artifact(content_type='file', value=<此路径>) 以完成落库。
     """
     LOG.info(f'[writer-tool] check_consistency input draft_path={draft_path} writing_context_path={writing_context_path}')
-    _read_json(draft_path)
-    _read_json(writing_context_path)
+    _read_artifact_file(draft_path)
+    _read_artifact_file(writing_context_path)
     audit = AuditResult(**_load_mock('mock_review_report.json')).model_dump(mode='json')
     report = {
         'report_id': _new_id('rep'),
@@ -258,9 +259,9 @@ def generate_writing_output(
         调 save_artifact(content_type='file', value=<此路径>) 以完成落库。
     """
     LOG.info(f'[writer-tool] generate_writing_output input draft_path={draft_path} review_report_path={review_report_path} writing_context_path={writing_context_path}')
-    draft = _read_json(draft_path)
-    _read_json(review_report_path)
-    _read_json(writing_context_path)
+    draft = _read_artifact_file(draft_path)
+    _read_artifact_file(review_report_path)
+    _read_artifact_file(writing_context_path)
     output_ = WritingOutput(
         output_id=_new_id('out'),
         title=draft.get('title', ''),
