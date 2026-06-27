@@ -32,19 +32,28 @@ transitions:
 steps:
   build_context:
     label: Build Context
-    allow_llm_save_artifact: false
     prompt: |
       用户的写作目标是：{{user_input}}
 
       {{runtime_instruction}}
 
-      本步先把写作上下文准备好。按顺序调用以下两个工具，完成后向用户简短回报即可。
-      1. `profile_resources(query="{{user_input}}")`
-      2. `create_writing_context(resource_profiles_key="resource_profiles", query="{{user_input}}")`
+      本步先把写作上下文准备好。
+
+      重要：本步产出全部由下方工具负责（工具写文件并返回文件绝对路径）。
+      不要在回复中直接编写任何写作产物 —— 工具拿到你的输入后会处理一切。
+
+      两个工具依次调用：
+      1. `profile_resources(query="{{user_input}}")` → 返回 resource_profiles 文件绝对路径
+      2. `create_writing_context(resource_profiles_path=<上一步返回的 path>, query="{{user_input}}")` → 返回 writing_context 文件绝对路径
+
+      收到每个路径后调 `save_artifact(key=<对应 key>, value=<路径>, content_type='file')` 完成落库。
     tools:
       - profile_resources
       - create_writing_context
     outputs:
+      - artifact_id: resource_profiles
+        content_type: json
+        slot_id: null
       - artifact_id: writing_context
         content_type: json
         slot_id: writing_context_slot
@@ -54,13 +63,21 @@ steps:
 
   generate_outline:
     label: Generate Outline
-    allow_llm_save_artifact: false
     prompt: |
       用户的写作目标是：{{user_input}}
 
       {{runtime_instruction}}
 
-      本步基于已有上下文生成结构化大纲。调用 `generate_outline(writing_context_key="writing_context")`，收到确认后向用户简短回报即可。
+      本步基于已有上下文生成结构化大纲。
+
+      重要：本步产出全部由下方工具负责（工具写文件并返回文件绝对路径）。
+      不要在回复中直接编写大纲内容 —— 工具会处理。
+
+      调用 `get_artifact(key='writing_context')` 取回上一 step 落库的 artifact，
+      value 里的 `path` 字段即为 writing_context 文件绝对路径。把它传给：
+      `generate_outline(writing_context_path=<取回的 path>)` → 返回 outline 文件绝对路径。
+
+      收到 path 后调 `save_artifact(key='outline', value=<路径>, content_type='file')` 完成落库。
     tools:
       - generate_outline
     inputs:
@@ -76,13 +93,20 @@ steps:
 
   plan_sections:
     label: Plan Sections
-    allow_llm_save_artifact: false
     prompt: |
       用户的写作目标是：{{user_input}}
 
       {{runtime_instruction}}
 
-      本步为大纲中每章生成写作指令。调用 `generate_section_instructions(outline_key="outline", writing_context_key="writing_context")`，收到确认后向用户简短回报即可。
+      本步为大纲中每章生成写作指令。
+
+      重要：本步产出全部由下方工具负责。不要在回复中直接编写任何章节指令。
+
+      调用 `get_artifact` 取回 `writing_context` 和 `outline` 的 path，传给：
+      `generate_section_instructions(outline_path=<path>, writing_context_path=<path>)`
+      → 返回 section_instructions 文件绝对路径。
+
+      收到 path 后调 `save_artifact(key='section_instructions', value=<路径>, content_type='file')` 完成落库。
     tools:
       - generate_section_instructions
     inputs:
@@ -100,13 +124,20 @@ steps:
 
   generate_draft:
     label: Generate Draft
-    allow_llm_save_artifact: false
     prompt: |
       用户的写作目标是：{{user_input}}
 
       {{runtime_instruction}}
 
-      本步按章节指令串行撰写初稿。调用 `generate_draft_section(section_instructions_key="section_instructions", writing_context_key="writing_context")`，收到确认后向用户简短回报即可。
+      本步按章节指令串行撰写初稿。
+
+      重要：本步正文产出全部由下方工具负责。不要在回复中直接撰写正文。
+
+      调用 `get_artifact` 取回 `writing_context` 和 `section_instructions` 的 path，传给：
+      `generate_draft_section(writing_context_path=<path>, section_instructions_path=<path>)`
+      → 返回的 dict 同时包含 `draft_sections_path` 和 `draft_document_path`。
+
+      对这两个 key 各调一次 `save_artifact(content_type='file', value=<对应路径>)` 完成落库。
     tools:
       - generate_draft_section
     inputs:
@@ -129,13 +160,19 @@ steps:
 
   review_document:
     label: Review Document
-    allow_llm_save_artifact: false
     prompt: |
       用户的写作目标是：{{user_input}}
 
       {{runtime_instruction}}
 
-      本步对初稿做一致性 / 质量审阅。调用 `check_consistency(draft_key="draft_document", writing_context_key="writing_context")`，收到确认后向用户简短回报即可。
+      本步对初稿做一致性 / 质量审阅。
+
+      重要：本步产出全部由下方工具负责。不要在回复中直接撰写审阅报告。
+
+      调用 `get_artifact` 取回 `writing_context` 和 `draft_document` 的 path，传给：
+      `check_consistency(writing_context_path=<path>, draft_path=<path>)` → 返回 review_report 文件绝对路径。
+
+      收到 path 后调 `save_artifact(key='review_report', value=<路径>, content_type='file')` 完成落库。
     tools:
       - check_consistency
     inputs:
@@ -153,13 +190,20 @@ steps:
 
   finalize_report:
     label: Finalize Report
-    allow_llm_save_artifact: false
     prompt: |
       用户的写作目标是：{{user_input}}
 
       {{runtime_instruction}}
 
-      本步结合审阅意见产出最终成稿。调用 `generate_writing_output(draft_key="draft_document", review_report_key="review_report", writing_context_key="writing_context")`，收到确认后向用户简短回报即可。
+      本步结合审阅意见产出最终成稿。
+
+      重要：本步正文产出全部由下方工具负责。不要在回复中直接撰写正文。
+
+      调用 `get_artifact` 取回 `writing_context`、`draft_document` 和 `review_report` 的 path，传给：
+      `generate_writing_output(writing_context_path=<path>, draft_path=<path>, review_report_path=<path>)`
+      → 返回 writing_output 文件绝对路径。
+
+      收到 path 后调 `save_artifact(key='writing_output', value=<路径>, content_type='file')` 完成落库。
     tools:
       - generate_writing_output
     inputs:
