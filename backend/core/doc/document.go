@@ -215,9 +215,16 @@ func setDocumentURI(doc *Doc) {
 
 func streamLocalFile(w http.ResponseWriter, fullPath, filename, fallbackContentType string, inline bool) {
 	cleanPath := filepath.Clean(strings.TrimSpace(fullPath))
-	root := filepath.Clean(uploadRoot())
-	rel, relErr := filepath.Rel(root, cleanPath)
-	if cleanPath == "" || relErr != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+	// Accept files under either the uploads root or the subagent workspace root.
+	allowed := false
+	for _, root := range []string{filepath.Clean(uploadRoot()), filepath.Clean(subagentWorkspaceRoot())} {
+		rel, relErr := filepath.Rel(root, cleanPath)
+		if relErr == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			allowed = true
+			break
+		}
+	}
+	if cleanPath == "" || !allowed {
 		common.ReplyErr(w, "file path is invalid", http.StatusBadRequest)
 		return
 	}
