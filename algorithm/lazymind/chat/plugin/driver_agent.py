@@ -195,11 +195,22 @@ def evaluate_step(
         _init_driver_sid(session_id, plugin_id, step_id)
         driver_db = _init_driver_artifact_context(session_id, plugin_id, step_id)
         llm = _build_llm(llm_config)
+        LOG.info(
+            f'[DriverAgent][prompt] plugin={plugin_id} step={step_id} session={session_id} '
+            f'system_prompt_len={len(driver_prompt)} user_msg_len={len(user_msg)} '
+            f'tools={len(tools)} has_artifact_ctx={driver_db is not None}'
+        )
+        LOG.info(f'[DriverAgent][user_msg] plugin={plugin_id} step={step_id} msg={user_msg}')
         if tools:
             response = llm(user_msg, system_prompt=driver_prompt, tools=tools)
         else:
             response = llm(user_msg, system_prompt=driver_prompt)
         cleaned = _clean_message(str(response or ''))
+        LOG.info(
+            f'[DriverAgent][response] plugin={plugin_id} step={step_id} '
+            f'raw_len={len(str(response or ""))} cleaned_len={len(cleaned)} '
+            f'message={cleaned!r}'
+        )
         if cleaned:
             return {'message': cleaned}
         raise DriverEvaluationError(
