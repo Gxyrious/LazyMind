@@ -10,7 +10,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict
 
-from lazyllm import LOG
+from lazyllm import LOG, AutoModel
 
 from lazymind.chat.engine.subagent.context import require_context
 from lazyllm.tools.writer.data_models import (
@@ -19,13 +19,33 @@ from lazyllm.tools.writer.data_models import (
     DraftDocument,
     DraftSection,
     SectionInstruction,
-    WritingContext,
+    WritingTask,
     WritingOutline,
     WritingOutput,
 )
+from lazyllm.tools.writer.tools import (
+    WriterContextTools,
+    WriterPlanningTools,
+    WriterResourceTools,
+)
+
+
+_LLM_CACHE: Dict[str, Any] = {}
+
+def _shared_llm() -> Any:
+    ctx = require_context()
+    key = ctx.task_id
+    if key not in _LLM_CACHE:
+        _LLM_CACHE[key] = AutoModel(model='llm')
+    return _LLM_CACHE[key]
 
 
 _MOCK_DIR = Path(__file__).resolve().parent.parent / 'mock'
+
+def _load_mock(name: str) -> Any:
+    with open(_MOCK_DIR / name, 'r', encoding='utf-8') as fh:
+        raw = json.load(fh)
+    return raw.get('data') if isinstance(raw, dict) else raw
 
 
 def _workspace_root() -> Path:
@@ -37,122 +57,152 @@ def _new_id(prefix: str) -> str:
     return f'{prefix}_{uuid.uuid4().hex[:10]}'
 
 
-def _load_mock(name: str) -> Any:
-    with open(_MOCK_DIR / name, 'r', encoding='utf-8') as fh:
-        return json.load(fh).get('data') or json.load(fh)
-
-
-def _write_artifact_file(key: str, payload: Any) -> str:
-    path = _workspace_root() / f'{key}.json'
-    text = payload if isinstance(payload, str) else json.dumps(payload, ensure_ascii=False, indent=2)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding='utf-8')
-    LOG.info(f'[writer-tool] wrote artifact file key={key} path={path} size={len(text)} content={text}')
-    return str(path)
-
-
 def _read_artifact_file(path: str) -> Any:
+    """读取 plugin workspace 中的 artifact 文件，优先解包 Artifact 格式的 data 字段。"""
     LOG.info(f'[writer-tool] _read_artifact_file begin path={path} exists={os.path.exists(path)}')
     if not os.path.exists(path):
         LOG.error(f'[writer-tool] _read_artifact_file FILE NOT FOUND path={path}')
         raise FileNotFoundError(path)
     with open(path, 'r', encoding='utf-8') as fh:
-        raw = fh.read()
-    try:
-        data = json.loads(raw)
-    except ValueError:
-        LOG.error(f'[writer-tool] _read_artifact_file INVALID JSON path={path} raw={raw}')
-        raise
-    LOG.info(f'[writer-tool] _read_artifact_file OK path={path} content={raw}')
-    return data
+        raw = json.load(fh)
+    if isinstance(raw, dict) and 'data' in raw:
+        raw = raw['data']
+    LOG.info(f'[writer-tool] _read_artifact_file OK path={path} data={raw}')
+    return raw
 
 
-def profile_resources(query: str) -> str:
-    """识别输入资源的写作角色，产出 resource_profiles artifact 的本地文件。
+from lazyllm.tools.writer.utils import save_artifact_json
+
+
+def build_writing_task(query: str) -> str:
+    """构造 WritingTask 并产出 writing_task Artifact 文件。
 
     Args:
         query: 用户原始写作请求（来自 user_input）。
 
     Returns:
-        resource_profiles 文件的绝对路径。请在 step 末尾对 resource_profiles key
-        调 save_artifact(content_type='file', value=<此路径>) 以完成落库。
+        writing_task Artifact 文件的绝对路径。
     """
-    return _write_artifact_file('resource_profiles', [])
+    LOG.info(f'[writer-tool] build_writing_task input query={query!r}')
+    task = WritingTask(query=query, task_type='write') # TODO: 借助LLM进行精细化的构造
+    path = _workspace_root() / 'writing_task.json'
+    save_artifact_json(task, str(path), created_by='build_writing_task')
+    LOG.info(f'[writer-tool] build_writing_task produced writing_task artifact path={path}')
+    return str(path)
 
 
-def create_writing_context(resource_profiles_path: str, query: str) -> str:
-    """基于 resource_profiles 初始化 WritingContext，产出 writing_context artifact 的本地文件。
+def profile_resources(writing_task_path: str) -> str:
+    """产出 resource_profiles Artifact 文件。
 
     Args:
-        resource_profiles_path: 上一工具返回的 resource_profiles 文件绝对路径。
-        query: 用户原始写作请求（用于主题解析）。
+        writing_task_path: 上一步产出的 writing_task Artifact 文件绝对路径。
 
     Returns:
-        writing_context 文件的绝对路径。请在 step 末尾对 writing_context key
-        调 save_artifact(content_type='file', value=<此路径>) 以完成落库。
+        resource_profiles Artifact 文件的绝对路径。
     """
-    LOG.info(f'[writer-tool] create_writing_context input resource_profiles_path={resource_profiles_path}')
+    LOG.info(f'[writer-tool] profile_resources input writing_task_path={writing_task_path}')
+    _read_artifact_file(writing_task_path)
+    ctx = require_context()
+    files_by_turn = ctx.params.get('history_files_per_turn') or {}
+    all_files = [p for paths in files_by_turn.values() for p in paths]
+    LOG.info(f'[writer-tool] profile_resources history_files_per_turn={files_by_turn} all_files_count={len(all_files)} all_files={all_files}')
+    input_resources = [_to_input_resource(p) for p in all_files]
+    LOG.info(f'[writer-tool] profile_resources input_resources={[r.model_dump() for r in input_resources]}')
+    result = WriterResourceTools(
+        llm=_shared_llm(),
+        artifact_store=str(_workspace_root()),
+    ).profile_resources(task=writing_task_path, input_resources=input_resources)
+    LOG.info(f'[writer-tool] profile_resources produced resource_profiles artifact counts={result["metadata"]["counts"]}')
+    return result['artifact_path']
+
+
+def _to_input_resource(abs_path: str) -> Any:
+    """从绝对路径构造 InputResource，默认 resource_type='file'（writer 用 SimpleDirectoryReader 读）。"""
+    from lazyllm.tools.writer.data_models import InputResource
+    return InputResource(
+        resource_id=os.path.basename(abs_path),
+        resource_type='file',
+        uri=abs_path,
+        title=os.path.basename(abs_path),
+        mime_type=None,
+        summary=None,
+        meta={},
+    )
+
+
+def create_writing_context(writing_task_path: str, resource_profiles_path: str) -> str:
+    """产出 writing_context Artifact 文件。
+
+    Args:
+        writing_task_path: writing_task Artifact 文件绝对路径。
+        resource_profiles_path: resource_profiles Artifact 文件绝对路径。
+
+    Returns:
+        writing_context Artifact 文件的绝对路径。
+    """
+    LOG.info(f'[writer-tool] create_writing_context input writing_task_path={writing_task_path} resource_profiles_path={resource_profiles_path}')
+    _read_artifact_file(writing_task_path)
     _read_artifact_file(resource_profiles_path)
-    ctx = WritingContext(**_load_mock('mock_writing_context.json')).model_dump(mode='json')
-    return _write_artifact_file('writing_context', ctx)
+    result = WriterContextTools(
+        llm=None,
+        artifact_store=str(_workspace_root()),
+    ).create_writing_context(task=writing_task_path, resource_profiles=resource_profiles_path)
+    LOG.info(f'[writer-tool] create_writing_context produced writing_context artifact {result}')
+    return result['artifact_path']
 
 
-def generate_outline(writing_context_path: str) -> str:
-    """基于 WritingContext 生成结构化大纲，产出 outline artifact 的本地文件。
+def generate_outline(writing_task_path: str, writing_context_path: str) -> str:
+    """产出 outline Artifact 文件。
 
     Args:
-        writing_context_path: writing_context 文件路径（绝对路径或 workspace 相对路径）。
+        writing_task_path: writing_task Artifact 文件绝对路径。
+        writing_context_path: writing_context Artifact 文件绝对路径。
 
     Returns:
-        outline 文件的绝对路径。请在 step 末尾对 outline key
-        调 save_artifact(content_type='file', value=<此路径>) 以完成落库。
+        outline Artifact 文件的绝对路径。
     """
-    LOG.info(f'[writer-tool] generate_outline input writing_context_path={writing_context_path}')
+    LOG.info(f'[writer-tool] generate_outline input writing_task_path={writing_task_path} writing_context_path={writing_context_path}')
+    _read_artifact_file(writing_task_path)
     _read_artifact_file(writing_context_path)
-    outline = WritingOutline(**_load_mock('mock_outline.json')).model_dump(mode='json')
-    return _write_artifact_file('outline', outline)
+    result = WriterPlanningTools(
+        llm=_shared_llm(),
+        artifact_store=str(_workspace_root()),
+    ).generate_outline(task=writing_task_path, context=writing_context_path)
+    LOG.info(f'[writer-tool] generate_outline produced outline artifact {result}')
+    return result['artifact_path']
 
 
-def generate_section_instructions(outline_path: str, writing_context_path: str, batch: int) -> str:
-    """基于大纲为一批顶层章节生成 SectionInstruction，产出本批 section_instructions artifact 的本地文件。
-
-    本步分两批调用：batch=1 和 batch=2，每次返回不同的章节子集，调用方应分别对
-    section_instructions key 各 save_artifact 一次。
+def generate_section_instructions(outline_path: str, writing_context_path: str) -> str:
+    """产出 section_instructions Artifact 文件（包含完整 SectionInstructionList）。
 
     Args:
-        outline_path: outline 文件路径（绝对路径或 workspace 相对路径）。
-        writing_context_path: writing_context 文件路径（绝对路径或 workspace 相对路径）。
-        batch: 批次号（1 或 2），决定取 mock_draft_section_{batch}.json 中的章节子集。
+        outline_path: outline Artifact 文件绝对路径。
+        writing_context_path: writing_context Artifact 文件绝对路径。
 
     Returns:
-        本批 section_instructions 文件的绝对路径。请在 step 末尾对 section_instructions key
-        调 save_artifact(content_type='file', value=<此路径>) 以完成落库。
+        section_instructions Artifact 文件的绝对路径。
     """
-    LOG.info(f'[writer-tool] generate_section_instructions input outline_path={outline_path} writing_context_path={writing_context_path} batch={batch}')
+    LOG.info(f'[writer-tool] generate_section_instructions input outline_path={outline_path} writing_context_path={writing_context_path}')
     _read_artifact_file(outline_path)
     _read_artifact_file(writing_context_path)
-    bundle = _load_mock(f'mock_draft_section_{batch}.json')
-    instructions = [
-        SectionInstruction(**{**sec['instruction'], 'outline_node_id': sec['outline_node_id']}).model_dump(mode='json')
-        for sec in bundle['sections']
-    ]
-    return _write_artifact_file(f'section_instructions_{batch}', instructions)
+    result = WriterPlanningTools(
+        llm=_shared_llm(),
+        artifact_store=str(_workspace_root()),
+    ).generate_section_instructions(outline=outline_path, context=writing_context_path)
+    LOG.info(f'[writer-tool] generate_section_instructions produced section_instructions artifact {result}')
+    return result['artifact_path']
 
 
 def generate_draft_section(section_instructions_path: str, writing_context_path: str, batch: int) -> str:
-    """按本批 section_instructions 逐章生成草稿，产出本批 draft_sections artifact 的本地文件。
-
-    本步分两批调用：batch=1 和 batch=2，每次返回不同的章节草稿子集，调用方应分别对
-    draft_sections key 各 save_artifact 一次。全部章节的合并产物由 assemble_draft_document 单独装配。
+    """按 batch=1/2 产出本批 draft_sections Artifact 文件。
 
     Args:
-        section_instructions_path: 本批 section_instructions 文件路径（绝对路径或 workspace 相对路径）。
-        writing_context_path: writing_context 文件路径（绝对路径或 workspace 相对路径）。
-        batch: 批次号（1 或 2），决定取 mock_draft_section_{batch}.json 中的章节子集。
+        section_instructions_path: 本批 section_instructions 文件路径。
+        writing_context_path: writing_context 文件路径。
+        batch: 批次号（1 或 2）。
 
     Returns:
-        本批 draft_sections 文件的绝对路径。请在 step 末尾对 draft_sections key
-        调 save_artifact(content_type='file', value=<此路径>) 以完成落库。
+        draft_sections 文件的绝对路径。
     """
     LOG.info(f'[writer-tool] generate_draft_section input section_instructions_path={section_instructions_path} writing_context_path={writing_context_path} batch={batch}')
     _read_artifact_file(section_instructions_path)
@@ -174,24 +224,22 @@ def generate_draft_section(section_instructions_path: str, writing_context_path:
             ],
             subtasks=sec['draft'].get('subtasks', []),
             meta=sec['draft'].get('meta', {}),
-        ).model_dump(mode='json')
+        )
         for sec in bundle['sections']
     ]
-    return _write_artifact_file(f'draft_sections_{batch}', sections)
+    path = str(_workspace_root() / f'draft_sections_{batch}.json')
+    return save_artifact_json(sections, path, created_by='generate_draft_section')
 
 
 def assemble_draft_document(draft_sections_path_1: str, draft_sections_path_2: str) -> str:
-    """合并两批 draft_sections 装配出完整的 DraftDocument，产出 draft_document artifact 的本地文件。
-
-    draft_document 是 cardinality=single 的产出，只在两批 draft_sections 都就绪后调用一次。
+    """合并两批 draft_sections 产出 draft_document Artifact 文件。
 
     Args:
-        draft_sections_path_1: batch=1 的 draft_sections 文件路径（绝对路径或 workspace 相对路径）。
-        draft_sections_path_2: batch=2 的 draft_sections 文件路径（绝对路径或 workspace 相对路径）。
+        draft_sections_path_1: batch=1 的 draft_sections 文件路径。
+        draft_sections_path_2: batch=2 的 draft_sections 文件路径。
 
     Returns:
-        draft_document 文件的绝对路径。请在 step 末尾对 draft_document key
-        调 save_artifact(content_type='file', value=<此路径>) 以完成落库。
+        draft_document 文件的绝对路径。
     """
     LOG.info(f'[writer-tool] assemble_draft_document input draft_sections_path_1={draft_sections_path_1} draft_sections_path_2={draft_sections_path_2}')
     sections_1 = _read_artifact_file(draft_sections_path_1)
@@ -202,47 +250,47 @@ def assemble_draft_document(draft_sections_path_1: str, draft_sections_path_2: s
         title=outline.get('title', ''),
         sections=[*sections_1, *sections_2],
         meta={},
-    ).model_dump(mode='json')
-    return _write_artifact_file('draft_document', draft_doc)
+    )
+    path = str(_workspace_root() / 'draft_document.json')
+    return save_artifact_json(draft_doc, path, created_by='assemble_draft_document')
 
 
 def check_consistency(draft_path: str, writing_context_path: str) -> str:
-    """对草稿做一致性/质量审阅，产出 review_report artifact 的本地文件。
+    """产出 review_report Artifact 文件。
 
     Args:
-        draft_path: draft_document 文件路径（绝对路径或 workspace 相对路径）。
-        writing_context_path: writing_context 文件路径（绝对路径或 workspace 相对路径）。
+        draft_path: draft_document 文件路径。
+        writing_context_path: writing_context 文件路径。
 
     Returns:
-        review_report 文件的绝对路径。请在 step 末尾对 review_report key
-        调 save_artifact(content_type='file', value=<此路径>) 以完成落库。
+        review_report 文件的绝对路径。
     """
     LOG.info(f'[writer-tool] check_consistency input draft_path={draft_path} writing_context_path={writing_context_path}')
     _read_artifact_file(draft_path)
     _read_artifact_file(writing_context_path)
-    audit = AuditResult(**_load_mock('mock_review_report.json')).model_dump(mode='json')
+    audit = AuditResult(**_load_mock('mock_review_report.json'))
     report = {
         'report_id': _new_id('rep'),
         'target': 'draft_document',
         'result': audit,
         'meta': {},
     }
-    return _write_artifact_file('review_report', report)
+    path = str(_workspace_root() / 'review_report.json')
+    return save_artifact_json(report, path, created_by='check_consistency')
 
 
 def generate_writing_output(
     draft_path: str, review_report_path: str, writing_context_path: str,
 ) -> str:
-    """基于草稿和审阅报告产出最终成稿，产出 writing_output artifact 的本地文件。
+    """产出 writing_output Artifact 文件。
 
     Args:
-        draft_path: draft_document 文件路径（绝对路径或 workspace 相对路径）。
-        review_report_path: review_report 文件路径（绝对路径或 workspace 相对路径）。
-        writing_context_path: writing_context 文件路径（绝对路径或 workspace 相对路径）。
+        draft_path: draft_document 文件路径。
+        review_report_path: review_report 文件路径。
+        writing_context_path: writing_context 文件路径。
 
     Returns:
-        writing_output 文件的绝对路径。请在 step 末尾对 writing_output key
-        调 save_artifact(content_type='file', value=<此路径>) 以完成落库。
+        writing_output 文件的绝对路径。
     """
     LOG.info(f'[writer-tool] generate_writing_output input draft_path={draft_path} review_report_path={review_report_path} writing_context_path={writing_context_path}')
     draft = _read_artifact_file(draft_path)
@@ -250,10 +298,11 @@ def generate_writing_output(
     _read_artifact_file(writing_context_path)
     output_ = WritingOutput(
         output_id=_new_id('out'),
-        title=draft.get('title', ''),
+        title=draft.get('title', '') if isinstance(draft, dict) else getattr(draft, 'title', ''),
         content=(_MOCK_DIR / 'mock_writing_output.md').read_text(encoding='utf-8'),
         output_format='markdown',
         references=[],
         meta={},
-    ).model_dump(mode='json')
-    return _write_artifact_file('writing_output', output_)
+    )
+    path = str(_workspace_root() / 'writing_output.json')
+    return save_artifact_json(output_, path, created_by='generate_writing_output')

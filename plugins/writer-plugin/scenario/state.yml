@@ -35,32 +35,44 @@ steps:
     prompt: |
       {{runtime_instruction}}
 
-      本步准备写作上下文。先调 profile_resources(query="{{user_input}}") 拿到 resource_profiles 路径，把它作为 resource_profiles_path 传给 create_writing_context(query="{{user_input}}") 得到 writing_context 路径。resource_profiles 和 writing_context 分别用 save_artifact(content_type='file') 落库。
+      本步准备 writing_task、resource_profiles、writing_context 三件产物。
+
+      第一步：调 build_writing_task(query="{{user_input}}") 拿到 writing_task 路径，用 save_artifact(content_type='file', key='writing_task') 落库。
+
+      第二步：调 profile_resources(writing_task_path=<writing_task 路径>) 拿到 resource_profiles 路径，用 save_artifact(content_type='file', key='resource_profiles') 落库。
+
+      第三步：调 create_writing_context(writing_task_path=<writing_task 路径>, resource_profiles_path=<resource_profiles 路径>) 拿到 writing_context 路径，用 save_artifact(content_type='file', key='writing_context') 落库。
     tools:
+      - build_writing_task
       - profile_resources
       - create_writing_context
     outputs:
+      - artifact_id: writing_task
+        content_type: json
+        slot_id: writing_task_slot
       - artifact_id: resource_profiles
         content_type: json
-        slot_id: null
+        slot_id: resource_profiles_slot
       - artifact_id: writing_context
         content_type: json
         slot_id: writing_context_slot
     acceptance_criteria: |
-      writing_context 已保存；context_id 非空；document_summary.summary 非空、key_points 至少 1 条；style_profile 含 audience、formality、tone 三字段。
+      writing_task、resource_profiles、writing_context 三个 artifact 均已保存；writing_context.context_id 非空；document_summary.summary 非空、key_points 至少 1 条；style_profile 含 audience、formality、tone 三字段。
 
   generate_outline:
     label: Generate Outline
     prompt: |
       {{runtime_instruction}}
 
-      本步基于 writing_context 生成结构化大纲。调 get_artifact 取回 writing_context，传给 generate_outline，把返回的路径用 save_artifact(content_type='file', key='outline') 落库。
+      本步基于 writing_task + writing_context 生成结构化大纲。调 get_artifact 取回 writing_task 和 writing_context，传给 generate_outline(writing_task_path=<writing_task 路径>, writing_context_path=<writing_context 路径>)，把返回的路径用 save_artifact(content_type='file', key='outline') 落库。
     tools:
       - generate_outline
     exclude_framework_tools:
       - read_user_attachment
       - find_user_attachment
     inputs:
+      - artifact_id: writing_task
+        required: true
       - artifact_id: writing_context
         required: true
     outputs:
@@ -68,20 +80,14 @@ steps:
         content_type: json
         slot_id: outline_slot
     acceptance_criteria: |
-      outline 已保存；nodes 至少 3 个；每个 node 至少含 node_id、title、instruction 字段且非空。
+      outline 已保存；nodes 至少 3 个；每个 node 至少含 node_id、title、instruction、constraints 字段且非空。
 
   plan_sections:
     label: Plan Sections
     prompt: |
       {{runtime_instruction}}
 
-      本步为大纲中的章节分两批生成写作指令。调 get_artifact 取回 writing_context 和 outline。
-
-      第一批：调 generate_section_instructions(outline_path=<outline 路径>, writing_context_path=<writing_context 路径>, batch=1)，把返回的路径用 save_artifact(content_type='file', key='section_instructions') 落库。
-
-      第二批：调 generate_section_instructions(..., batch=2)，把返回的路径再次用 save_artifact(content_type='file', key='section_instructions') 落库。
-
-      两次调用返回不同的章节子集，合起来覆盖全部大纲节点。两次 save 都用同一个 key='section_instructions'，这样前端在同一个 slot 下看到两条结果。
+      本步为大纲中的所有顶层章节一次性生成写作指令。调 get_artifact 取回 writing_context 和 outline，调 generate_section_instructions(outline_path=<outline 路径>, writing_context_path=<writing_context 路径>)，把返回的路径用 save_artifact(content_type='file', key='section_instructions') 落库。
     tools:
       - generate_section_instructions
     exclude_framework_tools:
@@ -97,7 +103,7 @@ steps:
         content_type: json
         slot_id: section_instructions_slot
     acceptance_criteria: |
-      section_instructions 已保存两次（batch=1 与 batch=2 各一次）；两次合起来条目数与 outline.nodes 节点数一一对应；每条至少含 outline_node_id、section_title、section_goal、required_points 字段。
+      section_instructions 已保存；为 SectionInstructionList Artifact（data.instructions 为数组），条目数与 outline.nodes 节点数一一对应；每条至少含 outline_node_id、section_title、section_goal、required_points 字段。
 
   generate_draft:
     label: Generate Draft

@@ -43,6 +43,16 @@ ui:
       label: Context
       layout: list
       slots:
+        - id: writing_task_slot
+          label: Writing Task
+          type: text
+          cardinality: single
+          artifact_key: writing_task
+        - id: resource_profiles_slot
+          label: Resource Profiles
+          type: text
+          cardinality: single
+          artifact_key: resource_profiles
         - id: writing_context_slot
           label: Writing Context
           type: text
@@ -125,6 +135,8 @@ i18n:
       review: {label: 审阅}
       result: {label: 最终成稿}
     slots:
+      writing_task_slot: {label: 写作任务}
+      resource_profiles_slot: {label: 资源画像}
       writing_context_slot: {label: 写作上下文}
       outline_slot: {label: 大纲}
       section_instructions_slot: {label: 章节指令}
