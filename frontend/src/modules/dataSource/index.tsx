@@ -993,6 +993,9 @@ function mapScanSyncDetail(updateState: FileUpdateState, t: TFunction) {
   if (updateState === "deleted") {
     return t("admin.dataSourceFileUpdateDeletedDetail");
   }
+  if (updateState === "cleanup") {
+    return t("admin.dataSourceFileUpdateCleanupDetail");
+  }
   return t("admin.dataSourceFileUpdateUnchangedDetail");
 }
 
@@ -3900,7 +3903,7 @@ export default function DataSourceManagement() {
                   },
                 }}
                 tableLayout="fixed"
-                scroll={{ x: 1480, y: "calc(100vh - 300px)" }}
+                scroll={{ x: 1480, y: "calc(100vh - 380px)" }}
                 locale={{
                   emptyText: (
                     <div className="data-source-asset-empty">
