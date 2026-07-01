@@ -15,17 +15,13 @@ from lazyllm import LOG, AutoModel
 from lazymind.chat.engine.subagent.context import require_context
 from lazyllm.tools.writer.data_models import (
     AuditResult,
-    DraftBlock,
-    DraftDocument,
-    DraftSection,
     InputResource,
     SectionInstruction,
     WritingTask,
-    WritingOutline,
-    WritingOutput,
 )
 from lazyllm.tools.writer.tools import (
     WriterContextTools,
+    WriterDraftingTools,
     WriterPlanningTools,
     WriterResourceTools,
 )
@@ -198,66 +194,110 @@ def generate_section_instructions(outline_path: str, writing_context_path: str) 
     return result['artifact_path']
 
 
-def generate_draft_section(section_instructions_path: str, writing_context_path: str, batch: int) -> str:
-    """按 batch=1/2 产出本批 draft_sections Artifact 文件。
+def generate_draft_section(
+    writing_task_path: str,
+    section_instructions_path: str,
+    writing_context_path: str,
+) -> str:
+    """按已生成章节文件数量产出下一个 draft_section Artifact 文件。
 
     Args:
-        section_instructions_path: 本批 section_instructions 文件路径。
+        writing_task_path: writing_task 文件路径。
+        section_instructions_path: SectionInstructionList 文件路径。
         writing_context_path: writing_context 文件路径。
-        batch: 批次号（1 或 2）。
 
     Returns:
-        draft_sections 文件的绝对路径。
+        draft_section 文件的绝对路径。全部章节生成完毕时返回空字符串。
     """
-    LOG.info(f'[writer-tool] generate_draft_section input section_instructions_path={section_instructions_path} writing_context_path={writing_context_path} batch={batch}')
-    _read_artifact_file(section_instructions_path)
+    LOG.info(
+        '[writer-tool] generate_draft_section input '
+        f'writing_task_path={writing_task_path} '
+        f'section_instructions_path={section_instructions_path} '
+        f'writing_context_path={writing_context_path}'
+    )
+    _read_artifact_file(writing_task_path)
     _read_artifact_file(writing_context_path)
-    bundle = _load_mock(f'mock_draft_section_{batch}.json')
-    sections = [
-        DraftSection(
-            section_id=sec['draft'].get('section_id'),
-            outline_node_id=sec['outline_node_id'],
-            title=sec['draft'].get('title'),
-            instruction_id=sec['instruction'].get('instruction_id'),
-            blocks=[
-                DraftBlock(**{
-                    **b,
-                    'outline_node_id': sec['outline_node_id'],
-                    'section_id': sec['draft'].get('section_id'),
-                })
-                for b in sec['draft'].get('blocks', [])
-            ],
-            subtasks=sec['draft'].get('subtasks', []),
-            meta=sec['draft'].get('meta', {}),
+    section_instructions = _read_artifact_file(section_instructions_path)
+    if not isinstance(section_instructions, dict) or not isinstance(section_instructions.get('instructions'), list):
+        raise TypeError('section_instructions_path must point to a SectionInstructionList artifact.')
+
+    draft_sections_dir = _workspace_root() / 'draft_sections'
+    draft_sections_dir.mkdir(parents=True, exist_ok=True)
+    previous_paths = sorted(str(path) for path in draft_sections_dir.glob('draft_section_*.json'))
+    next_index = len(previous_paths)
+    instructions = section_instructions['instructions']
+    if next_index >= len(instructions):
+        LOG.info(
+            '[writer-tool] generate_draft_section reached end '
+            f'previous_count={len(previous_paths)} instruction_count={len(instructions)}'
         )
-        for sec in bundle['sections']
-    ]
-    path = str(_workspace_root() / f'draft_sections_{batch}.json')
-    return save_artifact_json(sections, path, created_by='generate_draft_section')
+        return ''
+
+    instruction = SectionInstruction.model_validate(instructions[next_index])
+    previous_sections = [_read_artifact_file(path) for path in previous_paths]
+
+    result = WriterDraftingTools(
+        llm=_shared_llm(),
+        artifact_store=str(draft_sections_dir),
+    ).generate_draft_section(
+        task=writing_task_path,
+        section_instruction=instruction,
+        context=writing_context_path,
+        previous_sections=previous_sections,
+    )
+    produced_path = Path(result['artifact_path'])
+    raw_id = instruction.outline_node_id or instruction.instruction_id or f'section-{next_index + 1}'
+    safe_id = ''.join(ch if ch.isalnum() or ch in '-_' else '_' for ch in raw_id)[:80]
+    target_path = draft_sections_dir / f'draft_section_{next_index + 1:04d}_{safe_id}.json'
+    if produced_path.resolve() != target_path.resolve():
+        os.replace(produced_path, target_path)
+    LOG.info(f'[writer-tool] generate_draft_section produced draft_section artifact path={target_path} raw_result={result}')
+    return str(target_path)
 
 
-def assemble_draft_document(draft_sections_path_1: str, draft_sections_path_2: str) -> str:
-    """合并两批 draft_sections 产出 draft_document Artifact 文件。
+def assemble_draft_document(
+    draft_sections_anchor_path: str,
+    writing_context_path: str,
+    outline_path: str = '',
+) -> str:
+    """合并多个 draft_section 产出 draft_document Artifact 文件。
 
     Args:
-        draft_sections_path_1: batch=1 的 draft_sections 文件路径。
-        draft_sections_path_2: batch=2 的 draft_sections 文件路径。
+        draft_sections_anchor_path: 任一 draft_section 文件路径，或 draft_sections 目录路径。
+        writing_context_path: writing_context 文件路径。
+        outline_path: outline 文件路径。
 
     Returns:
         draft_document 文件的绝对路径。
     """
-    LOG.info(f'[writer-tool] assemble_draft_document input draft_sections_path_1={draft_sections_path_1} draft_sections_path_2={draft_sections_path_2}')
-    sections_1 = _read_artifact_file(draft_sections_path_1)
-    sections_2 = _read_artifact_file(draft_sections_path_2)
-    outline = _load_mock('mock_outline.json')
-    draft_doc = DraftDocument(
-        draft_id=_new_id('dft'),
-        title=outline.get('title', ''),
-        sections=[*sections_1, *sections_2],
-        meta={},
+    LOG.info(
+        '[writer-tool] assemble_draft_document input '
+        f'draft_sections_anchor_path={draft_sections_anchor_path} '
+        f'writing_context_path={writing_context_path} '
+        f'outline_path={outline_path}'
     )
-    path = str(_workspace_root() / 'draft_document.json')
-    return save_artifact_json(draft_doc, path, created_by='assemble_draft_document')
+    anchor = Path(draft_sections_anchor_path)
+    draft_sections_dir = anchor if anchor.is_dir() else anchor.parent
+    draft_sections_paths = sorted(str(path) for path in draft_sections_dir.glob('draft_section_*.json'))
+    if not draft_sections_paths:
+        raise ValueError('draft_sections_anchor_path must point to a generated draft_sections directory or file.')
+    for path in draft_sections_paths:
+        _read_artifact_file(path)
+    _read_artifact_file(writing_context_path)
+    outline_ref = outline_path or None
+    if outline_ref:
+        _read_artifact_file(outline_ref)
+
+    result = WriterDraftingTools(
+        llm=None,
+        artifact_store=str(_workspace_root()),
+    ).generate_draft_document(
+        draft_sections=draft_sections_paths,
+        context=writing_context_path,
+        outline=outline_ref,
+    )
+    LOG.info(f'[writer-tool] assemble_draft_document produced draft_document artifact {result}')
+    return result['artifact_path']
 
 
 def check_consistency(draft_path: str, writing_context_path: str) -> str:
@@ -291,23 +331,22 @@ def generate_writing_output(
 
     Args:
         draft_path: draft_document 文件路径。
-        review_report_path: review_report 文件路径。
+        review_report_path: review_report 文件路径，用于确认审阅已完成。
         writing_context_path: writing_context 文件路径。
 
     Returns:
         writing_output 文件的绝对路径。
     """
     LOG.info(f'[writer-tool] generate_writing_output input draft_path={draft_path} review_report_path={review_report_path} writing_context_path={writing_context_path}')
-    draft = _read_artifact_file(draft_path)
+    _read_artifact_file(draft_path)
     _read_artifact_file(review_report_path)
     _read_artifact_file(writing_context_path)
-    output_ = WritingOutput(
-        output_id=_new_id('out'),
-        title=draft.get('title', '') if isinstance(draft, dict) else getattr(draft, 'title', ''),
-        content=(_MOCK_DIR / 'mock_writing_output.md').read_text(encoding='utf-8'),
-        output_format='markdown',
-        references=[],
-        meta={},
+    result = WriterDraftingTools(
+        llm=None,
+        artifact_store=str(_workspace_root()),
+    ).generate_writing_output(
+        draft=draft_path,
+        context=writing_context_path,
     )
-    path = str(_workspace_root() / 'writing_output.json')
-    return save_artifact_json(output_, path, created_by='generate_writing_output')
+    LOG.info(f'[writer-tool] generate_writing_output produced writing_output artifact {result}')
+    return result['artifact_path']
