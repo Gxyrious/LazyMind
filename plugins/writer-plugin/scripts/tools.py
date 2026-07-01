@@ -7,7 +7,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 from lazyllm import LOG, AutoModel
 
@@ -24,16 +24,6 @@ from lazyllm.tools.writer.tools import (
     WriterQualityTools,
     WriterResourceTools,
 )
-
-
-_LLM_CACHE: Dict[str, Any] = {}
-
-def _shared_llm() -> Any:
-    ctx = require_context()
-    key = ctx.task_id
-    if key not in _LLM_CACHE:
-        _LLM_CACHE[key] = AutoModel(model='llm')
-    return _LLM_CACHE[key]
 
 
 def _workspace_root() -> Path:
@@ -98,7 +88,7 @@ def profile_resources(writing_task_path: str) -> str:
     ]
     LOG.info(f'[writer-tool] profile_resources input_resources={[r.model_dump() for r in input_resources]}')
     result = WriterResourceTools(
-        llm=_shared_llm(),
+        llm=AutoModel(model='llm'),
         artifact_store=str(_workspace_root()),
     ).profile_resources(task=writing_task_path, input_resources=input_resources)
     LOG.info(f'[writer-tool] profile_resources produced resource_profiles artifact counts={result["metadata"]["counts"]}')
@@ -153,7 +143,7 @@ def generate_outline(writing_task_path: str, writing_context_path: str) -> str:
     _read_artifact_file(writing_task_path)
     _read_artifact_file(writing_context_path)
     result = WriterPlanningTools(
-        llm=_shared_llm(),
+        llm=AutoModel(model='llm'),
         artifact_store=str(_workspace_root()),
     ).generate_outline(task=writing_task_path, context=writing_context_path)
     LOG.info(f'[writer-tool] generate_outline produced outline artifact {result}')
@@ -174,7 +164,7 @@ def generate_section_instructions(outline_path: str, writing_context_path: str) 
     _read_artifact_file(outline_path)
     _read_artifact_file(writing_context_path)
     result = WriterPlanningTools(
-        llm=_shared_llm(),
+        llm=AutoModel(model='llm'),
         artifact_store=str(_workspace_root()),
     ).generate_section_instructions(outline=outline_path, context=writing_context_path)
     LOG.info(f'[writer-tool] generate_section_instructions produced section_instructions artifact {result}')
@@ -224,7 +214,7 @@ def generate_draft_section(
     previous_sections = [_read_artifact_file(path) for path in previous_paths]
 
     result = WriterDraftingTools(
-        llm=_shared_llm(),
+        llm=AutoModel(model='llm'),
         artifact_store=str(draft_sections_dir),
     ).generate_draft_section(
         task=writing_task_path,
@@ -329,7 +319,7 @@ def check_consistency(draft_path: str, writing_context_path: str) -> str:
         context=writing_context_path,
     )
     result = WriterQualityTools(
-        llm=_shared_llm(),
+        llm=AutoModel(model='llm'),
         artifact_store=str(_workspace_root()),
     ).validate_output(
         output=output_result['artifact_path'],
