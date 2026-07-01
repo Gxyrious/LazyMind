@@ -21,6 +21,7 @@ tool_scripts:
       - generate_section_instructions
       - generate_draft_section
       - assemble_draft_document
+      - update_writing_context
       - check_consistency
       - generate_writing_output
 

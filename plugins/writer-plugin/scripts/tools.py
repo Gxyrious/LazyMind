@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import json
 import os
-import uuid
 from pathlib import Path
 from typing import Any, Dict
 
@@ -14,7 +13,6 @@ from lazyllm import LOG, AutoModel
 
 from lazymind.chat.engine.subagent.context import require_context
 from lazyllm.tools.writer.data_models import (
-    AuditResult,
     InputResource,
     SectionInstruction,
     WritingTask,
@@ -23,6 +21,7 @@ from lazyllm.tools.writer.tools import (
     WriterContextTools,
     WriterDraftingTools,
     WriterPlanningTools,
+    WriterQualityTools,
     WriterResourceTools,
 )
 
@@ -37,21 +36,9 @@ def _shared_llm() -> Any:
     return _LLM_CACHE[key]
 
 
-_MOCK_DIR = Path(__file__).resolve().parent.parent / 'mock'
-
-def _load_mock(name: str) -> Any:
-    with open(_MOCK_DIR / name, 'r', encoding='utf-8') as fh:
-        raw = json.load(fh)
-    return raw.get('data') if isinstance(raw, dict) else raw
-
-
 def _workspace_root() -> Path:
     ctx = require_context()
     return Path(ctx.workspace_path) if ctx.workspace_path else Path('/tmp')
-
-
-def _new_id(prefix: str) -> str:
-    return f'{prefix}_{uuid.uuid4().hex[:10]}'
 
 
 def _read_artifact_file(path: str) -> Any:
@@ -300,6 +287,27 @@ def assemble_draft_document(
     return result['artifact_path']
 
 
+def update_writing_context(draft_document_path: str, writing_context_path: str) -> str:
+    """基于 draft_document 更新 writing_context Artifact 文件。
+
+    Args:
+        draft_document_path: draft_document 文件路径。
+        writing_context_path: writing_context 文件路径。
+
+    Returns:
+        writing_context 文件的绝对路径。
+    """
+    LOG.info(f'[writer-tool] update_writing_context input draft_document_path={draft_document_path} writing_context_path={writing_context_path}')
+    _read_artifact_file(draft_document_path)
+    _read_artifact_file(writing_context_path)
+    result = WriterContextTools(
+        llm=None,
+        artifact_store=str(_workspace_root()),
+    ).update_writing_context(content_artifact=draft_document_path, context=writing_context_path)
+    LOG.info(f'[writer-tool] update_writing_context produced writing_context artifact {result}')
+    return result['artifact_path']
+
+
 def check_consistency(draft_path: str, writing_context_path: str) -> str:
     """产出 review_report Artifact 文件。
 
@@ -313,15 +321,22 @@ def check_consistency(draft_path: str, writing_context_path: str) -> str:
     LOG.info(f'[writer-tool] check_consistency input draft_path={draft_path} writing_context_path={writing_context_path}')
     _read_artifact_file(draft_path)
     _read_artifact_file(writing_context_path)
-    audit = AuditResult(**_load_mock('mock_review_report.json'))
-    report = {
-        'report_id': _new_id('rep'),
-        'target': 'draft_document',
-        'result': audit,
-        'meta': {},
-    }
-    path = str(_workspace_root() / 'review_report.json')
-    return save_artifact_json(report, path, created_by='check_consistency')
+    output_result = WriterDraftingTools(
+        llm=None,
+        artifact_store=str(_workspace_root()),
+    ).generate_writing_output(
+        draft=draft_path,
+        context=writing_context_path,
+    )
+    result = WriterQualityTools(
+        llm=_shared_llm(),
+        artifact_store=str(_workspace_root()),
+    ).validate_output(
+        output=output_result['artifact_path'],
+        context=writing_context_path,
+    )
+    LOG.info(f'[writer-tool] check_consistency produced review_report artifact {result}')
+    return result['artifact_path']
 
 
 def generate_writing_output(
