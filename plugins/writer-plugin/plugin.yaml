@@ -72,6 +72,13 @@ ui:
           cardinality: single
           artifact_key: outline
 
+        - id: writing_context_slot
+          label: Writing Context
+          type: text
+          cardinality: single
+          artifact_key: writing_context
+          summary_max_chars: 600
+
     - id: plan_sections
       label: Plan Sections
       layout: list
@@ -98,6 +105,13 @@ ui:
           type: text
           cardinality: single
           artifact_key: draft_document
+
+        - id: writing_context_slot
+          label: Writing Context
+          type: text
+          cardinality: single
+          artifact_key: writing_context
+          summary_max_chars: 600
 
     - id: review
       label: Review

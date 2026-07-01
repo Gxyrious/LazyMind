@@ -277,23 +277,23 @@ def assemble_draft_document(
     return result['artifact_path']
 
 
-def update_writing_context(draft_document_path: str, writing_context_path: str) -> str:
-    """基于 draft_document 更新 writing_context Artifact 文件。
+def update_writing_context(content_artifact_path: str, writing_context_path: str) -> str:
+    """基于内容 artifact 更新 writing_context Artifact 文件。
 
     Args:
-        draft_document_path: draft_document 文件路径。
+        content_artifact_path: 用于更新上下文的内容 artifact 文件路径。
         writing_context_path: writing_context 文件路径。
 
     Returns:
         writing_context 文件的绝对路径。
     """
-    LOG.info(f'[writer-tool] update_writing_context input draft_document_path={draft_document_path} writing_context_path={writing_context_path}')
-    _read_artifact_file(draft_document_path)
+    LOG.info(f'[writer-tool] update_writing_context input content_artifact_path={content_artifact_path} writing_context_path={writing_context_path}')
+    _read_artifact_file(content_artifact_path)
     _read_artifact_file(writing_context_path)
     result = WriterContextTools(
         llm=None,
         artifact_store=str(_workspace_root()),
-    ).update_writing_context(content_artifact=draft_document_path, context=writing_context_path)
+    ).update_writing_context(content_artifact=content_artifact_path, context=writing_context_path)
     LOG.info(f'[writer-tool] update_writing_context produced writing_context artifact {result}')
     return result['artifact_path']
 

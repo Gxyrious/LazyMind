@@ -66,11 +66,16 @@ steps:
     prompt: |
       {{runtime_instruction}}
 
-      本步基于 writing_task + writing_context 生成结构化大纲。调 get_artifact 取回 writing_task 和 writing_context，传给 generate_outline(writing_task_path=<writing_task 路径>, writing_context_path=<writing_context 路径>)，把返回的路径用 save_artifact(content_type='file', key='outline') 落库。
+      本步基于 writing_task + writing_context 生成结构化大纲，并把大纲内容同步回写作上下文。先调 get_artifact 取回 writing_task 和 writing_context，传给 generate_outline(writing_task_path=<writing_task 路径>, writing_context_path=<writing_context 路径>)，获得 outline 路径。
+
+      大纲生成后，调 update_writing_context(content_artifact_path=<outline 路径>, writing_context_path=<原 writing_context 路径>)，获得更新后的 writing_context 路径。
+
+      本步骤的所有生成操作完成后，调用 save_artifact(content_type='file', key='outline') 保存 outline 路径，再调用 save_artifact(content_type='file', key='writing_context') 保存更新后的 writing_context 路径。
 
       如果上述工具调用失败，不要进行任何额外的兜底操作，直接停止本步骤。尤其不要自行撰写内容进行落库。
     tools:
       - generate_outline
+      - update_writing_context
     exclude_framework_tools:
       - read_user_attachment
       - find_user_attachment
@@ -83,8 +88,11 @@ steps:
       - artifact_id: outline
         content_type: json
         slot_id: outline_slot
+      - artifact_id: writing_context
+        content_type: json
+        slot_id: writing_context_slot
     acceptance_criteria: |
-      outline 已保存；nodes 至少 3 个；每个 node 至少含 node_id、title、instruction、constraints 字段且非空。
+      outline 已保存；nodes 至少 3 个；每个 node 至少含 node_id、title、instruction、constraints 字段且非空；writing_context 已保存一次，document_summary 已反映 outline 内容。
 
   plan_sections:
     label: Plan Sections
@@ -124,7 +132,7 @@ steps:
 
       工具返回空字符串时，表示章节初稿已经全部生成完成。此时取 draft_section_paths 中最后一个路径，调用 assemble_draft_document(draft_sections_anchor_path=<最后一个 draft_section 路径>, writing_context_path=<writing_context 路径>, outline_path=<outline 路径>)，获得 draft_document 路径。
 
-      初稿文档生成后，调 update_writing_context(draft_document_path=<draft_document 路径>, writing_context_path=<原 writing_context 路径>)，获得更新后的 writing_context 路径。
+      初稿文档生成后，调 update_writing_context(content_artifact_path=<draft_document 路径>, writing_context_path=<原 writing_context 路径>)，获得更新后的 writing_context 路径。
 
       本步骤的所有生成操作完成后，按 draft_section_paths 中的顺序逐个调用 save_artifact(content_type='file', key='draft_sections') 保存章节初稿路径，再调用 save_artifact(content_type='file', key='draft_document') 保存 draft_document 路径，最后调用 save_artifact(content_type='file', key='writing_context') 保存更新后的 writing_context 路径。
 
