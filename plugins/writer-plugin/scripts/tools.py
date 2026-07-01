@@ -18,6 +18,7 @@ from lazyllm.tools.writer.data_models import (
     DraftBlock,
     DraftDocument,
     DraftSection,
+    InputResource,
     SectionInstruction,
     WritingTask,
     WritingOutline,
@@ -106,7 +107,12 @@ def profile_resources(writing_task_path: str) -> str:
     files_by_turn = ctx.params.get('history_files_per_turn') or {}
     all_files = [p for paths in files_by_turn.values() for p in paths]
     LOG.info(f'[writer-tool] profile_resources history_files_per_turn={files_by_turn} all_files_count={len(all_files)} all_files={all_files}')
-    input_resources = [_to_input_resource(p) for p in all_files]
+    # FIXME: 测试不同的 InputResource 在 profile_resources 中的解析情况
+    input_resources = [_to_input_resource(p) for p in all_files] + [
+        # InputResource(resource_id='demo_feishu_doc', resource_type='document', uri='feishu://~docx/demo-doc-1', title='飞书产品文档', summary='飞书产品规划文档，作为写作背景参考', meta={'role': 'background'}),
+        # InputResource(resource_id='demo_url', resource_type='url', uri='https://example.com/product-spec', title='产品规范网页', summary='介绍本产品的核心功能与目标用户群体', meta={'role': 'spec', 'template': 'structure'}),
+        # InputResource(resource_id='demo_kb', resource_type='kb', kb_id='kb-demo-001', title='品牌术语知识库', summary='公司品牌术语表，写作时需遵守', meta={'role': 'spec'}),
+    ]
     LOG.info(f'[writer-tool] profile_resources input_resources={[r.model_dump() for r in input_resources]}')
     result = WriterResourceTools(
         llm=_shared_llm(),
@@ -118,7 +124,6 @@ def profile_resources(writing_task_path: str) -> str:
 
 def _to_input_resource(abs_path: str) -> Any:
     """从绝对路径构造 InputResource，默认 resource_type='file'（writer 用 SimpleDirectoryReader 读）。"""
-    from lazyllm.tools.writer.data_models import InputResource
     return InputResource(
         resource_id=os.path.basename(abs_path),
         resource_type='file',

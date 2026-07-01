@@ -42,6 +42,8 @@ steps:
       第二步：调 profile_resources(writing_task_path=<writing_task 路径>) 拿到 resource_profiles 路径，用 save_artifact(content_type='file', key='resource_profiles') 落库。
 
       第三步：调 create_writing_context(writing_task_path=<writing_task 路径>, resource_profiles_path=<resource_profiles 路径>) 拿到 writing_context 路径，用 save_artifact(content_type='file', key='writing_context') 落库。
+
+      如果上述工具调用失败，不要进行任何额外的兜底操作，直接停止本步骤。尤其不要自行撰写内容进行落库。
     tools:
       - build_writing_task
       - profile_resources
@@ -65,6 +67,8 @@ steps:
       {{runtime_instruction}}
 
       本步基于 writing_task + writing_context 生成结构化大纲。调 get_artifact 取回 writing_task 和 writing_context，传给 generate_outline(writing_task_path=<writing_task 路径>, writing_context_path=<writing_context 路径>)，把返回的路径用 save_artifact(content_type='file', key='outline') 落库。
+
+      如果上述工具调用失败，不要进行任何额外的兜底操作，直接停止本步骤。尤其不要自行撰写内容进行落库。
     tools:
       - generate_outline
     exclude_framework_tools:
@@ -88,6 +92,8 @@ steps:
       {{runtime_instruction}}
 
       本步为大纲中的所有顶层章节一次性生成写作指令。调 get_artifact 取回 writing_context 和 outline，调 generate_section_instructions(outline_path=<outline 路径>, writing_context_path=<writing_context 路径>)，把返回的路径用 save_artifact(content_type='file', key='section_instructions') 落库。
+
+      如果上述工具调用失败，不要进行任何额外的兜底操作，直接停止本步骤。尤其不要自行撰写内容进行落库。
     tools:
       - generate_section_instructions
     exclude_framework_tools:
