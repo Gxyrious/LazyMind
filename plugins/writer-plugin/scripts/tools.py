@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any, Dict
 
@@ -65,27 +66,45 @@ def build_writing_task(query: str) -> str:
     return str(path)
 
 
-def profile_resources(writing_task_path: str) -> str:
+def profile_resources(writing_task_path: str, user_input: str) -> str:
     """产出 resource_profiles Artifact 文件。
 
     Args:
         writing_task_path: 上一步产出的 writing_task Artifact 文件绝对路径。
+        user_input: 用户原始提示词，用于从中抽取飞书链接等 InputResource。
 
     Returns:
         resource_profiles Artifact 文件的绝对路径。
     """
-    LOG.info(f'[writer-tool] profile_resources input writing_task_path={writing_task_path}')
+    LOG.info(f'[writer-tool] profile_resources input writing_task_path={writing_task_path} user_input={user_input!r}')
     _read_artifact_file(writing_task_path)
     ctx = require_context()
     files_by_turn = ctx.params.get('history_files_per_turn') or {}
     all_files = [p for paths in files_by_turn.values() for p in paths]
     LOG.info(f'[writer-tool] profile_resources history_files_per_turn={files_by_turn} all_files_count={len(all_files)} all_files={all_files}')
-    # FIXME: 测试不同的 InputResource 在 profile_resources 中的解析情况
-    input_resources = [_to_input_resource(p) for p in all_files] + [
-        # InputResource(resource_id='demo_feishu_doc', resource_type='document', uri='feishu://~docx/demo-doc-1', title='飞书产品文档', summary='飞书产品规划文档，作为写作背景参考', meta={'role': 'background'}),
-        # InputResource(resource_id='demo_url', resource_type='url', uri='https://example.com/product-spec', title='产品规范网页', summary='介绍本产品的核心功能与目标用户群体', meta={'role': 'spec', 'template': 'structure'}),
-        # InputResource(resource_id='demo_kb', resource_type='kb', kb_id='kb-demo-001', title='品牌术语知识库', summary='公司品牌术语表，写作时需遵守', meta={'role': 'spec'}),
-    ]
+
+    feishu_pattern = re.compile(r'https?://[A-Za-z0-9.\-]+\.feishu\.cn/\S+')
+    seen_urls: set[str] = set()
+    feishu_urls: list[str] = []
+    for match in feishu_pattern.finditer(user_input or ''):
+        url = match.group(0)
+        if url in seen_urls:
+            continue
+        seen_urls.add(url)
+        feishu_urls.append(url)
+    LOG.info(f'[writer-tool] profile_resources feishu_urls={feishu_urls} count={len(feishu_urls)}')
+
+    input_resources: list[InputResource] = []
+    for abs_path in all_files:
+        input_resources.append(InputResource(
+            resource_id=os.path.basename(abs_path), resource_type='file', uri=abs_path,
+            title=os.path.basename(abs_path), mime_type=None, summary=None, meta={},
+        ))
+    for idx, url in enumerate(feishu_urls):
+        input_resources.append(InputResource(
+            resource_id=f'feishu_{idx}', resource_type='url', uri=url,
+            title=None, mime_type=None, summary=None, meta={'provider': 'feishu', 'role': 'reference'},
+        ))
     LOG.info(f'[writer-tool] profile_resources input_resources={[r.model_dump() for r in input_resources]}')
     result = WriterResourceTools(
         llm=AutoModel(model='llm'),
@@ -93,19 +112,6 @@ def profile_resources(writing_task_path: str) -> str:
     ).profile_resources(task=writing_task_path, input_resources=input_resources)
     LOG.info(f'[writer-tool] profile_resources produced resource_profiles artifact counts={result["metadata"]["counts"]}')
     return result['artifact_path']
-
-
-def _to_input_resource(abs_path: str) -> Any:
-    """从绝对路径构造 InputResource，默认 resource_type='file'（writer 用 SimpleDirectoryReader 读）。"""
-    return InputResource(
-        resource_id=os.path.basename(abs_path),
-        resource_type='file',
-        uri=abs_path,
-        title=os.path.basename(abs_path),
-        mime_type=None,
-        summary=None,
-        meta={},
-    )
 
 
 def create_writing_context(writing_task_path: str, resource_profiles_path: str) -> str:

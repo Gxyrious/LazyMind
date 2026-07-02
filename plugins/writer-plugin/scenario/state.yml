@@ -39,7 +39,7 @@ steps:
 
       第一步：调 build_writing_task(query="{{user_input}}") 拿到 writing_task 路径，用 save_artifact(content_type='file', key='writing_task') 落库。
 
-      第二步：调 profile_resources(writing_task_path=<writing_task 路径>) 拿到 resource_profiles 路径，用 save_artifact(content_type='file', key='resource_profiles') 落库。
+      第二步：调 profile_resources(writing_task_path=<writing_task 路径>, user_input="{{user_input}}") 拿到 resource_profiles 路径，用 save_artifact(content_type='file', key='resource_profiles') 落库。
 
       第三步：调 create_writing_context(writing_task_path=<writing_task 路径>, resource_profiles_path=<resource_profiles 路径>) 拿到 writing_context 路径，用 save_artifact(content_type='file', key='writing_context') 落库。
 
