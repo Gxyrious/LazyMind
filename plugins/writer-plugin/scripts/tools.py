@@ -7,7 +7,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Dict
 
 from lazyllm import LOG, AutoModel
 
@@ -331,8 +331,8 @@ def check_consistency(draft_path: str, writing_context_path: str) -> str:
 
 def generate_writing_output(
     draft_path: str, review_report_path: str, writing_context_path: str,
-) -> str:
-    """产出 writing_output Artifact 文件。
+) -> Dict[str, str]:
+    """产出两类 writing_output Artifact 文件。
 
     Args:
         draft_path: draft_document 文件路径。
@@ -340,9 +340,13 @@ def generate_writing_output(
         writing_context_path: writing_context 文件路径。
 
     Returns:
-        writing_output 文件的绝对路径。
+        两条绝对路径，需要分别调用 `save_artifact(content_type='file', key=<key>, value=<path>)` 进行落库。
     """
-    LOG.info(f'[writer-tool] generate_writing_output input draft_path={draft_path} review_report_path={review_report_path} writing_context_path={writing_context_path}')
+    LOG.info(
+        '[writer-tool] generate_writing_output input '
+        f'draft_path={draft_path} review_report_path={review_report_path} '
+        f'writing_context_path={writing_context_path}'
+    )
     _read_artifact_file(draft_path)
     _read_artifact_file(review_report_path)
     _read_artifact_file(writing_context_path)
@@ -353,5 +357,11 @@ def generate_writing_output(
         draft=draft_path,
         context=writing_context_path,
     )
-    LOG.info(f'[writer-tool] generate_writing_output produced writing_output artifact {result}')
-    return result['artifact_path']
+    returned: Dict[str, str] = {
+        'writing_output': result['artifact_path'],
+        'writing_output_md': result['output_file_path'],
+    }
+    LOG.info(
+        f'[writer-tool] generate_writing_output produced {returned} raw_result={result}'
+    )
+    return returned

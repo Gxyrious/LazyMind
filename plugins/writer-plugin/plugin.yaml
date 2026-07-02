@@ -138,6 +138,11 @@ ui:
           type: text
           cardinality: single
           artifact_key: writing_output
+        - id: final_report_md_slot
+          label: Final Report (Markdown)
+          type: file
+          cardinality: single
+          artifact_key: writing_output_md
 
 i18n:
   zh-CN:
@@ -166,3 +171,4 @@ i18n:
       draft_slot: {label: 完整初稿}
       review_slot: {label: 审阅报告}
       final_report_slot: {label: 最终成稿}
+      final_report_md_slot: {label: 最终成稿（Markdown）}

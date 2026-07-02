@@ -194,9 +194,9 @@ steps:
     prompt: |
       {{runtime_instruction}}
 
-      本步在审阅完成后产出最终 Markdown 成稿。调 get_artifact 取回 writing_context、draft_document 和 review_report 的文件路径，传给 generate_writing_output(draft_path=<draft_document 路径>, review_report_path=<review_report 路径>, writing_context_path=<writing_context 路径>)，获得 writing_output 路径。
+      本步在审阅完成后产出最终 Markdown 成稿。调 get_artifact 取回 writing_context、draft_document 和 review_report 的文件路径，传给 generate_writing_output(draft_path=<draft_document 路径>, review_report_path=<review_report 路径>, writing_context_path=<writing_context 路径>)。该工具会同时返回两个文件路径：writing_output（结构化 Artifact）和 writing_output_md（最终 Markdown 成稿）。
 
-      本步骤的生成操作完成后，调用 save_artifact(content_type='file', key='writing_output') 保存 writing_output 路径。
+      本步骤的生成操作完成后，对这两个路径分别调用 save_artifact(content_type='file', key='writing_output') 和 save_artifact(content_type='file', key='writing_output_md') 保存成当前 step 的 artifact。
 
       如果上述工具调用失败，停止本步骤并保留工具错误信息，交由外层重试处理。
     tools:
@@ -215,5 +215,8 @@ steps:
       - artifact_id: writing_output
         content_type: json
         slot_id: final_report_slot
+      - artifact_id: writing_output_md
+        content_type: file
+        slot_id: final_report_md_slot
     acceptance_criteria: |
-      writing_output 已保存；output_format 是 markdown；content 是非空字符串，含标题与至少 2 个二级章节（`## ` 开头），正文长度足以独立成篇。
+      writing_output 已保存；writing_output_md 已保存；output_format 是 markdown；content 是非空字符串，含标题与至少 2 个二级章节（`## ` 开头），正文长度足以独立成篇。
