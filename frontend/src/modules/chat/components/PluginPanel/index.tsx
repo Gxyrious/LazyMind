@@ -784,6 +784,10 @@ export function PluginPanel({
   const pluginUIByPlugin = usePluginStore((s) => s.pluginUIByPlugin);
   const setFocusedTab = usePluginStore((s) => s.setFocusedTab);
   const setFocusedSortOrder = usePluginStore((s) => s.setFocusedSortOrder);
+  // Focused tab id mirrored out of the session so polling refreshes don't
+  // reset the user's current tab.
+  const focusedTabByConversation = usePluginStore((s) => s.focusedTabByConversation);
+  const persistedFocusedTab = conversationId ? focusedTabByConversation[conversationId] : undefined;
   const [ui, setUI] = useState<PluginUI>({});
   const [dismissing, setDismissing] = useState(false);
 
@@ -821,13 +825,13 @@ export function PluginPanel({
     fetchPluginUI(session.plugin_id).then(setUI);
   }, [session?.plugin_id, fetchPluginUI, pluginUIByPlugin]);
 
-  // Restore the previously focused tab when UI loads or session changes.
+  // Restore the previously focused tab when UI loads.
   useEffect(() => {
     const tabs: TabDef[] = ui.tabs ?? [];
-    if (!tabs.length || !session?.focusedTab) return;
-    const idx = tabs.findIndex((t) => t.id === session.focusedTab);
+    if (!tabs.length || !persistedFocusedTab) return;
+    const idx = tabs.findIndex((t) => t.id === persistedFocusedTab);
     if (idx !== -1) setActiveTabIdx(idx);
-  }, [ui.tabs, session?.focusedTab]);
+  }, [ui.tabs, persistedFocusedTab]);
 
   useEffect(() => {
     if (!session || session.status !== 'active') return;
