@@ -42,6 +42,7 @@ steps:
 ui:
   tabs:
     - id: context
+      step_id: build_context
       label: Context
       layout: list
       slots:
@@ -63,6 +64,7 @@ ui:
           summary_max_chars: 600
 
     - id: outline
+      step_id: generate_outline
       label: Outline
       layout: list
       slots:
@@ -80,6 +82,7 @@ ui:
           summary_max_chars: 600
 
     - id: plan_sections
+      step_id: plan_sections
       label: Plan Sections
       layout: list
       slots:
@@ -90,6 +93,7 @@ ui:
           artifact_key: section_instructions
 
     - id: draft
+      step_id: generate_draft
       label: Draft
       layout: list
       slots:
@@ -114,6 +118,7 @@ ui:
           summary_max_chars: 600
 
     - id: review
+      step_id: review_document
       label: Review
       layout: list
       slots:
@@ -124,6 +129,7 @@ ui:
           artifact_key: review_report
 
     - id: result
+      step_id: finalize_report
       label: Final Report
       layout: list
       slots:

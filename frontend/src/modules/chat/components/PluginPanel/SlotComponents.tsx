@@ -305,6 +305,7 @@ export function SlotVersionPopover({
   const previewedVersion = versions[previewIndex] ?? null;
   // The currently-selected (active) version
   const currentVersion = versions.find((v) => v.selected) ?? versions[0] ?? null;
+  const activeCurrentValue = currentVersion?.content_snapshot ?? currentValue;
   // Whether the previewed version is already the current one
   const isPreviewingCurrent = previewedVersion?.selected ?? false;
 
@@ -521,7 +522,7 @@ export function SlotVersionPopover({
               /* Draft selected: show draft vs current diff with discard + flush actions */
               <div className='plugin-slot__version-compare'>
                 <TextDiffView
-                  currentText={extractText(currentValue)}
+                  currentText={extractText(activeCurrentValue)}
                   otherText={draftText}
                   otherLabel='草稿'
                   reversed={true}
@@ -547,7 +548,7 @@ export function SlotVersionPopover({
             ) : effectiveSelectedVersion && !effectiveSelectedVersion.selected ? (
               <div className='plugin-slot__version-compare'>
                 <TextDiffView
-                  currentText={extractText(currentValue)}
+                  currentText={extractText(activeCurrentValue)}
                   otherText={extractText(effectiveSelectedVersion.content_snapshot)}
                   otherLabel={`v${effectiveSelectedVersion.revision} · ${effectiveSelectedVersion.change_source === 'human' ? '手动编辑' : 'AI 生成'}`}
                   reversed={currentVersion !== null && effectiveSelectedVersion.revision > currentVersion.revision}

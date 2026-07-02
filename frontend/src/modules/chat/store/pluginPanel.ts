@@ -143,6 +143,7 @@ export interface SlotRevision {
   order_version?: number;
   selected: boolean;
   artifact_key: string;
+  step_id?: string;
   created_at: string;
   /** Artifact content type returned by the backend (e.g. 'text', 'image', 'file'). */
   content_type?: string;
@@ -233,6 +234,8 @@ export interface InnerTabsNode {
 
 export interface TabDef {
   id: string;
+  /** Optional workflow step id represented by this tab. Falls back to id when omitted. */
+  step_id?: string;
   label: string;
   layout?: "grid" | "list" | "composite" | "horizontal";
   slots: SlotDef[];

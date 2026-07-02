@@ -48,7 +48,7 @@ function IntentPopover({
       idx: idx + 1,
       stepId: s.step_id,
       text: parseIntentText(s.intent_context),
-      tabLabel: tabs.find((t) => t.id === s.step_id)?.label ?? s.step_id,
+      tabLabel: tabs.find((t) => getTabStepId(t) === s.step_id)?.label ?? s.step_id,
     }));
 
   useEffect(() => {
@@ -211,6 +211,23 @@ function buildColumns(
     .filter((c): c is NonNullable<typeof c> => c !== null);
 }
 
+function getTabStepId(tab: TabDef): string | undefined {
+  return tab.step_id ?? tab.id;
+}
+
+function getTabSlotRevisions(
+  session: PluginSession,
+  tab: TabDef,
+  artifactKey: string,
+): SlotRevision[] {
+  const slots = session.slots ?? [];
+  const stepId = tab.step_id;
+  if (stepId) {
+    return slots.filter((s) => s.artifact_key === artifactKey && s.step_id === stepId);
+  }
+  return slots.filter((s) => s.artifact_key === artifactKey && s.selected);
+}
+
 /** Get all distinct sort_orders present across the participating slots. */
 function getCompositeRows(
   tab: TabDef,
@@ -219,7 +236,8 @@ function getCompositeRows(
   const participating = new Set(tab.slots.map((s) => s.artifact_key ?? s.id));
   const orders = new Set<number>();
   for (const slot of session.slots ?? []) {
-    if (slot.selected && participating.has(slot.artifact_key ?? slot.slot_id)) {
+    const matchesTabStep = tab.step_id ? slot.step_id === tab.step_id : slot.selected;
+    if (matchesTabStep && participating.has(slot.artifact_key ?? slot.slot_id)) {
       if (slot.sort_order !== undefined) {
         orders.add(slot.sort_order);
       }
@@ -231,11 +249,12 @@ function getCompositeRows(
 /** Find a slot revision for (artifact_key, sort_order). */
 function findSlotRevision(
   session: PluginSession,
+  tab: TabDef,
   artifactKey: string,
   sortOrder: number,
 ): SlotRevision | undefined {
-  return (session.slots ?? []).find(
-    (s) => s.selected && (s.artifact_key ?? s.slot_id) === artifactKey && s.sort_order === sortOrder,
+  return getTabSlotRevisions(session, tab, artifactKey).find(
+    (s) => (s.artifact_key ?? s.slot_id) === artifactKey && s.sort_order === sortOrder,
   );
 }
 
@@ -245,6 +264,7 @@ function findSlotRevision(
 
 function InnerTabsCell({
   tabsNode,
+  tab,
   session,
   slotDefs,
   sortOrder,
@@ -252,6 +272,7 @@ function InnerTabsCell({
   onReference,
 }: {
   tabsNode: InnerTabsNode;
+  tab: TabDef;
   session: PluginSession;
   slotDefs: SlotDef[];
   sortOrder: number;
@@ -286,7 +307,7 @@ function InnerTabsCell({
       {innerSlotIds.map((slotId, i) => {
         const def = slotDefs.find((s) => s.id === slotId);
         const artifactKey = def?.artifact_key ?? slotId;
-        const rev = findSlotRevision(session, artifactKey, sortOrder);
+        const rev = findSlotRevision(session, tab, artifactKey, sortOrder);
         return (
           <div key={slotId} role='tabpanel' hidden={i !== activeIdx}>
             {rev ? (
@@ -361,6 +382,7 @@ function CompositeSlotGrid({
                 >
                   <InnerTabsCell
                     tabsNode={col.slotId}
+                    tab={tab}
                     session={session}
                     slotDefs={tab.slots}
                     sortOrder={sortOrder}
@@ -373,7 +395,7 @@ function CompositeSlotGrid({
             const slotId = col.slotId as string;
             const def = tab.slots.find((s) => s.id === slotId);
             const artifactKey = def?.artifact_key ?? slotId;
-            const rev = findSlotRevision(session, artifactKey, sortOrder);
+            const rev = findSlotRevision(session, tab, artifactKey, sortOrder);
             return (
               <div
                 key={slotId}
@@ -682,9 +704,7 @@ function TabSlotGrid({
       />
       {tab.slots.map((slotDef) => {
         const artifactKey = slotDef.artifact_key ?? slotDef.id;
-        const revisions = (session.slots ?? []).filter(
-          (s) => s.artifact_key === artifactKey && s.selected,
-        );
+        const revisions = getTabSlotRevisions(session, tab, artifactKey);
         const isImageList = slotDef.type === 'image' && slotDef.cardinality === 'list';
         const isDraggable = Boolean(slotDef.ordered);
         return (
@@ -969,7 +989,8 @@ export function PluginPanel({
       {!collapsed && hasTabs && (
         <div className='plugin-panel__tabs' role='tablist'>
           {tabs.map((tab, idx) => {
-            const step = session.steps?.find((s) => s.step_id === tab.id);
+            const stepID = getTabStepId(tab);
+            const step = session.steps?.find((s) => s.step_id === stepID);
             const stepStatus = step?.status;
             return (
               <React.Fragment key={tab.id}>

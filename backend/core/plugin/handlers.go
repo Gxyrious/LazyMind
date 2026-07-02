@@ -44,7 +44,6 @@ func resolveValuePaths(raw json.RawMessage) json.RawMessage {
 }
 
 // enrichArtifactValue signs the local path for browser access.
-// The contentType parameter is unused.
 func enrichArtifactValue(raw json.RawMessage, contentType string) json.RawMessage {
 	if len(raw) == 0 {
 		return raw
@@ -119,13 +118,13 @@ type slotDTO struct {
 	ArtifactValue json.RawMessage `json:"artifact_value,omitempty"`
 	Caption       *string         `json:"caption,omitempty"`
 	ChangeSource  string          `json:"change_source,omitempty"`
+	StepID        string          `json:"step_id,omitempty"`
 	RevisionCount int             `json:"revision_count,omitempty"`
 	OrderVersion  *int            `json:"order_version,omitempty"`
 
 	// Internal fields — used by enrichSlots, never serialised to the client.
 	ArtifactSeq     *int            `json:"-"`
 	HumanArtifactID *string         `json:"-"`
-	StepID          string          `json:"-"`
 	Attempt         int             `json:"-"`
 	ContentSnapshot json.RawMessage `json:"-"`
 }
@@ -411,7 +410,7 @@ func GetSessionDetail(w http.ResponseWriter, r *http.Request) {
 	}
 	dto := toSessionDTO(s)
 	// Load slots inline.
-	revisions, _ := LoadSelectedSlots(ctx, db, sessionID)
+	revisions, _ := LoadDisplaySlots(ctx, db, sessionID)
 	for i := range revisions {
 		dto.Slots = append(dto.Slots, toSlotDTO(&revisions[i]))
 	}
@@ -454,7 +453,7 @@ func GetSessionSlots(w http.ResponseWriter, r *http.Request) {
 		common.ReplyErr(w, "session not found", http.StatusNotFound)
 		return
 	}
-	revisions, err := LoadSelectedSlots(ctx, db, sessionID)
+	revisions, err := LoadDisplaySlots(ctx, db, sessionID)
 	if err != nil {
 		common.ReplyErr(w, "query slots failed", http.StatusInternalServerError)
 		return
@@ -601,7 +600,7 @@ func GetActiveConversationSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	dto := toSessionDTO(s)
-	revisions, _ := LoadSelectedSlots(r.Context(), db, s.ID)
+	revisions, _ := LoadDisplaySlots(r.Context(), db, s.ID)
 	for i := range revisions {
 		dto.Slots = append(dto.Slots, toSlotDTO(&revisions[i]))
 	}
@@ -640,7 +639,7 @@ func GetLatestConversationSession(w http.ResponseWriter, r *http.Request) {
 		healStaleActiveSession(r.Context(), db, s)
 	}
 	dto := toSessionDTO(s)
-	revisions, _ := LoadSelectedSlots(r.Context(), db, s.ID)
+	revisions, _ := LoadDisplaySlots(r.Context(), db, s.ID)
 	for i := range revisions {
 		dto.Slots = append(dto.Slots, toSlotDTO(&revisions[i]))
 	}
