@@ -171,7 +171,7 @@ steps:
     prompt: |
       {{runtime_instruction}}
 
-      本步对初稿做一致性与质量审阅。调 get_artifact 取回 writing_context 和 draft_document，传给 check_consistency，把返回的路径用 save_artifact(content_type='file', key='review_report') 落库。
+      本步对初稿做一致性与质量审阅。调 get_artifact 取回 writing_context 和 draft_document 的文件路径，然后调用 check_consistency(draft_path=<draft_document 路径>, writing_context_path=<writing_context 路径>)，把返回的路径用 save_artifact(content_type='file', key='review_report') 落库。
     tools:
       - check_consistency
     exclude_framework_tools:

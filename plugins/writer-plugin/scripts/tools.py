@@ -317,18 +317,11 @@ def check_consistency(draft_path: str, writing_context_path: str) -> str:
     LOG.info(f'[writer-tool] check_consistency input draft_path={draft_path} writing_context_path={writing_context_path}')
     _read_artifact_file(draft_path)
     _read_artifact_file(writing_context_path)
-    output_result = WriterDraftingTools(
-        llm=None,
-        artifact_store=str(_workspace_root()),
-    ).generate_writing_output(
-        draft=draft_path,
-        context=writing_context_path,
-    )
     result = WriterQualityTools(
         llm=AutoModel(model='llm'),
         artifact_store=str(_workspace_root()),
-    ).validate_output(
-        output=output_result['artifact_path'],
+    ).validate_draft_document(
+        draft_document=draft_path,
         context=writing_context_path,
     )
     LOG.info(f'[writer-tool] check_consistency produced review_report artifact {result}')
