@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { PluginInfoApi, PluginSessionApi, TempUploadServiceApi } from "@/modules/chat/utils/request";
+import i18n from "@/i18n";
 
 // ---------------------------------------------------------------------------
 // DraftStore — two-layer draft management for slot text editing
@@ -470,14 +471,18 @@ export const usePluginStore = create<PluginStore>()((set, get) => ({
   },
 
   fetchPluginUI: async (pluginId) => {
-    // Return cached value if already fetched.
-    const cached = get().pluginUIByPlugin[pluginId];
+    const lang = i18n.language || "";
+    const cacheKey = `${pluginId}:${lang}`;
+    // Return cached value if already fetched for this language.
+    const cached = get().pluginUIByPlugin[cacheKey];
     if (cached) return cached;
     try {
-      const res = await PluginInfoApi().getPlugin(pluginId);
+      const res = await PluginInfoApi().getPlugin(pluginId, {
+        headers: lang ? { "Accept-Language": lang } : undefined,
+      });
       const ui: PluginUI = res?.data?.data?.ui ?? res?.data?.ui ?? {};
       set((state) => ({
-        pluginUIByPlugin: { ...state.pluginUIByPlugin, [pluginId]: ui },
+        pluginUIByPlugin: { ...state.pluginUIByPlugin, [cacheKey]: ui },
       }));
       return ui;
     } catch {

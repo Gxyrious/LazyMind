@@ -773,7 +773,7 @@ export function PluginPanel({
   onStop,
   onDismissed,
 }: PluginPanelProps) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const { session, loading, refresh } = usePluginSession(conversationId);
   const bumpDismissedRefresh = usePluginStore((s) => s.bumpDismissedRefresh);
   const autoRunning = usePluginStore((s) =>
@@ -822,10 +822,11 @@ export function PluginPanel({
 
   useEffect(() => {
     if (!session?.plugin_id) return;
-    const cached = pluginUIByPlugin[session.plugin_id];
+    const lang = i18n.language || "";
+    const cached = pluginUIByPlugin[`${session.plugin_id}:${lang}`];
     if (cached) { setUI(cached); return; }
     fetchPluginUI(session.plugin_id).then(setUI);
-  }, [session?.plugin_id, fetchPluginUI, pluginUIByPlugin]);
+  }, [session?.plugin_id, fetchPluginUI, pluginUIByPlugin, i18n.language]);
 
   // Restore the previously focused tab when UI loads.
   useEffect(() => {
