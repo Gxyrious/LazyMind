@@ -103,7 +103,7 @@ def profile_resources(writing_task_path: str, user_input: str) -> str:
     for idx, url in enumerate(feishu_urls):
         input_resources.append(InputResource(
             resource_id=f'feishu_{idx}', resource_type='url', uri=url,
-            title=None, mime_type=None, summary=None, meta={'provider': 'feishu', 'role': 'reference'},
+            title=None, mime_type=None, summary=None, meta={'provider': 'feishu', 'role': 'background'},
         ))
     LOG.info(f'[writer-tool] profile_resources input_resources={[r.model_dump() for r in input_resources]}')
     result = WriterResourceTools(
@@ -310,7 +310,7 @@ def update_writing_context(content_artifact_path: str, writing_context_path: str
     result = WriterContextTools(
         llm=None,
         artifact_store=str(_workspace_root()),
-    ).update_writing_context(content_artifact=content_artifact_path, context=writing_context_path)
+    ).update_writing_context(artifacts=content_artifact_path, context=writing_context_path)
     LOG.info(f'[writer-tool] update_writing_context produced writing_context artifact {result}')
     return result['artifact_path']
 
