@@ -1105,14 +1105,15 @@ export function PluginPanel({
             </button>
           )}
           {session.status === 'completed' && session.steps && session.steps.length > 0 && (
-            <div className='plugin-panel__rollback'>
-              <span className='plugin-panel__rollback-label'>{t('chat.pluginRollbackLabel')}</span>
-              <div className='plugin-panel__rollback-steps'>
+            <div style={{ flex: '1 1 100%', display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <span style={{ fontSize: 12, color: '#6b7280', fontWeight: 500 }}>{t('chat.pluginRollbackLabel')}</span>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                 {session.steps.map((step) => (
                   <button
                     key={`${step.step_id}-${step.attempt}`}
                     type='button'
-                    className='plugin-panel__rollback-step-btn'
+                    className='plugin-panel__action-btn plugin-panel__action-btn--secondary'
+                    style={{ padding: '3px 10px', fontSize: 12 }}
                     onClick={() => handleRollback(step.step_id)}
                     title={`${t('chat.pluginRollbackPrefix')}${step.step_id}`}
                   >

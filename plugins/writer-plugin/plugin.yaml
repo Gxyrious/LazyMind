@@ -147,25 +147,25 @@ i18n:
   zh-CN:
     name: AI 写作
     steps:
-      build_context: {label: 解析写作意图}
+      build_context: {label: 意图解析}
       generate_outline: {label: 生成大纲}
-      plan_sections: {label: 规划章节指令}
+      plan_sections: {label: 规划章节}
       generate_draft: {label: 撰写初稿}
-      review_document: {label: 审阅文档}
-      finalize_report: {label: 产出成稿}
+      review_document: {label: 审阅初稿}
+      finalize_report: {label: 最终成稿}
     tabs:
-      context: {label: 写作上下文}
-      outline: {label: 大纲}
-      plan_sections: {label: 章节指令}
-      draft: {label: 初稿}
-      review: {label: 审阅}
+      context: {label: 构造上下文}
+      outline: {label: 生成大纲}
+      plan_sections: {label: 规划章节}
+      draft: {label: 生成初稿}
+      review: {label: 审阅初稿}
       result: {label: 最终成稿}
     slots:
       writing_task_slot: {label: 写作任务}
       resource_profiles_slot: {label: 资源画像}
       writing_context_slot: {label: 写作上下文}
       outline_slot: {label: 大纲}
-      section_instructions_slot: {label: 章节指令}
+      section_instructions_slot: {label: 章节规划}
       draft_sections_slot: {label: 章节草稿}
       draft_slot: {label: 完整初稿}
       review_slot: {label: 审阅报告}
