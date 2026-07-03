@@ -245,14 +245,8 @@ def generate_draft_section(
         context=writing_context_path,
         previous_sections=previous_sections,
     )
-    produced_path = Path(result['artifact_path'])
-    raw_id = instruction.outline_node_id or instruction.instruction_id or f'section-{next_index + 1}'
-    safe_id = ''.join(ch if ch.isalnum() or ch in '-_' else '_' for ch in raw_id)[:80]
-    target_path = draft_sections_dir / f'draft_section_{next_index + 1:04d}_{safe_id}.json'
-    if produced_path.resolve() != target_path.resolve():
-        os.replace(produced_path, target_path)
-    LOG.info(f'[writer-tool] generate_draft_section produced draft_section artifact path={target_path} raw_result={result}')
-    return str(target_path)
+    LOG.info(f'[writer-tool] generate_draft_section produced draft_section artifact path={result["artifact_path"]} raw_result={result}')
+    return result['artifact_path']
 
 
 def assemble_draft_document(

@@ -27,17 +27,11 @@ tool_scripts:
 
 steps:
   - id: build_context
-    label: Build Context
   - id: generate_outline
-    label: Generate Outline
   - id: plan_sections
-    label: Plan Sections
   - id: generate_draft
-    label: Generate Draft
   - id: review_document
-    label: Review Document
   - id: finalize_report
-    label: Finalize Report
 
 ui:
   tabs:

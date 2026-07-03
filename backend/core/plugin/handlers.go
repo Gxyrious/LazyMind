@@ -664,6 +664,9 @@ func GetPluginInfo(w http.ResponseWriter, r *http.Request) {
 		common.ReplyErr(w, "build upstream request failed", http.StatusInternalServerError)
 		return
 	}
+	if lang := r.Header.Get("Accept-Language"); lang != "" {
+		req.Header.Set("Accept-Language", lang)
+	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		common.ReplyErr(w, "upstream request failed", http.StatusBadGateway)
@@ -702,6 +705,9 @@ func ListPlugins(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		common.ReplyErr(w, "build upstream request failed", http.StatusInternalServerError)
 		return
+	}
+	if lang := r.Header.Get("Accept-Language"); lang != "" {
+		req.Header.Set("Accept-Language", lang)
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
