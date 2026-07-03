@@ -304,15 +304,16 @@ def update_writing_context(content_artifact_path: str, writing_context_path: str
     return result['artifact_path']
 
 
-def check_consistency(draft_path: str, writing_context_path: str) -> str:
-    """产出 review_report Artifact 文件。
+def check_consistency(draft_path: str, writing_context_path: str) -> Dict[str, str]:
+    """产出 review_report Artifact 文件并返回 validate_draft_document 的内容摘要。
 
     Args:
         draft_path: draft_document 文件路径。
         writing_context_path: writing_context 文件路径。
 
     Returns:
-        review_report 文件的绝对路径。
+        两条字段，需要分别调用 `save_artifact(content_type='file', key='review_report')`
+        与 `save_artifact(content_type='text', key='review_summary')` 进行落库。
     """
     LOG.info(f'[writer-tool] check_consistency input draft_path={draft_path} writing_context_path={writing_context_path}')
     _read_artifact_file(draft_path)
@@ -324,8 +325,12 @@ def check_consistency(draft_path: str, writing_context_path: str) -> str:
         draft_document=draft_path,
         context=writing_context_path,
     )
-    LOG.info(f'[writer-tool] check_consistency produced review_report artifact {result}')
-    return result['artifact_path']
+    returned: Dict[str, str] = {
+        'review_report': result['artifact_path'],
+        'review_summary': result['summary'],
+    }
+    LOG.info(f'[writer-tool] check_consistency produced {returned}')
+    return returned
 
 
 def generate_writing_output(
@@ -361,6 +366,6 @@ def generate_writing_output(
         'writing_output_md': result['output_file_path'],
     }
     LOG.info(
-        f'[writer-tool] generate_writing_output produced {returned} raw_result={result}'
+        f'[writer-tool] generate_writing_output produced result={result}'
     )
     return returned

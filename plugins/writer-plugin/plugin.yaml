@@ -89,7 +89,7 @@ ui:
         - id: section_instructions_slot
           label: Section Instructions
           type: text
-          cardinality: list
+          cardinality: single
           artifact_key: section_instructions
 
     - id: draft
@@ -127,6 +127,11 @@ ui:
           type: text
           cardinality: single
           artifact_key: review_report
+        - id: review_summary_slot
+          label: Review Summary
+          type: text
+          cardinality: single
+          artifact_key: review_summary
 
     - id: result
       step_id: finalize_report
@@ -170,5 +175,6 @@ i18n:
       draft_sections_slot: {label: 章节草稿}
       draft_slot: {label: 完整初稿}
       review_slot: {label: 审阅报告}
+      review_summary_slot: {label: 审阅摘要}
       final_report_slot: {label: 最终成稿}
       final_report_md_slot: {label: 最终成稿（Markdown）}

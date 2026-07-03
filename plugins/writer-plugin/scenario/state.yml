@@ -23,7 +23,9 @@ transitions:
 
   review_document:
     - to: finalize_report
-      condition: "Review complete — proceed to finalization."
+      condition: "Review passed — proceed to finalization."
+    - to: plan_sections
+      condition: "Review failed — re-plan sections to address review issues."
 
   finalize_report:
     - to: __end__
@@ -171,7 +173,11 @@ steps:
     prompt: |
       {{runtime_instruction}}
 
-      本步对初稿做一致性与质量审阅。调 get_artifact 取回 writing_context 和 draft_document 的文件路径，然后调用 check_consistency(draft_path=<draft_document 路径>, writing_context_path=<writing_context 路径>)，把返回的路径用 save_artifact(content_type='file', key='review_report') 落库。
+      本步对初稿做一致性与质量审阅。调 get_artifact 取回 writing_context 和 draft_document 的文件路径，然后调用 check_consistency(draft_path=<draft_document 路径>, writing_context_path=<writing_context 路径>)。该工具会返回 review_report（review_report Artifact 文件的绝对路径）和 review_summary（validate_draft_document 输出的内容摘要字符串，非路径）。请分别调用 save_artifact(content_type='file', key='review_report', value=<review_report 路径>) 和 save_artifact(content_type='text', key='review_summary', value=<review_summary 内容>) 完成落库。
+
+      review_summary 的内容决定 next_step 是什么：审阅通过就进 finalize_report 出终稿，没通过就回 plan_sections 重新规划章节。本步骤的最后一次输出按如下格式：“由于 {{review_summary}}，建议下一个step推进到 {{next_step}}”。
+
+      如果上述工具调用失败，停止本步骤并保留工具错误信息，交由外层重试处理。
     tools:
       - check_consistency
     exclude_framework_tools:
@@ -186,8 +192,11 @@ steps:
       - artifact_id: review_report
         content_type: json
         slot_id: review_slot
+      - artifact_id: review_summary
+        content_type: text
+        slot_id: review_summary_slot
     acceptance_criteria: |
-      review_report 已保存；result.is_passed 是布尔；result.score 是 0-100 数字；result.summary 是非空字符串；result.issues 是数组，每项含 severity（high/medium/low）、category、description 字段。
+      review_report 已保存；result.is_passed 是布尔；result.score 是 0-100 数字；result.summary 是非空字符串；result.issues 是数组，每项含 severity（high/medium/low）、category、description 字段。review_summary 已保存，为 validate_draft_document 输出的内容摘要（非路径）。最后一条消息需要符合“由于 {{review_summary}}，建议下一个step推进到 {{next_step}}”的格式。
 
   finalize_report:
     label: Finalize Report
