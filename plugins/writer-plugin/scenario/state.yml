@@ -51,15 +51,9 @@ steps:
       - profile_resources
       - create_writing_context
     outputs:
-      - artifact_id: writing_task
-        content_type: json
-        slot_id: writing_task_slot
-      - artifact_id: resource_profiles
-        content_type: json
-        slot_id: resource_profiles_slot
-      - artifact_id: writing_context
-        content_type: json
-        slot_id: writing_context_slot
+      - slot: writing_task
+      - slot: resource_profiles
+      - slot: writing_context
     acceptance_criteria: |
       writing_task、resource_profiles、writing_context 三个 artifact 均已保存；writing_context.context_id 非空；document_summary.summary 非空、key_points 至少 1 条；style_profile 含 audience、formality、tone 三字段。
 
@@ -82,17 +76,13 @@ steps:
       - read_user_attachment
       - find_user_attachment
     inputs:
-      - artifact_id: writing_task
+      - slot: writing_task
         required: true
-      - artifact_id: writing_context
+      - slot: writing_context
         required: true
     outputs:
-      - artifact_id: outline
-        content_type: json
-        slot_id: outline_slot
-      - artifact_id: writing_context
-        content_type: json
-        slot_id: writing_context_slot
+      - slot: outline
+      - slot: writing_context
     acceptance_criteria: |
       outline 已保存；nodes 至少 3 个；每个 node 至少含 node_id、title、instruction、constraints 字段且非空；writing_context 已保存一次，document_summary 已反映 outline 内容。
 
@@ -112,16 +102,14 @@ steps:
       - read_user_attachment
       - find_user_attachment
     inputs:
-      - artifact_id: outline
+      - slot: outline
         required: true
-      - artifact_id: writing_context
+      - slot: writing_context
         required: true
-      - artifact_id: review_report
+      - slot: review_report
         required: false
     outputs:
-      - artifact_id: section_instructions
-        content_type: json
-        slot_id: section_instructions_slot
+      - slot: section_instructions
     acceptance_criteria: |
       section_instructions 已保存；为 SectionInstructionList Artifact（data.instructions 为数组），条目数与 outline.nodes 节点数一一对应；每条至少含 outline_node_id、section_title、section_goal、required_points 字段。
 
@@ -151,24 +139,18 @@ steps:
       - read_user_attachment
       - find_user_attachment
     inputs:
-      - artifact_id: writing_task
+      - slot: writing_task
         required: true
-      - artifact_id: writing_context
+      - slot: writing_context
         required: true
-      - artifact_id: outline
+      - slot: outline
         required: true
-      - artifact_id: section_instructions
+      - slot: section_instructions
         required: true
     outputs:
-      - artifact_id: draft_sections
-        content_type: json
-        slot_id: draft_sections_slot
-      - artifact_id: draft_document
-        content_type: json
-        slot_id: draft_slot
-      - artifact_id: writing_context
-        content_type: json
-        slot_id: writing_context_slot
+      - slot: draft_sections
+      - slot: draft_document
+      - slot: writing_context
     acceptance_criteria: |
       draft_sections 已按章节顺序保存，数量与 section_instructions.data.instructions 一致，至少 2 个 DraftSection；每个 DraftSection 含 title 且 blocks 非空，每个 block 的 content 非空。draft_document 已保存一次，draft_document.sections 与 draft_sections 按顺序一一对应；writing_context 已保存一次，document_summary 已反映 draft_document 内容。
 
@@ -188,17 +170,13 @@ steps:
       - read_user_attachment
       - find_user_attachment
     inputs:
-      - artifact_id: draft_document
+      - slot: draft_document
         required: true
-      - artifact_id: writing_context
+      - slot: writing_context
         required: true
     outputs:
-      - artifact_id: review_report
-        content_type: json
-        slot_id: review_slot
-      - artifact_id: review_summary
-        content_type: text
-        slot_id: review_summary_slot
+      - slot: review_report
+      - slot: review_summary
     acceptance_criteria: |
       review_report 已保存；result.is_passed 是布尔；result.score 是 0-100 数字；result.summary 是非空字符串；result.issues 是数组，每项含 severity（high/medium/low）、category、description 字段。review_summary 已保存，为 validate_draft_document 输出的内容摘要（非路径）。最后一条消息需要符合“由于 {{review_summary}}，建议下一个step推进到 {{next_step}}”的格式。
 
@@ -218,18 +196,14 @@ steps:
       - read_user_attachment
       - find_user_attachment
     inputs:
-      - artifact_id: draft_document
+      - slot: draft_document
         required: true
-      - artifact_id: review_report
+      - slot: review_report
         required: true
-      - artifact_id: writing_context
+      - slot: writing_context
         required: true
     outputs:
-      - artifact_id: writing_output
-        content_type: json
-        slot_id: final_report_slot
-      - artifact_id: writing_output_md
-        content_type: file
-        slot_id: final_report_md_slot
+      - slot: writing_output
+      - slot: writing_output_md
     acceptance_criteria: |
       writing_output 已保存；writing_output_md 已保存；output_format 是 markdown；content 是非空字符串，含标题与至少 2 个二级章节（`## ` 开头），正文长度足以独立成篇。

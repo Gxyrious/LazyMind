@@ -224,9 +224,9 @@ function getTabSlotRevisions(
   const slots = session.slots ?? [];
   const stepId = tab.step_id;
   if (stepId) {
-    return slots.filter((s) => s.artifact_key === artifactKey && s.step_id === stepId);
+    return slots.filter((s) => s.slot === artifactKey && s.step_id === stepId);
   }
-  return slots.filter((s) => s.artifact_key === artifactKey && s.selected);
+  return slots.filter((s) => s.slot === artifactKey && s.selected);
 }
 
 /** Get all distinct sort_orders present across the participating slots. */
@@ -234,11 +234,11 @@ function getCompositeRows(
   tab: TabDef,
   session: PluginSession,
 ): number[] {
-  const participating = new Set(tab.slots.map((s) => s.artifact_key ?? s.id));
+  const participating = new Set(tab.slots.map((s) => s.id));
   const orders = new Set<number>();
   for (const slot of session.slots ?? []) {
     const matchesTabStep = tab.step_id ? slot.step_id === tab.step_id : slot.selected;
-    if (matchesTabStep && participating.has(slot.artifact_key ?? slot.slot_id)) {
+    if (matchesTabStep && participating.has(slot.slot)) {
       if (slot.sort_order !== undefined) {
         orders.add(slot.sort_order);
       }
@@ -247,7 +247,7 @@ function getCompositeRows(
   return Array.from(orders).sort((a, b) => a - b);
 }
 
-/** Find a slot revision for (artifact_key, sort_order). */
+/** Find a slot revision for (slot, sort_order). */
 function findSlotRevision(
   session: PluginSession,
   tab: TabDef,
@@ -255,7 +255,7 @@ function findSlotRevision(
   sortOrder: number,
 ): SlotRevision | undefined {
   return getTabSlotRevisions(session, tab, artifactKey).find(
-    (s) => (s.artifact_key ?? s.slot_id) === artifactKey && s.sort_order === sortOrder,
+    (s) => s.slot === artifactKey && s.sort_order === sortOrder,
   );
 }
 
@@ -307,7 +307,7 @@ function InnerTabsCell({
       </div>
       {innerSlotIds.map((slotId, i) => {
         const def = slotDefs.find((s) => s.id === slotId);
-        const artifactKey = def?.artifact_key ?? slotId;
+        const artifactKey = def?.id ?? slotId;
         const rev = findSlotRevision(session, tab, artifactKey, sortOrder);
         return (
           <div key={slotId} role='tabpanel' hidden={i !== activeIdx}>
@@ -395,7 +395,7 @@ function CompositeSlotGrid({
             }
             const slotId = col.slotId as string;
             const def = tab.slots.find((s) => s.id === slotId);
-            const artifactKey = def?.artifact_key ?? slotId;
+            const artifactKey = def?.id ?? slotId;
             const rev = findSlotRevision(session, tab, artifactKey, sortOrder);
             return (
               <div
@@ -704,7 +704,7 @@ function TabSlotGrid({
         aria-hidden='true'
       />
       {tab.slots.map((slotDef) => {
-        const artifactKey = slotDef.artifact_key ?? slotDef.id;
+        const artifactKey = slotDef.id;
         const revisions = getTabSlotRevisions(session, tab, artifactKey);
         const isImageList = slotDef.type === 'image' && slotDef.cardinality === 'list';
         const isDraggable = Boolean(slotDef.ordered);

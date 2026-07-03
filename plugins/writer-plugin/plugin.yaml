@@ -33,6 +33,54 @@ steps:
   - id: review_document
   - id: finalize_report
 
+slots:
+  - id: writing_task
+    label: Writing Task
+    type: text
+    cardinality: single
+  - id: resource_profiles
+    label: Resource Profiles
+    type: text
+    cardinality: single
+  - id: writing_context
+    label: Writing Context
+    type: text
+    cardinality: single
+    summary_max_chars: 600
+  - id: outline
+    label: Outline
+    type: text
+    cardinality: single
+  - id: section_instructions
+    label: Section Instructions
+    type: text
+    cardinality: single
+  - id: draft_sections
+    label: Draft Sections
+    type: text
+    cardinality: list
+    ordered: true
+  - id: draft_document
+    label: Full Draft
+    type: text
+    cardinality: single
+  - id: review_report
+    label: Review Report
+    type: text
+    cardinality: single
+  - id: review_summary
+    label: Review Summary
+    type: text
+    cardinality: single
+  - id: writing_output
+    label: Final Report
+    type: text
+    cardinality: single
+  - id: writing_output_md
+    label: Final Report (Markdown)
+    type: file
+    cardinality: single
+
 ui:
   tabs:
     - id: context
@@ -40,108 +88,49 @@ ui:
       label: Context
       layout: list
       slots:
-        - id: writing_task_slot
-          label: Writing Task
-          type: text
-          cardinality: single
-          artifact_key: writing_task
-        - id: resource_profiles_slot
-          label: Resource Profiles
-          type: text
-          cardinality: single
-          artifact_key: resource_profiles
-        - id: writing_context_slot
-          label: Writing Context
-          type: text
-          cardinality: single
-          artifact_key: writing_context
-          summary_max_chars: 600
+        - id: writing_task
+        - id: resource_profiles
+        - id: writing_context
 
     - id: outline
       step_id: generate_outline
       label: Outline
       layout: list
       slots:
-        - id: outline_slot
-          label: Outline
-          type: text
-          cardinality: single
-          artifact_key: outline
-
-        - id: writing_context_slot
-          label: Writing Context
-          type: text
-          cardinality: single
-          artifact_key: writing_context
-          summary_max_chars: 600
+        - id: outline
+        - id: writing_context
 
     - id: plan_sections
       step_id: plan_sections
       label: Plan Sections
       layout: list
       slots:
-        - id: section_instructions_slot
-          label: Section Instructions
-          type: text
-          cardinality: single
-          artifact_key: section_instructions
+        - id: section_instructions
 
     - id: draft
       step_id: generate_draft
       label: Draft
       layout: list
       slots:
-        - id: draft_sections_slot
-          label: Draft Sections
-          type: text
-          cardinality: list
-          ordered: true
-          artifact_key: draft_sections
-
-        - id: draft_slot
-          label: Full Draft
-          type: text
-          cardinality: single
-          artifact_key: draft_document
-
-        - id: writing_context_slot
-          label: Writing Context
-          type: text
-          cardinality: single
-          artifact_key: writing_context
-          summary_max_chars: 600
+        - id: draft_sections
+        - id: draft_document
+        - id: writing_context
 
     - id: review
       step_id: review_document
       label: Review
       layout: list
       slots:
-        - id: review_slot
-          label: Review Report
-          type: text
-          cardinality: single
-          artifact_key: review_report
-        - id: review_summary_slot
-          label: Review Summary
-          type: text
-          cardinality: single
-          artifact_key: review_summary
+        - id: review_report
+        - id: review_summary
 
     - id: result
       step_id: finalize_report
       label: Final Report
       layout: list
       slots:
-        - id: final_report_slot
-          label: Final Report
-          type: text
-          cardinality: single
-          artifact_key: writing_output
-        - id: final_report_md_slot
-          label: Final Report (Markdown)
-          type: file
-          cardinality: single
-          artifact_key: writing_output_md
+        - id: writing_output
+        - id: writing_output_md
 
 i18n:
   zh-CN:
@@ -161,14 +150,14 @@ i18n:
       review: {label: 审阅初稿}
       result: {label: 最终成稿}
     slots:
-      writing_task_slot: {label: 写作任务}
-      resource_profiles_slot: {label: 资源画像}
-      writing_context_slot: {label: 写作上下文}
-      outline_slot: {label: 大纲}
-      section_instructions_slot: {label: 章节规划}
-      draft_sections_slot: {label: 章节草稿}
-      draft_slot: {label: 完整初稿}
-      review_slot: {label: 审阅报告}
-      review_summary_slot: {label: 审阅摘要}
-      final_report_slot: {label: 最终成稿}
-      final_report_md_slot: {label: 最终成稿（Markdown）}
+      writing_task: {label: 写作任务}
+      resource_profiles: {label: 资源画像}
+      writing_context: {label: 写作上下文}
+      outline: {label: 大纲}
+      section_instructions: {label: 章节规划}
+      draft_sections: {label: 章节草稿}
+      draft_document: {label: 完整初稿}
+      review_report: {label: 审阅报告}
+      review_summary: {label: 审阅摘要}
+      writing_output: {label: 最终成稿}
+      writing_output_md: {label: 最终成稿（Markdown）}
