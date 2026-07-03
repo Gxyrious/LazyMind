@@ -156,23 +156,40 @@ def generate_outline(writing_task_path: str, writing_context_path: str) -> str:
     return result['artifact_path']
 
 
-def generate_section_instructions(outline_path: str, writing_context_path: str) -> str:
-    """产出 section_instructions Artifact 文件（包含完整 SectionInstructionList）。
+def generate_section_instructions(
+    outline_path: str,
+    writing_context_path: str,
+    review_report_path: str = '',
+) -> str:
+    """产出 section_instructions Artifact 文件，包含完整 SectionInstructionList。
 
     Args:
         outline_path: outline Artifact 文件绝对路径。
         writing_context_path: writing_context Artifact 文件绝对路径。
+        review_report_path: review_report Artifact 文件绝对路径（可选）。
 
     Returns:
         section_instructions Artifact 文件的绝对路径。
     """
-    LOG.info(f'[writer-tool] generate_section_instructions input outline_path={outline_path} writing_context_path={writing_context_path}')
+    LOG.info(
+        '[writer-tool] generate_section_instructions input '
+        f'outline_path={outline_path} '
+        f'writing_context_path={writing_context_path} '
+        f'review_report_path={review_report_path!r}'
+    )
     _read_artifact_file(outline_path)
     _read_artifact_file(writing_context_path)
+    execution_results: Any = None
+    if review_report_path:
+        execution_results = _read_artifact_file(review_report_path)
     result = WriterPlanningTools(
         llm=AutoModel(model='llm'),
         artifact_store=str(_workspace_root()),
-    ).generate_section_instructions(outline=outline_path, context=writing_context_path)
+    ).generate_section_instructions(
+        outline=outline_path,
+        context=writing_context_path,
+        execution_results=execution_results,
+    )
     LOG.info(f'[writer-tool] generate_section_instructions produced section_instructions artifact {result}')
     return result['artifact_path']
 

@@ -101,7 +101,9 @@ steps:
     prompt: |
       {{runtime_instruction}}
 
-      本步为大纲中的所有顶层章节一次性生成写作指令。调 get_artifact 取回 writing_context 和 outline，调 generate_section_instructions(outline_path=<outline 路径>, writing_context_path=<writing_context 路径>)，把返回的路径用 save_artifact(content_type='file', key='section_instructions') 落库。
+      本步为大纲中的所有顶层章节一次性生成写作指令。调 get_artifact 取回 writing_context 和 outline。如果工件中已经存在 review_report，说明本步是从 review 阶段驳回后回退的重规划，需要再调一次 get_artifact(key='review_report') 把它一并带入生成过程。
+
+      然后调用 generate_section_instructions(outline_path=<outline 路径>, writing_context_path=<writing_context 路径>, review_report_path=<review_report 路径，没有就传空字符串>)，把返回的路径用 save_artifact(content_type='file', key='section_instructions') 落库。
 
       如果上述工具调用失败，不要进行任何额外的兜底操作，直接停止本步骤。尤其不要自行撰写内容进行落库。
     tools:
@@ -114,6 +116,8 @@ steps:
         required: true
       - artifact_id: writing_context
         required: true
+      - artifact_id: review_report
+        required: false
     outputs:
       - artifact_id: section_instructions
         content_type: json
