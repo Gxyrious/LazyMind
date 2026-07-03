@@ -134,7 +134,7 @@ def save_artifact(key: str, value: Any, content_type: str = 'text',
             'message': (
                 f"Key '{key}' is not a declared output of this step "
                 f"(allowed: {', '.join(ctx.output_artifact_keys)}). "
-                f"Call the plugin tools declared in the objective and save only the declared keys."
+                f'Call the plugin tools declared in the objective and save only the declared keys.'
             ),
         })
     ct = content_type if content_type in _CONTENT_TYPES else 'text'

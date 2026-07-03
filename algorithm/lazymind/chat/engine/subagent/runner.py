@@ -607,7 +607,6 @@ async def run_subagent_stream(
             if kind == 'event':
                 item = payload
                 tag = item.get('tag')
-                LOG.info(f'[SubAgent][llm] task={task_id} step={ctx.params.get("step_id","")} tag={tag}')
                 # Persist tool steps for resume / breakpoint recovery.
                 if tag in ('tool_calls', 'tool_results'):
                     # Flush accumulated text/think as a single step before tool call.
@@ -633,8 +632,6 @@ async def run_subagent_stream(
                             if isinstance(tc, dict)
                         ]
                         if calls:
-                            for c in calls:
-                                LOG.info(f'[SubAgent][tool_call] task={task_id} tool={c["name"]} args={json.dumps(c["args"], ensure_ascii=False)}')
                             yield _sse({'type': 'tool_calls', 'task_id': task_id, 'tool_calls': calls})
                     elif tag == 'tool_results':
                         results = [
@@ -647,8 +644,6 @@ async def run_subagent_stream(
                             if isinstance(tr, dict)
                         ]
                         if results:
-                            for r in results:
-                                LOG.info(f'[SubAgent][tool_result] task={task_id} tool={r["name"]} result={r["result"][:500]}')
                             yield _sse({'type': 'tool_results', 'task_id': task_id, 'tool_results': results})
                     # Drain artifact events emitted synchronously by tools.
                     while emitted:
