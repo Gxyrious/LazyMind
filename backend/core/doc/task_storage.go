@@ -20,7 +20,7 @@ func uploadRoot() string {
 // subagentWorkspaceRoot is the SubAgent workspace, shared between chat and core containers.
 func subagentWorkspaceRoot() string {
 	if v := strings.TrimSpace(os.Getenv("LAZYMIND_SUBAGENT_WORKSPACE")); v != "" {
-		return strings.TrimRight(v, "/")
+		return filepath.Clean(v)
 	}
 	return "/data/subagent"
 }

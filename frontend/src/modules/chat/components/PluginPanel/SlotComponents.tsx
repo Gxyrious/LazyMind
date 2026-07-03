@@ -592,7 +592,7 @@ export function SlotVersionPopover({
               <div className='plugin-slot__version-compare plugin-slot__version-compare--file'>
                 {effectiveSelectedVersion ? (
                   <FileRevisionPreview
-                    info={extractFileInfo(currentValue)}
+                    info={extractFileInfo(activeCurrentValue)}
                     label='当前版本'
                   />
                 ) : (
@@ -700,7 +700,7 @@ export function SlotVersionPopover({
               <div className='plugin-slot__version-compare plugin-slot__version-compare--same'>
                 {effectiveSelectedVersion ? (
                   <pre className='plugin-slot__version-current-text'>
-                    {extractText(currentValue) || '（无内容）'}
+                    {extractText(activeCurrentValue) || '（无内容）'}
                   </pre>
                 ) : (
                   <div className='plugin-slot__version-compare-hint'>选择版本查看对比</div>

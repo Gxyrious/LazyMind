@@ -222,9 +222,12 @@ function getTabSlotRevisions(
   artifactKey: string,
 ): SlotRevision[] {
   const slots = session.slots ?? [];
-  const stepId = tab.step_id;
-  if (stepId) {
-    return slots.filter((s) => s.slot === artifactKey && s.step_id === stepId);
+  if (tab.step_id) {
+    return slots.filter((s) => s.slot === artifactKey && s.step_id === tab.step_id);
+  }
+  const isStepTab = session.steps?.some((s) => s.step_id === tab.id);
+  if (isStepTab) {
+    return slots.filter((s) => s.slot === artifactKey && s.step_id === tab.id);
   }
   return slots.filter((s) => s.slot === artifactKey && s.selected);
 }
@@ -236,8 +239,10 @@ function getCompositeRows(
 ): number[] {
   const participating = new Set(tab.slots.map((s) => s.id));
   const orders = new Set<number>();
+  const scopeStepId = tab.step_id
+    ?? (session.steps?.some((s) => s.step_id === tab.id) ? tab.id : undefined);
   for (const slot of session.slots ?? []) {
-    const matchesTabStep = tab.step_id ? slot.step_id === tab.step_id : slot.selected;
+    const matchesTabStep = scopeStepId ? slot.step_id === scopeStepId : slot.selected;
     if (matchesTabStep && participating.has(slot.slot)) {
       if (slot.sort_order !== undefined) {
         orders.add(slot.sort_order);

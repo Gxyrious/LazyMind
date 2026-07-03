@@ -43,10 +43,10 @@ const RenderTxt = (props: RenderTxtProps) => {
   useEffect(() => {
     if (!contentText || !highlightedText) return;
     const id = window.setTimeout(() => {
-      const txtKeywords = document.querySelectorAll(".txt-keyword");
-      txtKeywords.forEach((txtKeyword) => {
-        txtKeyword.scrollIntoView({ behavior: "smooth", block: "center" });
-      });
+      const firstKeyword = document.querySelector(".txt-keyword");
+      if (firstKeyword) {
+        firstKeyword.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
     }, 200);
     return () => window.clearTimeout(id);
   }, [contentText, highlightedText]);

@@ -181,6 +181,8 @@ def _resolve_excluded_framework_tools(params: Dict[str, Any]) -> set:
         if not plugin_id or not step_id:
             return set()
         step_config = _loader.get_step_config(plugin_id, step_id)
+        if not step_config:
+            return set()
         return set(step_config.get('exclude_framework_tools', []) or [])
     except Exception:
         return set()
