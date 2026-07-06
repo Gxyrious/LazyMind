@@ -10,7 +10,7 @@ import re
 from pathlib import Path
 from typing import Any, Dict
 
-from lazyllm import LOG, AutoModel
+from lazyllm import AutoModel
 
 from lazymind.chat.engine.subagent.context import require_context
 from lazyllm.tools.writer.data_models import (
@@ -34,15 +34,12 @@ def _workspace_root() -> Path:
 
 def _read_artifact_file(path: str) -> Any:
     """读取 plugin workspace 中的 artifact 文件，优先解包 Artifact 格式的 data 字段。"""
-    LOG.info(f'[writer-tool] _read_artifact_file begin path={path} exists={os.path.exists(path)}')
     if not os.path.exists(path):
-        LOG.error(f'[writer-tool] _read_artifact_file FILE NOT FOUND path={path}')
         raise FileNotFoundError(path)
     with open(path, 'r', encoding='utf-8') as fh:
         raw = json.load(fh)
     if isinstance(raw, dict) and 'data' in raw:
         raw = raw['data']
-    LOG.info(f'[writer-tool] _read_artifact_file OK path={path} data={raw}')
     return raw
 
 
@@ -58,11 +55,9 @@ def build_writing_task(query: str) -> str:
     Returns:
         writing_task Artifact 文件的绝对路径。
     """
-    LOG.info(f'[writer-tool] build_writing_task input query={query!r}')
     task = WritingTask(query=query, task_type='write') # TODO: 借助LLM进行精细化的构造
     path = _workspace_root() / 'writing_task.json'
     save_artifact_json(task, str(path), created_by='build_writing_task')
-    LOG.info(f'[writer-tool] build_writing_task produced writing_task artifact path={path}')
     return str(path)
 
 
@@ -76,12 +71,10 @@ def profile_resources(writing_task_path: str, user_input: str) -> str:
     Returns:
         resource_profiles Artifact 文件的绝对路径。
     """
-    LOG.info(f'[writer-tool] profile_resources input writing_task_path={writing_task_path} user_input={user_input!r}')
     _read_artifact_file(writing_task_path)
     ctx = require_context()
     files_by_turn = ctx.params.get('history_files_per_turn') or {}
     all_files = [p for paths in files_by_turn.values() for p in paths]
-    LOG.info(f'[writer-tool] profile_resources history_files_per_turn={files_by_turn} all_files_count={len(all_files)} all_files={all_files}')
 
     feishu_pattern = re.compile(r'https?://[A-Za-z0-9.\-]+\.feishu\.cn/\S+')
     seen_urls: set[str] = set()
@@ -92,7 +85,6 @@ def profile_resources(writing_task_path: str, user_input: str) -> str:
             continue
         seen_urls.add(url)
         feishu_urls.append(url)
-    LOG.info(f'[writer-tool] profile_resources feishu_urls={feishu_urls} count={len(feishu_urls)}')
 
     input_resources: list[InputResource] = []
     for abs_path in all_files:
@@ -105,12 +97,10 @@ def profile_resources(writing_task_path: str, user_input: str) -> str:
             resource_id=f'feishu_{idx}', resource_type='url', uri=url,
             title=None, mime_type=None, summary=None, meta={'provider': 'feishu', 'role': 'background'},
         ))
-    LOG.info(f'[writer-tool] profile_resources input_resources={[r.model_dump() for r in input_resources]}')
     result = WriterResourceTools(
         llm=AutoModel(model='llm'),
         artifact_store=str(_workspace_root()),
     ).profile_resources(task=writing_task_path, input_resources=input_resources)
-    LOG.info(f'[writer-tool] profile_resources produced resource_profiles artifact counts={result["metadata"]["counts"]}')
     return result['artifact_path']
 
 
@@ -124,14 +114,12 @@ def create_writing_context(writing_task_path: str, resource_profiles_path: str) 
     Returns:
         writing_context Artifact 文件的绝对路径。
     """
-    LOG.info(f'[writer-tool] create_writing_context input writing_task_path={writing_task_path} resource_profiles_path={resource_profiles_path}')
     _read_artifact_file(writing_task_path)
     _read_artifact_file(resource_profiles_path)
     result = WriterContextTools(
         llm=None,
         artifact_store=str(_workspace_root()),
     ).create_writing_context(task=writing_task_path, resource_profiles=resource_profiles_path)
-    LOG.info(f'[writer-tool] create_writing_context produced writing_context artifact {result}')
     return result['artifact_path']
 
 
@@ -145,14 +133,12 @@ def generate_outline(writing_task_path: str, writing_context_path: str) -> str:
     Returns:
         outline Artifact 文件的绝对路径。
     """
-    LOG.info(f'[writer-tool] generate_outline input writing_task_path={writing_task_path} writing_context_path={writing_context_path}')
     _read_artifact_file(writing_task_path)
     _read_artifact_file(writing_context_path)
     result = WriterPlanningTools(
         llm=AutoModel(model='llm'),
         artifact_store=str(_workspace_root()),
     ).generate_outline(task=writing_task_path, context=writing_context_path)
-    LOG.info(f'[writer-tool] generate_outline produced outline artifact {result}')
     return result['artifact_path']
 
 
@@ -171,12 +157,6 @@ def generate_section_instructions(
     Returns:
         section_instructions Artifact 文件的绝对路径。
     """
-    LOG.info(
-        '[writer-tool] generate_section_instructions input '
-        f'outline_path={outline_path} '
-        f'writing_context_path={writing_context_path} '
-        f'review_report_path={review_report_path!r}'
-    )
     _read_artifact_file(outline_path)
     _read_artifact_file(writing_context_path)
     execution_results: Any = None
@@ -190,7 +170,6 @@ def generate_section_instructions(
         context=writing_context_path,
         execution_results=execution_results,
     )
-    LOG.info(f'[writer-tool] generate_section_instructions produced section_instructions artifact {result}')
     return result['artifact_path']
 
 
@@ -209,12 +188,6 @@ def generate_draft_section(
     Returns:
         draft_section 文件的绝对路径。全部章节生成完毕时返回空字符串。
     """
-    LOG.info(
-        '[writer-tool] generate_draft_section input '
-        f'writing_task_path={writing_task_path} '
-        f'section_instructions_path={section_instructions_path} '
-        f'writing_context_path={writing_context_path}'
-    )
     _read_artifact_file(writing_task_path)
     _read_artifact_file(writing_context_path)
     section_instructions = _read_artifact_file(section_instructions_path)
@@ -227,10 +200,6 @@ def generate_draft_section(
     next_index = len(previous_paths)
     instructions = section_instructions['instructions']
     if next_index >= len(instructions):
-        LOG.info(
-            '[writer-tool] generate_draft_section reached end '
-            f'previous_count={len(previous_paths)} instruction_count={len(instructions)}'
-        )
         return ''
 
     instruction = SectionInstruction.model_validate(instructions[next_index])
@@ -245,7 +214,6 @@ def generate_draft_section(
         context=writing_context_path,
         previous_sections=previous_sections,
     )
-    LOG.info(f'[writer-tool] generate_draft_section produced draft_section artifact path={result["artifact_path"]} raw_result={result}')
     return result['artifact_path']
 
 
@@ -264,12 +232,6 @@ def assemble_draft_document(
     Returns:
         draft_document 文件的绝对路径。
     """
-    LOG.info(
-        '[writer-tool] assemble_draft_document input '
-        f'draft_sections_anchor_path={draft_sections_anchor_path} '
-        f'writing_context_path={writing_context_path} '
-        f'outline_path={outline_path}'
-    )
     anchor = Path(draft_sections_anchor_path)
     draft_sections_dir = anchor if anchor.is_dir() else anchor.parent
     draft_sections_paths = sorted(str(path) for path in draft_sections_dir.glob('draft_section_*.json'))
@@ -290,7 +252,6 @@ def assemble_draft_document(
         context=writing_context_path,
         outline=outline_ref,
     )
-    LOG.info(f'[writer-tool] assemble_draft_document produced draft_document artifact {result}')
     return result['artifact_path']
 
 
@@ -304,14 +265,12 @@ def update_writing_context(content_artifact_path: str, writing_context_path: str
     Returns:
         writing_context 文件的绝对路径。
     """
-    LOG.info(f'[writer-tool] update_writing_context input content_artifact_path={content_artifact_path} writing_context_path={writing_context_path}')
     _read_artifact_file(content_artifact_path)
     _read_artifact_file(writing_context_path)
     result = WriterContextTools(
         llm=None,
         artifact_store=str(_workspace_root()),
     ).update_writing_context(artifacts=content_artifact_path, context=writing_context_path)
-    LOG.info(f'[writer-tool] update_writing_context produced writing_context artifact {result}')
     return result['artifact_path']
 
 
@@ -326,7 +285,6 @@ def check_consistency(draft_path: str, writing_context_path: str) -> Dict[str, s
         两条字段，需要分别调用 `save_artifact(content_type='file', key='review_report')`
         与 `save_artifact(content_type='text', key='review_summary')` 进行落库。
     """
-    LOG.info(f'[writer-tool] check_consistency input draft_path={draft_path} writing_context_path={writing_context_path}')
     _read_artifact_file(draft_path)
     _read_artifact_file(writing_context_path)
     result = WriterQualityTools(
@@ -336,12 +294,10 @@ def check_consistency(draft_path: str, writing_context_path: str) -> Dict[str, s
         draft_document=draft_path,
         context=writing_context_path,
     )
-    returned: Dict[str, str] = {
+    return {
         'review_report': result['artifact_path'],
         'review_summary': result['summary'],
     }
-    LOG.info(f'[writer-tool] check_consistency produced {returned}')
-    return returned
 
 
 def generate_writing_output(
@@ -357,11 +313,6 @@ def generate_writing_output(
     Returns:
         两条绝对路径，需要分别调用 `save_artifact(content_type='file', key=<key>, value=<path>)` 进行落库。
     """
-    LOG.info(
-        '[writer-tool] generate_writing_output input '
-        f'draft_path={draft_path} review_report_path={review_report_path} '
-        f'writing_context_path={writing_context_path}'
-    )
     _read_artifact_file(draft_path)
     _read_artifact_file(review_report_path)
     _read_artifact_file(writing_context_path)
@@ -372,11 +323,7 @@ def generate_writing_output(
         draft=draft_path,
         context=writing_context_path,
     )
-    returned: Dict[str, str] = {
+    return {
         'writing_output': result['artifact_path'],
         'writing_output_md': result['output_file_path'],
     }
-    LOG.info(
-        f'[writer-tool] generate_writing_output produced result={result}'
-    )
-    return returned

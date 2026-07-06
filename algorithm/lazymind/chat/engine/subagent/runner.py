@@ -651,7 +651,6 @@ async def run_subagent_stream(
                     while emitted:
                         ev = emitted.pop(0)
                         ev['task_id'] = task_id
-                        LOG.info(f'[SubAgent][artifact] task={task_id} key={ev.get("slot")} seq={ev.get("seq")}')
                         yield _sse(ev)
                     if tag == 'tool_results' and progress < 90:
                         progress = min(90, progress + 15)
@@ -660,10 +659,6 @@ async def run_subagent_stream(
                 # Translate all events (text/think/tool_calls/tool_results) via shared translator.
                 for frame in translator.feed(item):
                     ev_type = 'think' if frame.get('think') else 'text'
-                    chunk = frame.get('think') or frame.get('text') or ''
-                    if chunk:
-                        prefix = '[SubAgent][llm-think]' if ev_type == 'think' else '[SubAgent][llm-text]'
-                        LOG.info(f'{prefix} task={task_id} chunk={chunk}')
                     yield _sse({'type': ev_type, 'task_id': task_id,
                                 'think': frame.get('think'), 'text': frame.get('text')})
                     if ev_type == 'think':
