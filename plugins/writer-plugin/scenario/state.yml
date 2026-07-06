@@ -37,15 +37,15 @@ steps:
     prompt: |
       {{runtime_instruction}}
 
-      本步准备 writing_task、resource_profiles、writing_context 三件产物。
+      This step produces three artifacts: writing_task, resource_profiles, and writing_context.
 
-      第一步：调 build_writing_task(query="{{user_input}}") 拿到 writing_task 路径，用 save_artifact(content_type='file', key='writing_task') 落库。
+      Step 1: Call build_writing_task(query="{{user_input}}") to get the writing_task path, then persist it with save_artifact(content_type='file', key='writing_task').
 
-      第二步：调 profile_resources(writing_task_path=<writing_task 路径>, user_input="{{user_input}}") 拿到 resource_profiles 路径，用 save_artifact(content_type='file', key='resource_profiles') 落库。
+      Step 2: Call profile_resources(writing_task_path=<writing_task path>, user_input="{{user_input}}") to get the resource_profiles path, then persist it with save_artifact(content_type='file', key='resource_profiles').
 
-      第三步：调 create_writing_context(writing_task_path=<writing_task 路径>, resource_profiles_path=<resource_profiles 路径>) 拿到 writing_context 路径，用 save_artifact(content_type='file', key='writing_context') 落库。
+      Step 3: Call create_writing_context(writing_task_path=<writing_task path>, resource_profiles_path=<resource_profiles path>) to get the writing_context path, then persist it with save_artifact(content_type='file', key='writing_context').
 
-      如果上述工具调用失败，不要进行任何额外的兜底操作，直接停止本步骤。尤其不要自行撰写内容进行落库。
+      If any of the above tool calls fails, do not perform any extra fallback — stop the step immediately. In particular, do not write content yourself to persist.
     tools:
       - build_writing_task
       - profile_resources
@@ -55,20 +55,20 @@ steps:
       - slot: resource_profiles
       - slot: writing_context
     acceptance_criteria: |
-      writing_task、resource_profiles、writing_context 三个 artifact 均已保存；writing_context.context_id 非空；document_summary.summary 非空、key_points 至少 1 条；style_profile 含 audience、formality、tone 三字段。
+      writing_task, resource_profiles, and writing_context are all saved; writing_context.context_id is non-empty; document_summary.summary is non-empty with at least 1 key_point; style_profile contains the three fields audience, formality, and tone.
 
   generate_outline:
     label: Generate Outline
     prompt: |
       {{runtime_instruction}}
 
-      本步基于 writing_task + writing_context 生成结构化大纲，并把大纲内容同步回写作上下文。先调 get_artifact 取回 writing_task 和 writing_context，传给 generate_outline(writing_task_path=<writing_task 路径>, writing_context_path=<writing_context 路径>)，获得 outline 路径。
+      This step generates a structured outline from writing_task + writing_context, then syncs the outline content back into the writing context. First call get_artifact to retrieve writing_task and writing_context, pass them to generate_outline(writing_task_path=<writing_task path>, writing_context_path=<writing_context path>), and obtain the outline path.
 
-      大纲生成后，调 update_writing_context(content_artifact_path=<outline 路径>, writing_context_path=<原 writing_context 路径>)，获得更新后的 writing_context 路径。
+      After the outline is generated, call update_writing_context(content_artifact_path=<outline path>, writing_context_path=<original writing_context path>) and obtain the updated writing_context path.
 
-      本步骤的所有生成操作完成后，调用 save_artifact(content_type='file', key='outline') 保存 outline 路径，再调用 save_artifact(content_type='file', key='writing_context') 保存更新后的 writing_context 路径。
+      Once all generation operations in this step are complete, call save_artifact(content_type='file', key='outline') to save the outline path, then call save_artifact(content_type='file', key='writing_context') to save the updated writing_context path.
 
-      如果上述工具调用失败，不要进行任何额外的兜底操作，直接停止本步骤。尤其不要自行撰写内容进行落库。
+      If any of the above tool calls fails, do not perform any extra fallback — stop the step immediately. In particular, do not write content yourself to persist.
     tools:
       - generate_outline
       - update_writing_context
@@ -84,18 +84,18 @@ steps:
       - slot: outline
       - slot: writing_context
     acceptance_criteria: |
-      outline 已保存；nodes 至少 3 个；每个 node 至少含 node_id、title、instruction、constraints 字段且非空；writing_context 已保存一次，document_summary 已反映 outline 内容。
+      outline is saved; nodes count is at least 3; each node contains at least the non-empty fields node_id, title, instruction, and constraints; writing_context has been saved once; document_summary reflects the outline content.
 
   plan_sections:
     label: Plan Sections
     prompt: |
       {{runtime_instruction}}
 
-      本步为大纲中的所有顶层章节一次性生成写作指令。调 get_artifact 取回 writing_context 和 outline。如果工件中已经存在 review_report，说明本步是从 review 阶段驳回后回退的重规划，需要再调一次 get_artifact(key='review_report') 把它一并带入生成过程。
+      This step generates writing instructions for every top-level section in the outline in a single batch. Call get_artifact to retrieve writing_context and outline. If review_report already exists in the artifacts, this step is a replan triggered by a rewind from the review stage, and you must call get_artifact(key='review_report') once more to bring it into the generation process.
 
-      然后调用 generate_section_instructions(outline_path=<outline 路径>, writing_context_path=<writing_context 路径>, review_report_path=<review_report 路径，没有就传空字符串>)，把返回的路径用 save_artifact(content_type='file', key='section_instructions') 落库。
+      Then call generate_section_instructions(outline_path=<outline path>, writing_context_path=<writing_context path>, review_report_path=<review_report path, or empty string if absent>) and persist the returned path with save_artifact(content_type='file', key='section_instructions').
 
-      如果上述工具调用失败，不要进行任何额外的兜底操作，直接停止本步骤。尤其不要自行撰写内容进行落库。
+      If any of the above tool calls fails, do not perform any extra fallback — stop the step immediately. In particular, do not write content yourself to persist.
     tools:
       - generate_section_instructions
     exclude_framework_tools:
@@ -111,26 +111,26 @@ steps:
     outputs:
       - slot: section_instructions
     acceptance_criteria: |
-      section_instructions 已保存；为 SectionInstructionList Artifact（data.instructions 为数组），条目数与 outline.nodes 节点数一一对应；每条至少含 outline_node_id、section_title、section_goal、required_points 字段。
+      section_instructions is saved; it is a SectionInstructionList artifact (data.instructions is an array) whose entry count matches the outline.nodes count one-to-one; each entry contains at least the fields outline_node_id, section_title, section_goal, and required_points.
 
   generate_draft:
     label: Generate Draft
     prompt: |
       {{runtime_instruction}}
 
-      本步按章节顺序撰写初稿正文，最后合并成完整文档。
+      This step writes the draft body section by section, then merges them into the complete document.
 
-      先调 get_artifact 取回 writing_task、writing_context、outline 和 section_instructions 的文件路径。准备一个 draft_section_paths 列表，用来记录每次工具返回的非空章节路径。
+      First call get_artifact to retrieve the file paths of writing_task, writing_context, outline, and section_instructions. Prepare a draft_section_paths list to record every non-empty section path returned by the tool.
 
-      调 generate_draft_section(writing_task_path=<writing_task 路径>, section_instructions_path=<section_instructions 路径>, writing_context_path=<writing_context 路径>) 生成下一章。工具内部会根据已经生成的章节文件判断当前应写哪一章。工具返回非空路径时，把该路径追加到 draft_section_paths，然后继续调用同一个工具生成下一章。
+      Call generate_draft_section(writing_task_path=<writing_task path>, section_instructions_path=<section_instructions path>, writing_context_path=<writing_context path>) to produce the next section. Internally, the tool decides which section to write based on the section files already produced. When the tool returns a non-empty path, append it to draft_section_paths and continue calling the same tool to produce the next section.
 
-      工具返回空字符串时，表示章节初稿已经全部生成完成。此时取 draft_section_paths 中最后一个路径，调用 assemble_draft_document(draft_sections_anchor_path=<最后一个 draft_section 路径>, writing_context_path=<writing_context 路径>, outline_path=<outline 路径>)，获得 draft_document 路径。
+      When the tool returns an empty string, all section drafts have been generated. Take the last path in draft_section_paths and call assemble_draft_document(draft_sections_anchor_path=<last draft_section path>, writing_context_path=<writing_context path>, outline_path=<outline path>) to obtain the draft_document path.
 
-      初稿文档生成后，调 update_writing_context(content_artifact_path=<draft_document 路径>, writing_context_path=<原 writing_context 路径>)，获得更新后的 writing_context 路径。
+      After the draft document is generated, call update_writing_context(content_artifact_path=<draft_document path>, writing_context_path=<original writing_context path>) and obtain the updated writing_context path.
 
-      本步骤的所有生成操作完成后，按 draft_section_paths 中的顺序逐个调用 save_artifact(content_type='file', key='draft_sections') 保存章节初稿路径，再调用 save_artifact(content_type='file', key='draft_document') 保存 draft_document 路径，最后调用 save_artifact(content_type='file', key='writing_context') 保存更新后的 writing_context 路径。
+      Once all generation operations in this step are complete, in the order of draft_section_paths, call save_artifact(content_type='file', key='draft_sections') for each section draft path, then call save_artifact(content_type='file', key='draft_document') to save the draft_document path, and finally call save_artifact(content_type='file', key='writing_context') to save the updated writing_context path.
 
-      如果上述工具调用失败，停止本步骤并保留工具错误信息，交由外层重试处理。
+      If any of the above tool calls fails, stop the step and preserve the tool error message for outer-layer retry handling.
     tools:
       - generate_draft_section
       - assemble_draft_document
@@ -152,18 +152,18 @@ steps:
       - slot: draft_document
       - slot: writing_context
     acceptance_criteria: |
-      draft_sections 已按章节顺序保存，数量与 section_instructions.data.instructions 一致，至少 2 个 DraftSection；每个 DraftSection 含 title 且 blocks 非空，每个 block 的 content 非空。draft_document 已保存一次，draft_document.sections 与 draft_sections 按顺序一一对应；writing_context 已保存一次，document_summary 已反映 draft_document 内容。
+      draft_sections are saved in section order; the count matches section_instructions.data.instructions, with at least 2 DraftSection; each DraftSection has a non-empty title and non-empty blocks, and every block's content is a non-empty string. draft_document has been saved once, with draft_document.sections corresponding one-to-one with draft_sections in order; writing_context has been saved once, and document_summary reflects the draft_document content.
 
   review_document:
     label: Review Document
     prompt: |
       {{runtime_instruction}}
 
-      本步对初稿做一致性与质量审阅。调 get_artifact 取回 writing_context 和 draft_document 的文件路径，然后调用 check_consistency(draft_path=<draft_document 路径>, writing_context_path=<writing_context 路径>)。该工具会返回 review_report（review_report Artifact 文件的绝对路径）和 review_summary（validate_draft_document 输出的内容摘要字符串，非路径）。请分别调用 save_artifact(content_type='file', key='review_report', value=<review_report 路径>) 和 save_artifact(content_type='text', key='review_summary', value=<review_summary 内容>) 完成落库。
+      This step reviews the draft for consistency and quality. Call get_artifact to retrieve the file paths of writing_context and draft_document, then call check_consistency(draft_path=<draft_document path>, writing_context_path=<writing_context path>). The tool returns review_report (the absolute path of the review_report artifact file) and review_summary (the content summary string produced by validate_draft_document — not a path). Call save_artifact(content_type='file', key='review_report', value=<review_report path>) and save_artifact(content_type='text', key='review_summary', value=<review_summary content>) separately to persist them.
 
-      review_summary 的内容决定 next_step 是什么：审阅通过就进 finalize_report 出终稿，没通过就回 plan_sections 重新规划章节。本步骤的最后一次输出按如下格式：“由于 {{review_summary}}，建议下一个step推进到 {{next_step}}”。
+      The content of review_summary decides next_step: if the review passes, advance to finalize_report to produce the final report; if it fails, rewind to plan_sections to replan the sections. The final message of this step must follow this format: "Since {{review_summary}}, recommend advancing the next step to {{next_step}}."
 
-      如果上述工具调用失败，停止本步骤并保留工具错误信息，交由外层重试处理。
+      If any of the above tool calls fails, stop the step and preserve the tool error message for outer-layer retry handling.
     tools:
       - check_consistency
     exclude_framework_tools:
@@ -178,18 +178,18 @@ steps:
       - slot: review_report
       - slot: review_summary
     acceptance_criteria: |
-      review_report 已保存；result.is_passed 是布尔；result.score 是 0-100 数字；result.summary 是非空字符串；result.issues 是数组，每项含 severity（high/medium/low）、category、description 字段。review_summary 已保存，为 validate_draft_document 输出的内容摘要（非路径）。最后一条消息需要符合“由于 {{review_summary}}，建议下一个step推进到 {{next_step}}”的格式。
+      review_report is saved; result.is_passed is a boolean; result.score is a 0-100 number; result.summary is a non-empty string; result.issues is an array whose items each contain severity (high/medium/low), category, and description. review_summary is saved as the content summary produced by validate_draft_document (not a path). The final message must follow the format "Since {{review_summary}}, recommend advancing the next step to {{next_step}}".
 
   finalize_report:
     label: Finalize Report
     prompt: |
       {{runtime_instruction}}
 
-      本步在审阅完成后产出最终 Markdown 成稿。调 get_artifact 取回 writing_context、draft_document 和 review_report 的文件路径，传给 generate_writing_output(draft_path=<draft_document 路径>, review_report_path=<review_report 路径>, writing_context_path=<writing_context 路径>)。该工具会同时返回两个文件路径：writing_output（结构化 Artifact）和 writing_output_md（最终 Markdown 成稿）。
+      This step produces the final Markdown report after review. Call get_artifact to retrieve the file paths of writing_context, draft_document, and review_report, then pass them to generate_writing_output(draft_path=<draft_document path>, review_report_path=<review_report path>, writing_context_path=<writing_context path>). The tool returns two file paths at once: writing_output (the structured artifact) and writing_output_md (the final Markdown report).
 
-      本步骤的生成操作完成后，对这两个路径分别调用 save_artifact(content_type='file', key='writing_output') 和 save_artifact(content_type='file', key='writing_output_md') 保存成当前 step 的 artifact。
+      Once the generation operations in this step are complete, call save_artifact(content_type='file', key='writing_output') and save_artifact(content_type='file', key='writing_output_md') for the two paths to persist them as the artifacts of the current step.
 
-      如果上述工具调用失败，停止本步骤并保留工具错误信息，交由外层重试处理。
+      If any of the above tool calls fails, stop the step and preserve the tool error message for outer-layer retry handling.
     tools:
       - generate_writing_output
     exclude_framework_tools:
@@ -206,4 +206,4 @@ steps:
       - slot: writing_output
       - slot: writing_output_md
     acceptance_criteria: |
-      writing_output 已保存；writing_output_md 已保存；output_format 是 markdown；content 是非空字符串，含标题与至少 2 个二级章节（`## ` 开头），正文长度足以独立成篇。
+      writing_output is saved; writing_output_md is saved; output_format is markdown; content is a non-empty string that includes a title and at least 2 level-2 sections (starting with `## `), with a body long enough to stand on its own.

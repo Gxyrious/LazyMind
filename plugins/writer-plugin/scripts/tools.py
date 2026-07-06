@@ -1,6 +1,10 @@
-"""Writer-plugin 工具函数。
-每个工具读取上游 artifact 文件，把输出写到 SubAgent 工作区，并返回输出文件的绝对路径，与 get_artifact 的返回一致。
-工具函数本身不负责落库，主 Agent 在 step 结束时调用 `save_artifact(content_type='file', value=<路径>)` 完成提交。
+"""Writer-plugin tool functions.
+
+Each tool reads an upstream artifact file, writes its output to the SubAgent
+workspace, and returns the absolute path of the output file — the same shape
+returned by get_artifact. The tools themselves do not persist anything; the
+main Agent calls `save_artifact(content_type='file', value=<path>)` at the
+end of the step to commit.
 """
 from __future__ import annotations
 
@@ -33,7 +37,7 @@ def _workspace_root() -> Path:
 
 
 def _read_artifact_file(path: str) -> Any:
-    """读取 plugin workspace 中的 artifact 文件，优先解包 Artifact 格式的 data 字段。"""
+    """Read an artifact file from the plugin workspace, unwrapping the `data` field when present."""
     if not os.path.exists(path):
         raise FileNotFoundError(path)
     with open(path, 'r', encoding='utf-8') as fh:
@@ -47,29 +51,29 @@ from lazyllm.tools.writer.utils import save_artifact_json
 
 
 def build_writing_task(query: str) -> str:
-    """构造 WritingTask 并产出 writing_task Artifact 文件。
+    """Build a WritingTask and emit the writing_task artifact file.
 
     Args:
-        query: 用户原始写作请求（来自 user_input）。
+        query: The user's original writing request (from user_input).
 
     Returns:
-        writing_task Artifact 文件的绝对路径。
+        Absolute path of the writing_task artifact file.
     """
-    task = WritingTask(query=query, task_type='write') # TODO: 借助LLM进行精细化的构造
+    task = WritingTask(query=query, task_type='write') # TODO: use LLM for richer construction
     path = _workspace_root() / 'writing_task.json'
     save_artifact_json(task, str(path), created_by='build_writing_task')
     return str(path)
 
 
 def profile_resources(writing_task_path: str, user_input: str) -> str:
-    """产出 resource_profiles Artifact 文件。
+    """Emit the resource_profiles artifact file.
 
     Args:
-        writing_task_path: 上一步产出的 writing_task Artifact 文件绝对路径。
-        user_input: 用户原始提示词，用于从中抽取飞书链接等 InputResource。
+        writing_task_path: Absolute path of the writing_task artifact from the previous step.
+        user_input: The user's original prompt, used to extract Feishu links as InputResource.
 
     Returns:
-        resource_profiles Artifact 文件的绝对路径。
+        Absolute path of the resource_profiles artifact file.
     """
     _read_artifact_file(writing_task_path)
     ctx = require_context()
@@ -105,14 +109,14 @@ def profile_resources(writing_task_path: str, user_input: str) -> str:
 
 
 def create_writing_context(writing_task_path: str, resource_profiles_path: str) -> str:
-    """产出 writing_context Artifact 文件。
+    """Emit the writing_context artifact file.
 
     Args:
-        writing_task_path: writing_task Artifact 文件绝对路径。
-        resource_profiles_path: resource_profiles Artifact 文件绝对路径。
+        writing_task_path: Absolute path of the writing_task artifact.
+        resource_profiles_path: Absolute path of the resource_profiles artifact.
 
     Returns:
-        writing_context Artifact 文件的绝对路径。
+        Absolute path of the writing_context artifact file.
     """
     _read_artifact_file(writing_task_path)
     _read_artifact_file(resource_profiles_path)
@@ -124,14 +128,14 @@ def create_writing_context(writing_task_path: str, resource_profiles_path: str) 
 
 
 def generate_outline(writing_task_path: str, writing_context_path: str) -> str:
-    """产出 outline Artifact 文件。
+    """Emit the outline artifact file.
 
     Args:
-        writing_task_path: writing_task Artifact 文件绝对路径。
-        writing_context_path: writing_context Artifact 文件绝对路径。
+        writing_task_path: Absolute path of the writing_task artifact.
+        writing_context_path: Absolute path of the writing_context artifact.
 
     Returns:
-        outline Artifact 文件的绝对路径。
+        Absolute path of the outline artifact file.
     """
     _read_artifact_file(writing_task_path)
     _read_artifact_file(writing_context_path)
@@ -147,15 +151,15 @@ def generate_section_instructions(
     writing_context_path: str,
     review_report_path: str = '',
 ) -> str:
-    """产出 section_instructions Artifact 文件，包含完整 SectionInstructionList。
+    """Emit the section_instructions artifact file containing the full SectionInstructionList.
 
     Args:
-        outline_path: outline Artifact 文件绝对路径。
-        writing_context_path: writing_context Artifact 文件绝对路径。
-        review_report_path: review_report Artifact 文件绝对路径（可选）。
+        outline_path: Absolute path of the outline artifact.
+        writing_context_path: Absolute path of the writing_context artifact.
+        review_report_path: Absolute path of the review_report artifact (optional).
 
     Returns:
-        section_instructions Artifact 文件的绝对路径。
+        Absolute path of the section_instructions artifact file.
     """
     _read_artifact_file(outline_path)
     _read_artifact_file(writing_context_path)
@@ -178,15 +182,16 @@ def generate_draft_section(
     section_instructions_path: str,
     writing_context_path: str,
 ) -> str:
-    """按已生成章节文件数量产出下一个 draft_section Artifact 文件。
+    """Emit the next draft_section artifact file based on how many sections have already been produced.
 
     Args:
-        writing_task_path: writing_task 文件路径。
-        section_instructions_path: SectionInstructionList 文件路径。
-        writing_context_path: writing_context 文件路径。
+        writing_task_path: Path to the writing_task file.
+        section_instructions_path: Path to the SectionInstructionList file.
+        writing_context_path: Path to the writing_context file.
 
     Returns:
-        draft_section 文件的绝对路径。全部章节生成完毕时返回空字符串。
+        Absolute path of the draft_section file. Returns an empty string once
+        every section has been generated.
     """
     _read_artifact_file(writing_task_path)
     _read_artifact_file(writing_context_path)
@@ -222,15 +227,15 @@ def assemble_draft_document(
     writing_context_path: str,
     outline_path: str = '',
 ) -> str:
-    """合并多个 draft_section 产出 draft_document Artifact 文件。
+    """Merge multiple draft_sections into the draft_document artifact file.
 
     Args:
-        draft_sections_anchor_path: 任一 draft_section 文件路径，或 draft_sections 目录路径。
-        writing_context_path: writing_context 文件路径。
-        outline_path: outline 文件路径。
+        draft_sections_anchor_path: Any draft_section file path, or the draft_sections directory path.
+        writing_context_path: Path to the writing_context file.
+        outline_path: Path to the outline file.
 
     Returns:
-        draft_document 文件的绝对路径。
+        Absolute path of the draft_document file.
     """
     anchor = Path(draft_sections_anchor_path)
     draft_sections_dir = anchor if anchor.is_dir() else anchor.parent
@@ -256,14 +261,14 @@ def assemble_draft_document(
 
 
 def update_writing_context(content_artifact_path: str, writing_context_path: str) -> str:
-    """基于内容 artifact 更新 writing_context Artifact 文件。
+    """Update the writing_context artifact based on a content artifact.
 
     Args:
-        content_artifact_path: 用于更新上下文的内容 artifact 文件路径。
-        writing_context_path: writing_context 文件路径。
+        content_artifact_path: Path to the content artifact used to update the context.
+        writing_context_path: Path to the writing_context file.
 
     Returns:
-        writing_context 文件的绝对路径。
+        Absolute path of the writing_context file.
     """
     _read_artifact_file(content_artifact_path)
     _read_artifact_file(writing_context_path)
@@ -275,15 +280,15 @@ def update_writing_context(content_artifact_path: str, writing_context_path: str
 
 
 def check_consistency(draft_path: str, writing_context_path: str) -> Dict[str, str]:
-    """产出 review_report Artifact 文件并返回 validate_draft_document 的内容摘要。
+    """Emit the review_report artifact file and return a summary of validate_draft_document.
 
     Args:
-        draft_path: draft_document 文件路径。
-        writing_context_path: writing_context 文件路径。
+        draft_path: Path to the draft_document file.
+        writing_context_path: Path to the writing_context file.
 
     Returns:
-        两条字段，需要分别调用 `save_artifact(content_type='file', key='review_report')`
-        与 `save_artifact(content_type='text', key='review_summary')` 进行落库。
+        Two fields; call `save_artifact(content_type='file', key='review_report')`
+        and `save_artifact(content_type='text', key='review_summary')` to persist them.
     """
     _read_artifact_file(draft_path)
     _read_artifact_file(writing_context_path)
@@ -303,15 +308,15 @@ def check_consistency(draft_path: str, writing_context_path: str) -> Dict[str, s
 def generate_writing_output(
     draft_path: str, review_report_path: str, writing_context_path: str,
 ) -> Dict[str, str]:
-    """产出两类 writing_output Artifact 文件。
+    """Emit two writing_output artifact files.
 
     Args:
-        draft_path: draft_document 文件路径。
-        review_report_path: review_report 文件路径，用于确认审阅已完成。
-        writing_context_path: writing_context 文件路径。
+        draft_path: Path to the draft_document file.
+        review_report_path: Path to the review_report file, used to confirm review is complete.
+        writing_context_path: Path to the writing_context file.
 
     Returns:
-        两条绝对路径，需要分别调用 `save_artifact(content_type='file', key=<key>, value=<path>)` 进行落库。
+        Two absolute paths; call `save_artifact(content_type='file', key=<key>, value=<path>)` for each.
     """
     _read_artifact_file(draft_path)
     _read_artifact_file(review_report_path)

@@ -1,51 +1,50 @@
-# AI 写作插件
+# AI Writer Plugin
 
-## 场景描述
+## Scenario
 
-帮助用户撰写结构化的长篇文章或技术报告。工作流分六步：
+Help users compose structured long-form articles or technical reports. The workflow runs in six steps:
 
-1. **build_context** — 解析写作意图、目标读者、核心子主题、风格与事实共识
-2. **generate_outline** — 基于上下文生成结构化大纲
-3. **plan_sections** — 根据大纲为每章生成写作指令
-4. **generate_draft** — 按章节指令串行撰写完整初稿
-5. **review_document** — 多维度审阅初稿，给出评分与修改建议
-6. **finalize_report** — 根据审阅意见修订，产出最终成稿
+1. **build_context** — parse the writing intent, target audience, core sub-topics, style, and factual consensus
+2. **generate_outline** — produce a structured outline based on the context
+3. **plan_sections** — generate per-chapter writing instructions from the outline
+4. **generate_draft** — serially draft the full document per the section instructions
+5. **review_document** — review the draft across multiple dimensions, scoring it and surfacing revision suggestions
+6. **finalize_report** — apply the review feedback and produce the final report
 
-每个步骤支持整体重跑：用户对某一步结果不满意时，可重新触发该步骤。
+Every step supports a full rerun: when the user is unhappy with a step's result, that step can be retriggered.
 
-## 用户意图识别
+## Intent Recognition
 
-### 冷启动（无活跃会话）
+### Cold start (no active session)
 
-- 用户提到「写一篇报告」「起草一份文章」「写一篇综述」「写一篇关于 X 的介绍」等
-  长文写作请求 → 调用 `trigger_writer_plugin(user_input=<用户原始需求>)`
+- When the user asks for long-form writing such as "write a report", "draft an article", "write a survey", or "write an introduction to X" → invoke `trigger_writer_plugin(user_input=<user's original request>)`.
 
-  `user_input` 应当是一个具体的写作目标陈述，包含主题、体裁与任何篇幅或风格要求。
+  `user_input` must be a concrete writing goal statement, including the topic, genre, and any length or style requirements.
 
-### 有活跃会话时
+### With an active session
 
-| 用户意图 | 推荐步骤 | 工具调用 |
+| User intent | Recommended step | Tool call |
 |---|---|---|
-| 想重新解析写作意图 | build_context | `advance_step(step_id='build_context', user_input=<说明>)` |
-| 对大纲不满意，想重新生成 | generate_outline | `advance_step(step_id='generate_outline', user_input=<说明>)` |
-| 想重新规划章节指令 | plan_sections | `advance_step(step_id='plan_sections', user_input=<说明>)` |
-| 想重写初稿 | generate_draft | `advance_step(step_id='generate_draft', user_input=<说明>)` |
-| 想重新审阅 | review_document | `advance_step(step_id='review_document', user_input=<说明>)` |
-| 想重新产出终稿 | finalize_report | `advance_step(step_id='finalize_report', user_input=<说明>)` |
-| 对最终结果满意 | （无需操作，DriverAgent 自动判 DONE） | — |
+| Re-parse the writing intent | build_context | `advance_step(step_id='build_context', user_input=<note>)` |
+| Unhappy with the outline, regenerate it | generate_outline | `advance_step(step_id='generate_outline', user_input=<note>)` |
+| Re-plan the section instructions | plan_sections | `advance_step(step_id='plan_sections', user_input=<note>)` |
+| Redraft the document | generate_draft | `advance_step(step_id='generate_draft', user_input=<note>)` |
+| Re-review | review_document | `advance_step(step_id='review_document', user_input=<note>)` |
+| Produce the final report again | finalize_report | `advance_step(step_id='finalize_report', user_input=<note>)` |
+| Satisfied with the final result | (no action — DriverAgent marks DONE automatically) | — |
 
-当用户或 DriverAgent 指出问题源于某个前序步骤时，使用 `advance_step` 并传入该前序步骤的 `step_id` 即可回退重做。可用的前序步骤由 `advance_step` 工具的 Rewind 列表动态给出，无需在此枚举。
+When the user or DriverAgent indicates the problem originates from a prior step, use `advance_step` with that prior step's `step_id` to rewind and redo it. The available prior steps are listed dynamically by `advance_step`'s Rewind list and need not be enumerated here.
 
-## 注意
+## Notes
 
-- 冷启动走 `trigger_writer_plugin`，把用户原始需求作为 `user_input` 传入。
-- 工具返回后，对用户简短说明当前正在进行的步骤，例如：
-  - 冷启动：「正在解析您的写作需求，请稍候……」
-  - 重新生成大纲：「正在重新生成大纲……」
-- 涉及具体写作内容（章节草稿、最终成稿等）由 subagent 协作的工具完成，主 Agent 不必再复述正文。
+- For cold start, go through `trigger_writer_plugin` and pass the user's original request as `user_input`.
+- After a tool returns, briefly tell the user which step is currently running, for example:
+  - Cold start: "Parsing your writing request, please wait…"
+  - Regenerating the outline: "Regenerating the outline…"
+- Concrete writing content (section drafts, final report, etc.) is produced by the tools the subagent collaborates with; the main Agent does not need to re-state the body.
 
-## 产物（artifact）传递机制
+## Artifact Handoff
 
-- 每个 step 的产物以文件路径的形式保存，artifact 的载体就是一个文件路径，不是文件内容本身。
-- 编排链路：`get_artifact(key=A)` 取回的产物里有路径 → 把这个路径作为参数传给下游工具函数（工具函数自己会读这个文件）→ 工具返回新路径 → 用 `save_artifact(content_type='file', value=<新路径>, key=B)` 落库 → 下一 step 调 `get_artifact(key=B)` 取回路径 → 继续往下传。
-- 主 Agent 的职责是**编排工具调用与传递路径**，不参与具体内容生成（避免上下文过大）。
+- Each step's output is stored as a file path — the artifact carrier is a file path, not the file content itself.
+- Orchestration flow: `get_artifact(key=A)` returns a path → pass that path as an argument to the downstream tool function (the tool reads the file itself) → the tool returns a new path → call `save_artifact(content_type='file', value=<new path>, key=B)` to persist → the next step calls `get_artifact(key=B)` to get the path back → continue.
+- The main Agent is responsible for **orchestrating tool calls and passing paths**, not for generating any content (to avoid bloating the context).

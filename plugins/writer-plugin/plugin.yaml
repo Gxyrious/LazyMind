@@ -1,15 +1,19 @@
 id: writer-plugin
 name: AI Writer
 description: >
-  撰写长篇文章或技术报告。工作流分六步：解析写作意图与边界、
-  生成大纲、为每章规划写作指令、撰写全文初稿、审阅初稿并给出修订意见、
-  产出最终成稿。每一步都支持通过状态机自环进行整体重跑。
+  Compose long-form articles or technical reports. The workflow runs in six
+  steps: parse the writing intent and scope, generate an outline, plan per-
+  chapter writing instructions, draft the full text, review the draft and
+  surface revision feedback, then produce the final report. Each step supports
+  a full rerun via the state machine self-loop.
 
 when_to_use: >
-  当用户希望撰写、起草、生成一篇较长的文章、报告、技术文档、综述、
-  说明文或任何结构化长文本时调用本插件。典型请求如「写一篇关于 X 的报告」、
-  「帮我起草一份 Y 的技术文章」、「写一篇综述」、「生成一篇关于 Z 的介绍」、
-  「请就某主题写一篇文章」等。不适用于单段话的简短改写或翻译。
+  Invoke this plugin when the user wants to write, draft, or generate a long
+  article, report, technical document, survey, expository piece, or any other
+  structured long-form text. Typical requests include "write a report on X",
+  "help me draft a technical article on Y", "write a survey", "generate an
+  introduction to Z", or "write an article on some topic". Not suitable for
+  single-paragraph rewrites or translations.
 
 tool_scripts:
   - path: scripts/tools.py
