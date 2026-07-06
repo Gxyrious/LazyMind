@@ -24,8 +24,6 @@ transitions:
   review_document:
     - to: finalize_report
       condition: "Review passed — proceed to finalization."
-    - to: plan_sections
-      condition: "Review failed — re-plan sections to address review issues."
 
   finalize_report:
     - to: __end__
