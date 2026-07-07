@@ -17,14 +17,6 @@ func uploadRoot() string {
 	return "/var/lib/lazymind/uploads"
 }
 
-// subagentWorkspaceRoot is the SubAgent workspace, shared between chat and core containers.
-func subagentWorkspaceRoot() string {
-	if v := strings.TrimSpace(os.Getenv("LAZYMIND_SUBAGENT_WORKSPACE")); v != "" {
-		return filepath.Clean(v)
-	}
-	return "/data/subagent"
-}
-
 func parsingServiceEndpoint() string {
 	if v := strings.TrimSpace(os.Getenv("LAZYMIND_DOCUMENT_SERVICE_URL")); v != "" {
 		return strings.TrimRight(v, "/")

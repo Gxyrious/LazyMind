@@ -127,6 +127,16 @@ func signedFileExpireSeconds() int64 {
 	return 3600
 }
 
+func subagentWorkspaceRoot() string {
+	if root := strings.TrimSpace(os.Getenv("LAZYMIND_SUBAGENT_WORKSPACE")); root != "" {
+		return root
+	}
+	if root := strings.TrimSpace(os.Getenv("LAZYMIND_AGENTIC_WORKSPACE")); root != "" {
+		return root
+	}
+	return "/data/subagent"
+}
+
 func fileRelativePath(fullPath string) string {
 	p := strings.TrimSpace(fullPath)
 	if p == "" {
@@ -148,7 +158,47 @@ func fileRelativePath(fullPath string) string {
 		}
 		return filepath.ToSlash(rel)
 	}
-	return ""
+	subRoot := filepath.Clean(subagentWorkspaceRoot())
+	rel, err := filepath.Rel(subRoot, cleanPath)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return ""
+	}
+	return "subagent/" + filepath.ToSlash(rel)
+}
+
+func relFromStaticFilesURL(raw string) string {
+	pathOnly := strings.SplitN(strings.TrimSpace(raw), "?", 2)[0]
+	if !strings.HasPrefix(pathOnly, "/static-files/") {
+		return ""
+	}
+	relEncoded := strings.TrimPrefix(pathOnly, "/static-files/")
+	if relEncoded == "" {
+		return ""
+	}
+	parts := strings.Split(relEncoded, "/")
+	for i, part := range parts {
+		decoded, err := url.PathUnescape(part)
+		if err != nil {
+			return ""
+		}
+		parts[i] = decoded
+	}
+	return strings.Join(parts, "/")
+}
+
+func resolveSignedStaticFullPath(relPath string) string {
+	rel := strings.TrimSpace(relPath)
+	if rel == "" || rel == "." || strings.HasPrefix(rel, "../") {
+		return ""
+	}
+	if strings.HasPrefix(rel, "subagent/") {
+		inner := strings.TrimPrefix(rel, "subagent/")
+		if inner == "" {
+			return ""
+		}
+		return filepath.Join(subagentWorkspaceRoot(), filepath.FromSlash(inner))
+	}
+	return filepath.Join(uploadRoot(), filepath.FromSlash(rel))
 }
 
 func signStaticFile(rel string, expires int64) string {
@@ -159,9 +209,8 @@ func signStaticFile(rel string, expires int64) string {
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
-func staticFileURLFromFullPath(fullPath string) string {
-	rel := fileRelativePath(fullPath)
-	if rel == "" {
+func staticFileURLFromRel(rel string) string {
+	if strings.TrimSpace(rel) == "" {
 		return ""
 	}
 	return staticFileURLFromRelativePath(rel)
@@ -175,6 +224,10 @@ func staticFileURLFromRelativePath(rel string) string {
 	expires := time.Now().UTC().Unix() + signedFileExpireSeconds()
 	sig := signStaticFile(rel, expires)
 	return fmt.Sprintf("/static-files/%s?expires=%d&sig=%s", encodeStaticFilePath(rel), expires, sig)
+}
+
+func staticFileURLFromFullPath(fullPath string) string {
+	return staticFileURLFromRel(fileRelativePath(fullPath))
 }
 
 func refreshStaticFileURL(path string) string {
@@ -212,6 +265,19 @@ func StaticFileURLFromFullPath(fullPath string) string {
 	return staticFileURLFromFullPath(fullPath)
 }
 
+// StaticFileURLFromAnyStoragePath signs upload-root paths, subagent workspace paths,
+// or re-signs an existing /static-files/ reference (with or without a stale signature).
+func StaticFileURLFromAnyStoragePath(pathOrURL string) string {
+	raw := strings.TrimSpace(pathOrURL)
+	if raw == "" {
+		return ""
+	}
+	if strings.HasPrefix(raw, "/static-files/") {
+		return staticFileURLFromRel(relFromStaticFilesURL(raw))
+	}
+	return staticFileURLFromFullPath(raw)
+}
+
 func encodeStaticFilePath(rel string) string {
 	parts := strings.Split(rel, "/")
 	for i, part := range parts {
@@ -246,18 +312,28 @@ func setDocumentURI(doc *Doc) {
 	doc.URI = documentContentPath(doc.DatasetID, doc.DocumentID)
 }
 
+func isPathUnderRoot(fullPath, root string) bool {
+	if strings.TrimSpace(root) == "" {
+		return false
+	}
+	cleanPath := filepath.Clean(strings.TrimSpace(fullPath))
+	cleanRoot := filepath.Clean(root)
+	rel, err := filepath.Rel(cleanRoot, cleanPath)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return false
+	}
+	return cleanPath != ""
+}
+
 func streamLocalFile(w http.ResponseWriter, fullPath, filename, fallbackContentType string, inline bool) {
 	cleanPath := filepath.Clean(strings.TrimSpace(fullPath))
-	// Accept files under either the uploads root or the subagent workspace root.
-	allowed := false
-	for _, root := range []string{filepath.Clean(uploadRoot()), filepath.Clean(subagentWorkspaceRoot())} {
-		rel, relErr := filepath.Rel(root, cleanPath)
-		if relErr == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-			allowed = true
-			break
-		}
+	if cleanPath == "" {
+		common.ReplyErr(w, "file path is invalid", http.StatusBadRequest)
+		return
 	}
-	if cleanPath == "" || !allowed {
+	underUpload := isPathUnderRoot(cleanPath, uploadRoot())
+	underSubagent := isPathUnderRoot(cleanPath, subagentWorkspaceRoot())
+	if !underUpload && !underSubagent {
 		common.ReplyErr(w, "file path is invalid", http.StatusBadRequest)
 		return
 	}
@@ -370,18 +446,10 @@ func GetSignedStaticFile(w http.ResponseWriter, r *http.Request) {
 		common.ReplyErr(w, "invalid signature", http.StatusForbidden)
 		return
 	}
-	// The file may live under either the uploads root or the subagent workspace
-	// root; resolve to whichever actually exists on disk.
-	candidates := []string{
-		filepath.Join(uploadRoot(), filepath.FromSlash(relPath)),
-		filepath.Join(subagentWorkspaceRoot(), filepath.FromSlash(relPath)),
-	}
-	fullPath := candidates[0]
-	for _, c := range candidates {
-		if _, err := os.Stat(c); err == nil {
-			fullPath = c
-			break
-		}
+	fullPath := resolveSignedStaticFullPath(relPath)
+	if fullPath == "" {
+		common.ReplyErr(w, "invalid path", http.StatusBadRequest)
+		return
 	}
 	inline := !strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("download")), "1") &&
 		!strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("download")), "true")
