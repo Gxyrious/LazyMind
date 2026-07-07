@@ -447,6 +447,7 @@ async def handle_chat(request: ChatRequest) -> Union[Dict[str, Any], StreamingRe
     from lazymind.chat.plugin.plugin_manager import (
         resolve_plugin_injection,
         _build_chat_agent_task_context,
+        try_auto_continue_plugin_step,
     )
     # Register the active session so the cancel endpoint can find it by conversation_id.
     _conv_id_key = conversation_id  # already stripped above
@@ -462,6 +463,26 @@ async def handle_chat(request: ChatRequest) -> Union[Dict[str, Any], StreamingRe
     plugin_tools, plugin_system_prompt, plugin_stop_tools, agentic_config_patch, plugin_artifact_context = \
         resolve_plugin_injection(plugin.plugin_context, conversation_id=conversation_id)
     agentic_config.update(agentic_config_patch)
+
+    auto_continue_events = try_auto_continue_plugin_step(query)
+    if auto_continue_events:
+        async def auto_continue_stream() -> Any:
+            cost = round(time.time() - start_time, 3)
+            for event in auto_continue_events:
+                for frame in translator.feed(event):
+                    yield log_and_emit_frame(frame, cost, query, conversation.session_id, tag='AUTO_CONTINUE')
+            yield sse_line(response_payload(
+                200,
+                'success',
+                {'status': 'FINISHED'},
+                round(time.time() - start_time, 3),
+            ))
+
+        LOG.info(
+            f'[ChatServer] [PLUGIN_AUTO_CONTINUE] [sid={conversation.session_id}] '
+            f'[events={len(auto_continue_events)}] [plugin_context={plugin.plugin_context!r}]'
+        )
+        return StreamingResponse(auto_continue_stream(), media_type='text/event-stream')
 
     # Inject SubAgent task context into the system prompt independently of plugin state.
     # Injected when either plugin or subagent is enabled so the model knows about ongoing tasks.

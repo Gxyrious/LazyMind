@@ -15,20 +15,6 @@ when_to_use: >
   introduction to Z", or "write an article on some topic". Not suitable for
   single-paragraph rewrites or translations.
 
-tool_scripts:
-  - path: scripts/tools.py
-    functions:
-      - build_writing_task
-      - profile_resources
-      - create_writing_context
-      - generate_outline
-      - generate_section_instructions
-      - generate_draft_section
-      - assemble_draft_document
-      - update_writing_context
-      - check_consistency
-      - generate_writing_output
-
 steps:
   - id: build_context
   - id: generate_outline

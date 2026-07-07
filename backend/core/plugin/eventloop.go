@@ -348,12 +348,10 @@ func OnSubAgentDone(
 		}
 	}
 
-	// Local fast path for the writer plugin: once the final step succeeds, close
-	// the plugin session deterministically instead of relying on DriverAgent to
-	// emit a follow-up __end__ action.
-	if status == subagent.StatusSucceeded &&
-		pctx.PluginID == "writer-plugin" &&
-		pctx.StepID == "finalize_report" {
+	// Once a terminal plugin step succeeds, close the plugin session according
+	// to the state machine instead of requiring a follow-up ChatAgent turn to
+	// emit __end__.
+	if status == subagent.StatusSucceeded && isTerminalPluginStep(ctx, pctx.PluginID, pctx.StepID) {
 		if _, sErr := CreateSessionStep(ctx, db, pctx.SessionID, "__end__", "__end__", 1); sErr == nil {
 			_ = UpdateStepStatus(ctx, db, "__end__", StepStatusSucceeded)
 		}
@@ -840,6 +838,34 @@ func resolveSlotBinding(pluginID, slot string) (slotID, cardinality string) {
 		return "", ""
 	}
 	return result.SlotID, result.Cardinality
+}
+
+func isTerminalPluginStep(parentCtx context.Context, pluginID, stepID string) bool {
+	if pluginID == "" || stepID == "" {
+		return false
+	}
+	endpoint := common.ChatServiceEndpoint()
+	url := fmt.Sprintf("%s/api/plugins/%s", endpoint, pluginID)
+	ctx, cancel := context.WithTimeout(parentCtx, 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return false
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return false
+	}
+	var spec pluginStateSpec
+	if json.NewDecoder(resp.Body).Decode(&spec) != nil {
+		return false
+	}
+	edges := spec.State.Transitions[stepID]
+	return len(edges) == 1 && edges[0].To == "__end__"
 }
 
 // defaultDriverMaxRetries is the global max retry count for DriverAgent RETRY verdicts.
