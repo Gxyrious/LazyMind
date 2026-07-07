@@ -20,6 +20,20 @@ when_to_use: >
   can infer sensible defaults or collect context during the writing steps. Not
   suitable for single-paragraph rewrites or translations.
 
+tool_scripts:
+  - path: scripts/tools.py
+    functions:
+      - writer_build_writing_task
+      - writer_profile_resources
+      - writer_create_writing_context
+      - writer_generate_outline
+      - writer_generate_section_instructions
+      - writer_generate_draft_section
+      - writer_assemble_draft_document
+      - writer_update_writing_context
+      - writer_check_consistency
+      - writer_generate_writing_output
+
 steps:
   - id: build_context
   - id: generate_outline

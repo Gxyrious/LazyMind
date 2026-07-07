@@ -37,17 +37,17 @@ steps:
 
       This step produces three artifacts: writing_task, resource_profiles, and writing_context.
 
-      First call get_WriterToolGroup_methods to activate the writer tool group.
+      Step 1: Call writer_build_writing_task(query="{{user_input}}") to get the writing_task path, then persist it with save_artifact(content_type='file', key='writing_task').
 
-      Step 1: Call WriterToolGroup_build_writing_task(query="{{user_input}}") to get the writing_task path, then persist it with save_artifact(content_type='file', key='writing_task').
+      Step 2: Call writer_profile_resources(writing_task_path=<writing_task path>, user_input="{{user_input}}") to get the resource_profiles path, then persist it with save_artifact(content_type='file', key='resource_profiles').
 
-      Step 2: Call WriterToolGroup_profile_resources(writing_task_path=<writing_task path>, user_input="{{user_input}}") to get the resource_profiles path, then persist it with save_artifact(content_type='file', key='resource_profiles').
-
-      Step 3: Call WriterToolGroup_create_writing_context(writing_task_path=<writing_task path>, resource_profiles_path=<resource_profiles path>) to get the writing_context path, then persist it with save_artifact(content_type='file', key='writing_context').
+      Step 3: Call writer_create_writing_context(writing_task_path=<writing_task path>, resource_profiles_path=<resource_profiles path>) to get the writing_context path, then persist it with save_artifact(content_type='file', key='writing_context').
 
       If any of the above tool calls fails, do not perform any extra fallback — stop the step immediately. In particular, do not write content yourself to persist.
     tools:
-      - writer
+      - writer_build_writing_task
+      - writer_profile_resources
+      - writer_create_writing_context
     outputs:
       - slot: writing_task
       - slot: resource_profiles
@@ -60,15 +60,16 @@ steps:
     prompt: |
       {{runtime_instruction}}
 
-      This step generates a structured outline from writing_task + writing_context, then syncs the outline content back into the writing context. First call get_WriterToolGroup_methods to activate the writer tool group. Then call get_artifact to retrieve writing_task and writing_context, pass them to WriterToolGroup_generate_outline(writing_task_path=<writing_task path>, writing_context_path=<writing_context path>), and obtain the outline path.
+      This step generates a structured outline from writing_task + writing_context, then syncs the outline content back into the writing context. Call get_artifact to retrieve writing_task and writing_context, pass them to writer_generate_outline(writing_task_path=<writing_task path>, writing_context_path=<writing_context path>), and obtain the outline path.
 
-      After the outline is generated, call WriterToolGroup_update_writing_context(content_artifact_path=<outline path>, writing_context_path=<original writing_context path>) and obtain the updated writing_context path.
+      After the outline is generated, call writer_update_writing_context(content_artifact_path=<outline path>, writing_context_path=<original writing_context path>) and obtain the updated writing_context path.
 
       Once all generation operations in this step are complete, call save_artifact(content_type='file', key='outline') to save the outline path, then call save_artifact(content_type='file', key='writing_context') to save the updated writing_context path.
 
       If any of the above tool calls fails, do not perform any extra fallback — stop the step immediately. In particular, do not write content yourself to persist.
     tools:
-      - writer
+      - writer_generate_outline
+      - writer_update_writing_context
     exclude_framework_tools:
       - read_user_attachment
       - find_user_attachment
@@ -88,13 +89,13 @@ steps:
     prompt: |
       {{runtime_instruction}}
 
-      This step generates writing instructions for every top-level section in the outline in a single batch. First call get_WriterToolGroup_methods to activate the writer tool group. Call get_artifact to retrieve writing_context and outline. If review_report already exists in the artifacts, this step is a replan triggered by a rewind from the review stage, and you must call get_artifact(key='review_report') once more to bring it into the generation process.
+      This step generates writing instructions for every top-level section in the outline in a single batch. Call get_artifact to retrieve writing_context and outline. If review_report already exists in the artifacts, this step is a replan triggered by a rewind from the review stage, and you must call get_artifact(key='review_report') once more to bring it into the generation process.
 
-      Then call WriterToolGroup_generate_section_instructions(outline_path=<outline path>, writing_context_path=<writing_context path>, review_report_path=<review_report path, or empty string if absent>) and persist the returned path with save_artifact(content_type='file', key='section_instructions').
+      Then call writer_generate_section_instructions(outline_path=<outline path>, writing_context_path=<writing_context path>, review_report_path=<review_report path, or empty string if absent>) and persist the returned path with save_artifact(content_type='file', key='section_instructions').
 
       If any of the above tool calls fails, do not perform any extra fallback — stop the step immediately. In particular, do not write content yourself to persist.
     tools:
-      - writer
+      - writer_generate_section_instructions
     exclude_framework_tools:
       - read_user_attachment
       - find_user_attachment
@@ -117,19 +118,21 @@ steps:
 
       This step writes the draft body section by section, then merges them into the complete document.
 
-      First call get_WriterToolGroup_methods to activate the writer tool group. Then call get_artifact to retrieve the file paths of writing_task, writing_context, outline, and section_instructions. Prepare a draft_section_paths list to record every non-empty section path returned by the tool.
+      Call get_artifact to retrieve the file paths of writing_task, writing_context, outline, and section_instructions. Prepare a draft_section_paths list to record every non-empty section path returned by the tool.
 
-      Call WriterToolGroup_generate_draft_section(writing_task_path=<writing_task path>, section_instructions_path=<section_instructions path>, writing_context_path=<writing_context path>) to produce the next section. Internally, the tool decides which section to write based on the section files already produced. When the tool returns a non-empty path, append it to draft_section_paths and continue calling the same tool to produce the next section.
+      Call writer_generate_draft_section(writing_task_path=<writing_task path>, section_instructions_path=<section_instructions path>, writing_context_path=<writing_context path>) to produce the next section. Internally, the tool decides which section to write based on the section files already produced. When the tool returns a non-empty path, append it to draft_section_paths and continue calling the same tool to produce the next section.
 
-      When the tool returns an empty string, all section drafts have been generated. Take the last path in draft_section_paths and call WriterToolGroup_assemble_draft_document(draft_sections_anchor_path=<last draft_section path>, writing_context_path=<writing_context path>, outline_path=<outline path>) to obtain the draft_document path.
+      When the tool returns an empty string, all section drafts have been generated. Take the last path in draft_section_paths and call writer_assemble_draft_document(draft_sections_anchor_path=<last draft_section path>, writing_context_path=<writing_context path>, outline_path=<outline path>) to obtain the draft_document path.
 
-      After the draft document is generated, call WriterToolGroup_update_writing_context(content_artifact_path=<draft_document path>, writing_context_path=<original writing_context path>) and obtain the updated writing_context path.
+      After the draft document is generated, call writer_update_writing_context(content_artifact_path=<draft_document path>, writing_context_path=<original writing_context path>) and obtain the updated writing_context path.
 
       Once all generation operations in this step are complete, in the order of draft_section_paths, call save_artifact(content_type='file', key='draft_sections') for each section draft path, then call save_artifact(content_type='file', key='draft_document') to save the draft_document path, and finally call save_artifact(content_type='file', key='writing_context') to save the updated writing_context path.
 
       If any of the above tool calls fails, stop the step and preserve the tool error message for outer-layer retry handling.
     tools:
-      - writer
+      - writer_generate_draft_section
+      - writer_assemble_draft_document
+      - writer_update_writing_context
     exclude_framework_tools:
       - read_user_attachment
       - find_user_attachment
@@ -154,13 +157,13 @@ steps:
     prompt: |
       {{runtime_instruction}}
 
-      This step reviews the draft for consistency and quality. First call get_WriterToolGroup_methods to activate the writer tool group. Call get_artifact to retrieve the file paths of writing_context and draft_document, then call WriterToolGroup_check_consistency(draft_path=<draft_document path>, writing_context_path=<writing_context path>). The tool returns review_report (the absolute path of the review_report artifact file) and review_summary (the content summary string produced by validate_draft_document — not a path). Call save_artifact(content_type='file', key='review_report', value=<review_report path>) and save_artifact(content_type='text', key='review_summary', value=<review_summary content>) separately to persist them.
+      This step reviews the draft for consistency and quality. Call get_artifact to retrieve the file paths of writing_context and draft_document, then call writer_check_consistency(draft_path=<draft_document path>, writing_context_path=<writing_context path>). The tool returns review_report (the absolute path of the review_report artifact file) and review_summary (the content summary string produced by validate_draft_document — not a path). Call save_artifact(content_type='file', key='review_report', value=<review_report path>) and save_artifact(content_type='text', key='review_summary', value=<review_summary content>) separately to persist them.
 
       The content of review_summary decides next_step: if the review passes, advance to finalize_report to produce the final report; if it fails, rewind to plan_sections to replan the sections. The final message of this step must follow this format: "Since {{review_summary}}, recommend advancing the next step to {{next_step}}."
 
       If any of the above tool calls fails, stop the step and preserve the tool error message for outer-layer retry handling.
     tools:
-      - writer
+      - writer_check_consistency
     exclude_framework_tools:
       - read_user_attachment
       - find_user_attachment
@@ -180,13 +183,13 @@ steps:
     prompt: |
       {{runtime_instruction}}
 
-      This step produces the final Markdown report after review. First call get_WriterToolGroup_methods to activate the writer tool group. Call get_artifact to retrieve the file paths of writing_context, draft_document, and review_report, then pass them to WriterToolGroup_generate_writing_output(draft_path=<draft_document path>, review_report_path=<review_report path>, writing_context_path=<writing_context path>). The tool returns two file paths at once: writing_output (the structured artifact) and writing_output_md (the final Markdown report).
+      This step produces the final Markdown report after review. Call get_artifact to retrieve the file paths of writing_context, draft_document, and review_report, then pass them to writer_generate_writing_output(draft_path=<draft_document path>, review_report_path=<review_report path>, writing_context_path=<writing_context path>). The tool returns two file paths at once: writing_output (the structured artifact) and writing_output_md (the final Markdown report).
 
       Once the generation operations in this step are complete, call save_artifact(content_type='file', key='writing_output') and save_artifact(content_type='file', key='writing_output_md') for the two paths to persist them as the artifacts of the current step.
 
       If any of the above tool calls fails, stop the step and preserve the tool error message for outer-layer retry handling.
     tools:
-      - writer
+      - writer_generate_writing_output
     exclude_framework_tools:
       - read_user_attachment
       - find_user_attachment

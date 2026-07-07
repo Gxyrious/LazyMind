@@ -547,8 +547,11 @@ def build_advance_step_tool(
 
     advance_step.__doc__ = (
         'Advance the active plugin step synchronously and return the result.\n\n'
-        'ONLY use this when running multiple steps in one turn. Otherwise use\n'
-        '`advance_step_and_hand_off`.\n\n'
+        'ONLY use this for intermediate steps when the user explicitly asks to\n'
+        'run multiple plugin steps in one chat turn. Do NOT use it for ordinary\n'
+        '"continue"/"next step" requests, single-step advancement, or terminal\n'
+        'final-step advancement. If you are going to call only one advancement\n'
+        'tool, use `advance_step_and_hand_off` instead.\n\n'
         + choices_doc + '\n\n'
         'Args:\n'
         '    step_id (str): Step to advance to (see list above).\n'
@@ -569,7 +572,6 @@ def _wait_for_step_done(step_id: str, trigger_result: str, timeout: float = 600.
     message arrives on the step_done queue.
     """
     import time
-    import json
     try:
         from lazyllm.common.queue import FileSystemQueue
         cfg = _agentic_config()
@@ -1139,23 +1141,25 @@ def _build_mode_guidance(
             terminal_hint = (
                 f'\n\n## Terminal steps (last steps before pipeline completion)\n\n'
                 f'The following steps lead directly to the end of the pipeline: {names}.\n'
-                'After one of these steps **succeeds**, immediately call '
-                '`advance_step_and_hand_off(step_id="__end__")` in the same turn '
-                'using `advance_step` (synchronous) so the pipeline completes without '
-                'requiring the user to click "继续" after the final step.\n\n'
-                'Concretely: use `advance_step(step_id=<terminal_step>, ...)` to run the '
-                'terminal step and wait for its result, then call '
-                '`advance_step_and_hand_off(step_id="__end__")` to close the session.\n'
-                'Only do this when the terminal step is the **last** planned step — '
-                'if the user wants to review results first, revert to `advance_step_and_hand_off`.'
+                'Treat terminal steps like any other single-step advancement: call '
+                '`advance_step_and_hand_off(step_id=<terminal_step>, ...)` and stop. '
+                'Do NOT use synchronous `advance_step` just because a step is terminal, '
+                'and do NOT keep the main chat turn open just to close `__end__`.\n\n'
+                'Pipeline completion is handled after the terminal step result is produced. '
+                'If another tool call is needed later to close `__end__`, it must be driven '
+                'by the normal plugin event loop or a later explicit user action, not by '
+                'blocking the current chat stream.'
             )
         common += (
             '- `advance_step`: Queue a step and WAIT for result (dynamic mode only). '
-            'Use only when running multiple steps in one turn '
-            '(e.g. user said "re-run steps 1 to 3" — use advance_step for steps 1..N-1, '
-            'then advance_step_and_hand_off for the last step).\n\n'
-            'After each step in dynamic mode, default to advance_step_and_hand_off so the user '
-            'can review the result and decide the next action.\n\n'
+            'Use only when the user explicitly asks to run multiple plugin steps in one '
+            'chat turn (for example, "连续执行后面三步" or "run steps 1 through 3 without '
+            'stopping"). In that case, use `advance_step` only for intermediate steps, '
+            'then use `advance_step_and_hand_off` for the final step of that turn.\n'
+            'For ordinary "继续", "下一步", single-step requests, and terminal/final-step '
+            'requests, you MUST call `advance_step_and_hand_off` and stop after the call.\n\n'
+            'After each step in dynamic mode, default to `advance_step_and_hand_off` so '
+            'the user can review the result and decide the next action.\n\n'
             'When a step is interrupted and user says "继续": call advance_step_and_hand_off with '
             'runtime_instruction="Previous attempt was interrupted. Check existing artifacts '
             'and only produce missing outputs (resume from checkpoint)."\n'

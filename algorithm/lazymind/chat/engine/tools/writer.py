@@ -1,11 +1,12 @@
-"""Writer tools for long-form writing plugin steps."""
+"""Common writer tools with string/JSON inputs and outputs."""
 from __future__ import annotations
 
 import json
-import os
 import re
+import tempfile
+import uuid
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 from lazyllm import AutoModel
 from lazyllm.tools.writer.data_models import (
@@ -22,27 +23,107 @@ from lazyllm.tools.writer.tools import (
 )
 from lazyllm.tools.writer.utils import save_artifact_json
 
-from lazymind.chat.engine.subagent.context import require_context
+
+SCHEMA_WRITING_TASK = 'lazyllm.tools.writer.data_models.task.WritingTask'
+SCHEMA_INPUT_RESOURCE = 'lazyllm.tools.writer.data_models.task.InputResource'
+SCHEMA_WRITING_CONTEXT = 'lazyllm.tools.writer.data_models.context.WritingContext'
+SCHEMA_RESOURCE_PROFILE = 'lazyllm.tools.writer.data_models.resource.ResourceProfile'
+SCHEMA_WRITING_OUTLINE = 'lazyllm.tools.writer.data_models.writing.WritingOutline'
+SCHEMA_SECTION_INSTRUCTION = 'lazyllm.tools.writer.data_models.writing.SectionInstruction'
+SCHEMA_SECTION_INSTRUCTION_LIST = 'lazyllm.tools.writer.data_models.writing.SectionInstructionList'
+SCHEMA_DRAFT_SECTION = 'lazyllm.tools.writer.data_models.writing.DraftSection'
+SCHEMA_DRAFT_DOCUMENT = 'lazyllm.tools.writer.data_models.writing.DraftDocument'
+SCHEMA_REVIEW_REPORT = 'lazyllm.tools.writer.data_models.quality.ReviewReport'
+SCHEMA_WRITING_OUTPUT = 'lazyllm.tools.writer.data_models.writing.WritingOutput'
 
 
-def _workspace_root() -> Path:
-    ctx = require_context()
-    return Path(ctx.workspace_path) if ctx.workspace_path else Path('/tmp')
+def _json_dumps(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, indent=2)
 
 
-def _read_artifact_file(path: str) -> Any:
-    """Read an artifact file from the workspace, unwrapping the `data` field when present."""
-    if not os.path.exists(path):
-        raise FileNotFoundError(path)
+def _json_loads(value: str, default: Any = None) -> Any:
+    text = (value or '').strip()
+    if not text:
+        return default
+    parsed = json.loads(text)
+    if isinstance(parsed, dict) and 'data' in parsed:
+        return parsed['data']
+    return parsed
+
+
+def _read_artifact_data(path: str) -> Any:
     with open(path, 'r', encoding='utf-8') as fh:
         raw = json.load(fh)
     if isinstance(raw, dict) and 'data' in raw:
-        raw = raw['data']
+        return raw['data']
     return raw
 
 
+def _temp_root() -> Path:
+    root = Path(tempfile.gettempdir()) / 'lazymind-writer-tools' / uuid.uuid4().hex
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def _write_input_artifact(root: Path, filename: str, data: Any, schema_name: str) -> str:
+    return save_artifact_json(
+        data,
+        str(root / filename),
+        schema_name=schema_name,
+        created_by='WriterToolGroup',
+    )
+
+
+def _primary_data(result: dict) -> Any:
+    artifact_path = result.get('artifact_path')
+    if not artifact_path:
+        raise ValueError(f'Writer tool did not return artifact_path: {result!r}')
+    return _read_artifact_data(artifact_path)
+
+
+def _extract_feishu_resources(user_input: str) -> list[dict]:
+    pattern = re.compile(r'https?://[A-Za-z0-9.\-]+\.feishu\.cn/\S+')
+    resources: list[dict] = []
+    seen: set[str] = set()
+    for idx, match in enumerate(pattern.finditer(user_input or '')):
+        url = match.group(0)
+        if url in seen:
+            continue
+        seen.add(url)
+        resources.append({
+            'resource_id': f'feishu_{idx}',
+            'resource_type': 'url',
+            'uri': url,
+            'title': None,
+            'mime_type': None,
+            'summary': None,
+            'meta': {'provider': 'feishu', 'role': 'background'},
+        })
+    return resources
+
+
+def _infer_content_schema(data: Any) -> str:
+    if isinstance(data, dict):
+        if 'outline_id' in data and 'nodes' in data:
+            return SCHEMA_WRITING_OUTLINE
+        if 'draft_id' in data and 'sections' in data:
+            return SCHEMA_DRAFT_DOCUMENT
+        if 'section_id' in data and 'blocks' in data:
+            return SCHEMA_DRAFT_SECTION
+        if 'output_id' in data and 'content' in data:
+            return SCHEMA_WRITING_OUTPUT
+        if 'target' in data and 'result' in data:
+            return SCHEMA_REVIEW_REPORT
+    return 'lazyllm.tools.writer.artifacts.content'
+
+
 class WriterToolGroup:
-    """Tools for building writing tasks, outlines, drafts, reviews, and final reports."""
+    """Common writer tools.
+
+    All public methods accept text or JSON strings and return text or JSON strings.
+    File paths are an internal implementation detail used only to call the
+    underlying lazyllm writer tools.
+    """
 
     __public_apis__ = [
         'build_writing_task',
@@ -58,288 +139,241 @@ class WriterToolGroup:
     ]
 
     def __key_source__(self) -> bool:
-        try:
-            require_context()
-            return True
-        except Exception:
-            return False
+        return True
 
     def build_writing_task(self, query: str) -> str:
-        """Build a WritingTask and emit the writing_task artifact file.
+        """Build a writing task from the user's original request.
 
         Args:
-            query: The user's original writing request.
+            query: The user's writing request.
 
         Returns:
-            Absolute path of the writing_task artifact file.
+            WritingTask as a JSON string.
         """
-        task = WritingTask(query=query, task_type='write')  # TODO: use LLM for richer construction
-        path = _workspace_root() / 'writing_task.json'
-        save_artifact_json(task, str(path), created_by='build_writing_task')
-        return str(path)
+        task = WritingTask(query=query, task_type='write')
+        return _json_dumps(task.model_dump())
 
-    def profile_resources(self, writing_task_path: str, user_input: str) -> str:
-        """Emit the resource_profiles artifact file.
+    def profile_resources(self, writing_task_json: str, user_input: str, resources_json: str = '[]') -> str:
+        """Profile writing resources.
 
         Args:
-            writing_task_path: Absolute path of the writing_task artifact from the previous step.
-            user_input: The user's original prompt, used to extract Feishu links as InputResource.
+            writing_task_json: WritingTask JSON string.
+            user_input: Original user request, used to discover Feishu links.
+            resources_json: Optional JSON array of InputResource objects.
 
         Returns:
-            Absolute path of the resource_profiles artifact file.
+            ResourceProfile list as a JSON string.
         """
-        _read_artifact_file(writing_task_path)
-        ctx = require_context()
-        files_by_turn = ctx.params.get('history_files_per_turn') or {}
-        all_files = [p for paths in files_by_turn.values() for p in paths]
+        root = _temp_root()
+        task_data = _json_loads(writing_task_json, {})
+        resources = _json_loads(resources_json, [])
+        if resources is None:
+            resources = []
+        if not isinstance(resources, list):
+            raise TypeError('resources_json must be a JSON array.')
+        resources = resources + _extract_feishu_resources(user_input)
 
-        feishu_pattern = re.compile(r'https?://[A-Za-z0-9.\-]+\.feishu\.cn/\S+')
-        seen_urls: set[str] = set()
-        feishu_urls: list[str] = []
-        for match in feishu_pattern.finditer(user_input or ''):
-            url = match.group(0)
-            if url in seen_urls:
-                continue
-            seen_urls.add(url)
-            feishu_urls.append(url)
-
-        input_resources: list[InputResource] = []
-        for abs_path in all_files:
-            input_resources.append(InputResource(
-                resource_id=os.path.basename(abs_path), resource_type='file', uri=abs_path,
-                title=os.path.basename(abs_path), mime_type=None, summary=None, meta={},
-            ))
-        for idx, url in enumerate(feishu_urls):
-            input_resources.append(InputResource(
-                resource_id=f'feishu_{idx}', resource_type='url', uri=url,
-                title=None, mime_type=None, summary=None, meta={'provider': 'feishu', 'role': 'background'},
-            ))
+        task_path = _write_input_artifact(root, 'writing_task.json', task_data, SCHEMA_WRITING_TASK)
+        input_resources = [InputResource.model_validate(item) for item in resources]
         result = WriterResourceTools(
             llm=AutoModel(model='llm'),
-            artifact_store=str(_workspace_root()),
-        ).profile_resources(task=writing_task_path, input_resources=input_resources)
-        return result['artifact_path']
+            artifact_store=str(root),
+        ).profile_resources(task=task_path, input_resources=input_resources)
+        return _json_dumps(_primary_data(result))
 
-    def create_writing_context(self, writing_task_path: str, resource_profiles_path: str) -> str:
-        """Emit the writing_context artifact file.
-
-        Args:
-            writing_task_path: Absolute path of the writing_task artifact.
-            resource_profiles_path: Absolute path of the resource_profiles artifact.
-
-        Returns:
-            Absolute path of the writing_context artifact file.
-        """
-        _read_artifact_file(writing_task_path)
-        _read_artifact_file(resource_profiles_path)
+    def create_writing_context(self, writing_task_json: str, resource_profiles_json: str) -> str:
+        """Create writing context from task and resource profile JSON strings."""
+        root = _temp_root()
+        task_path = _write_input_artifact(
+            root, 'writing_task.json', _json_loads(writing_task_json, {}), SCHEMA_WRITING_TASK,
+        )
+        profiles_path = _write_input_artifact(
+            root, 'resource_profiles.json', _json_loads(resource_profiles_json, []), SCHEMA_RESOURCE_PROFILE,
+        )
         result = WriterContextTools(
             llm=None,
-            artifact_store=str(_workspace_root()),
-        ).create_writing_context(task=writing_task_path, resource_profiles=resource_profiles_path)
-        return result['artifact_path']
+            artifact_store=str(root),
+        ).create_writing_context(task=task_path, resource_profiles=profiles_path)
+        return _json_dumps(_primary_data(result))
 
-    def generate_outline(self, writing_task_path: str, writing_context_path: str) -> str:
-        """Emit the outline artifact file.
-
-        Args:
-            writing_task_path: Absolute path of the writing_task artifact.
-            writing_context_path: Absolute path of the writing_context artifact.
-
-        Returns:
-            Absolute path of the outline artifact file.
-        """
-        _read_artifact_file(writing_task_path)
-        _read_artifact_file(writing_context_path)
+    def generate_outline(self, writing_task_json: str, writing_context_json: str) -> str:
+        """Generate a writing outline as JSON."""
+        root = _temp_root()
+        task_path = _write_input_artifact(
+            root, 'writing_task.json', _json_loads(writing_task_json, {}), SCHEMA_WRITING_TASK,
+        )
+        context_path = _write_input_artifact(
+            root, 'writing_context.json', _json_loads(writing_context_json, {}), SCHEMA_WRITING_CONTEXT,
+        )
         result = WriterPlanningTools(
             llm=AutoModel(model='llm'),
-            artifact_store=str(_workspace_root()),
-        ).generate_outline(task=writing_task_path, context=writing_context_path)
-        return result['artifact_path']
+            artifact_store=str(root),
+        ).generate_outline(task=task_path, context=context_path)
+        return _json_dumps(_primary_data(result))
 
     def generate_section_instructions(
         self,
-        outline_path: str,
-        writing_context_path: str,
-        review_report_path: str = '',
+        outline_json: str,
+        writing_context_json: str,
+        review_report_json: str = '',
     ) -> str:
-        """Emit the section_instructions artifact file containing the full SectionInstructionList.
-
-        Args:
-            outline_path: Absolute path of the outline artifact.
-            writing_context_path: Absolute path of the writing_context artifact.
-            review_report_path: Absolute path of the review_report artifact.
-
-        Returns:
-            Absolute path of the section_instructions artifact file.
-        """
-        _read_artifact_file(outline_path)
-        _read_artifact_file(writing_context_path)
-        execution_results: Any = None
-        if review_report_path:
-            execution_results = _read_artifact_file(review_report_path)
+        """Generate section instructions as JSON."""
+        root = _temp_root()
+        outline_path = _write_input_artifact(
+            root, 'outline.json', _json_loads(outline_json, {}), SCHEMA_WRITING_OUTLINE,
+        )
+        context_path = _write_input_artifact(
+            root, 'writing_context.json', _json_loads(writing_context_json, {}), SCHEMA_WRITING_CONTEXT,
+        )
+        execution_results = _json_loads(review_report_json, None) if review_report_json else None
         result = WriterPlanningTools(
             llm=AutoModel(model='llm'),
-            artifact_store=str(_workspace_root()),
+            artifact_store=str(root),
         ).generate_section_instructions(
             outline=outline_path,
-            context=writing_context_path,
+            context=context_path,
             execution_results=execution_results,
         )
-        return result['artifact_path']
+        return _json_dumps(_primary_data(result))
 
     def generate_draft_section(
         self,
-        writing_task_path: str,
-        section_instructions_path: str,
-        writing_context_path: str,
+        writing_task_json: str,
+        section_instruction_json: str,
+        writing_context_json: str,
+        previous_sections_json: str = '[]',
     ) -> str:
-        """Emit the next draft_section artifact file.
-
-        Args:
-            writing_task_path: Path to the writing_task file.
-            section_instructions_path: Path to the SectionInstructionList file.
-            writing_context_path: Path to the writing_context file.
-
-        Returns:
-            Absolute path of the draft_section file. Returns an empty string once
-            every section has been generated.
-        """
-        _read_artifact_file(writing_task_path)
-        _read_artifact_file(writing_context_path)
-        section_instructions = _read_artifact_file(section_instructions_path)
-        if not isinstance(section_instructions, dict) or not isinstance(section_instructions.get('instructions'), list):
-            raise TypeError('section_instructions_path must point to a SectionInstructionList artifact.')
-
-        draft_sections_dir = _workspace_root() / 'draft_sections'
-        draft_sections_dir.mkdir(parents=True, exist_ok=True)
-        previous_paths = sorted(str(path) for path in draft_sections_dir.glob('draft_section_*.json'))
-        next_index = len(previous_paths)
-        instructions = section_instructions['instructions']
-        if next_index >= len(instructions):
-            return ''
-
-        instruction = SectionInstruction.model_validate(instructions[next_index])
-        previous_sections = [_read_artifact_file(path) for path in previous_paths]
-
+        """Generate one draft section as JSON."""
+        root = _temp_root()
+        task_path = _write_input_artifact(
+            root, 'writing_task.json', _json_loads(writing_task_json, {}), SCHEMA_WRITING_TASK,
+        )
+        context_path = _write_input_artifact(
+            root, 'writing_context.json', _json_loads(writing_context_json, {}), SCHEMA_WRITING_CONTEXT,
+        )
+        instruction_data = _json_loads(section_instruction_json, {})
+        instruction = SectionInstruction.model_validate(instruction_data)
+        previous_sections = _json_loads(previous_sections_json, [])
         result = WriterDraftingTools(
             llm=AutoModel(model='llm'),
-            artifact_store=str(draft_sections_dir),
+            artifact_store=str(root),
         ).generate_draft_section(
-            task=writing_task_path,
+            task=task_path,
             section_instruction=instruction,
-            context=writing_context_path,
+            context=context_path,
             previous_sections=previous_sections,
         )
-        return result['artifact_path']
+        return _json_dumps(_primary_data(result))
 
     def assemble_draft_document(
         self,
-        draft_sections_anchor_path: str,
-        writing_context_path: str,
-        outline_path: str = '',
+        draft_sections_json: str,
+        writing_context_json: str,
+        outline_json: str = '',
     ) -> str:
-        """Merge multiple draft_sections into the draft_document artifact file.
-
-        Args:
-            draft_sections_anchor_path: Any draft_section file path, or the draft_sections directory path.
-            writing_context_path: Path to the writing_context file.
-            outline_path: Path to the outline file.
-
-        Returns:
-            Absolute path of the draft_document file.
-        """
-        anchor = Path(draft_sections_anchor_path)
-        draft_sections_dir = anchor if anchor.is_dir() else anchor.parent
-        draft_sections_paths = sorted(str(path) for path in draft_sections_dir.glob('draft_section_*.json'))
-        if not draft_sections_paths:
-            raise ValueError('draft_sections_anchor_path must point to a generated draft_sections directory or file.')
-        for path in draft_sections_paths:
-            _read_artifact_file(path)
-        _read_artifact_file(writing_context_path)
-        outline_ref = outline_path or None
-        if outline_ref:
-            _read_artifact_file(outline_ref)
-
+        """Assemble draft sections into a draft document JSON string."""
+        root = _temp_root()
+        sections_data = _json_loads(draft_sections_json, [])
+        if not isinstance(sections_data, list) or not sections_data:
+            raise ValueError('draft_sections_json must be a non-empty JSON array.')
+        section_paths = []
+        sections_dir = root / 'draft_sections'
+        sections_dir.mkdir(parents=True, exist_ok=True)
+        for idx, section in enumerate(sections_data, start=1):
+            section_paths.append(_write_input_artifact(
+                sections_dir, f'draft_section_{idx}.json', section, SCHEMA_DRAFT_SECTION,
+            ))
+        context_path = _write_input_artifact(
+            root, 'writing_context.json', _json_loads(writing_context_json, {}), SCHEMA_WRITING_CONTEXT,
+        )
+        outline_path = None
+        if outline_json:
+            outline_path = _write_input_artifact(
+                root, 'outline.json', _json_loads(outline_json, {}), SCHEMA_WRITING_OUTLINE,
+            )
         result = WriterDraftingTools(
             llm=None,
-            artifact_store=str(_workspace_root()),
+            artifact_store=str(root),
         ).generate_draft_document(
-            draft_sections=draft_sections_paths,
-            context=writing_context_path,
-            outline=outline_ref,
+            draft_sections=section_paths,
+            context=context_path,
+            outline=outline_path,
         )
-        return result['artifact_path']
+        return _json_dumps(_primary_data(result))
 
-    def update_writing_context(self, content_artifact_path: str, writing_context_path: str) -> str:
-        """Update the writing_context artifact based on a content artifact.
-
-        Args:
-            content_artifact_path: Path to the content artifact used to update the context.
-            writing_context_path: Path to the writing_context file.
-
-        Returns:
-            Absolute path of the writing_context file.
-        """
-        _read_artifact_file(content_artifact_path)
-        _read_artifact_file(writing_context_path)
+    def update_writing_context(self, content_artifact_json: str, writing_context_json: str) -> str:
+        """Update writing context from a content artifact JSON string."""
+        root = _temp_root()
+        content_data = _json_loads(content_artifact_json, {})
+        content_path = _write_input_artifact(
+            root, 'content_artifact.json', content_data, _infer_content_schema(content_data),
+        )
+        context_path = _write_input_artifact(
+            root, 'writing_context.json', _json_loads(writing_context_json, {}), SCHEMA_WRITING_CONTEXT,
+        )
         result = WriterContextTools(
             llm=None,
-            artifact_store=str(_workspace_root()),
-        ).update_writing_context(artifacts=content_artifact_path, context=writing_context_path)
-        return result['artifact_path']
+            artifact_store=str(root),
+        ).update_writing_context(artifacts=content_path, context=context_path)
+        return _json_dumps(_primary_data(result))
 
-    def check_consistency(self, draft_path: str, writing_context_path: str) -> Dict[str, str]:
-        """Emit the review_report artifact file and return a review summary.
-
-        Args:
-            draft_path: Path to the draft_document file.
-            writing_context_path: Path to the writing_context file.
+    def check_consistency(self, draft_document_json: str, writing_context_json: str) -> str:
+        """Review a draft document.
 
         Returns:
-            Two fields; call `save_artifact(content_type='file', key='review_report')`
-            and `save_artifact(content_type='text', key='review_summary')` to persist them.
+            JSON string with `review_report` and `review_summary`.
         """
-        _read_artifact_file(draft_path)
-        _read_artifact_file(writing_context_path)
+        root = _temp_root()
+        draft_path = _write_input_artifact(
+            root, 'draft_document.json', _json_loads(draft_document_json, {}), SCHEMA_DRAFT_DOCUMENT,
+        )
+        context_path = _write_input_artifact(
+            root, 'writing_context.json', _json_loads(writing_context_json, {}), SCHEMA_WRITING_CONTEXT,
+        )
         result = WriterQualityTools(
             llm=AutoModel(model='llm'),
-            artifact_store=str(_workspace_root()),
+            artifact_store=str(root),
         ).validate_draft_document(
             draft_document=draft_path,
-            context=writing_context_path,
+            context=context_path,
         )
-        return {
-            'review_report': result['artifact_path'],
-            'review_summary': result['summary'],
-        }
+        return _json_dumps({
+            'review_report': _primary_data(result),
+            'review_summary': result.get('summary') or '',
+        })
 
     def generate_writing_output(
         self,
-        draft_path: str,
-        review_report_path: str,
-        writing_context_path: str,
-    ) -> Dict[str, str]:
-        """Emit two writing_output artifact files.
-
-        Args:
-            draft_path: Path to the draft_document file.
-            review_report_path: Path to the review_report file.
-            writing_context_path: Path to the writing_context file.
+        draft_document_json: str,
+        review_report_json: str,
+        writing_context_json: str,
+    ) -> str:
+        """Generate final writing output.
 
         Returns:
-            Two absolute paths; call `save_artifact(content_type='file', key=<key>, value=<path>)` for each.
+            JSON string with `writing_output` and `writing_output_md`.
         """
-        _read_artifact_file(draft_path)
-        _read_artifact_file(review_report_path)
-        _read_artifact_file(writing_context_path)
+        root = _temp_root()
+        draft_path = _write_input_artifact(
+            root, 'draft_document.json', _json_loads(draft_document_json, {}), SCHEMA_DRAFT_DOCUMENT,
+        )
+        _json_loads(review_report_json, {})
+        context_path = _write_input_artifact(
+            root, 'writing_context.json', _json_loads(writing_context_json, {}), SCHEMA_WRITING_CONTEXT,
+        )
         result = WriterDraftingTools(
             llm=None,
-            artifact_store=str(_workspace_root()),
+            artifact_store=str(root),
         ).generate_writing_output(
             draft=draft_path,
-            context=writing_context_path,
+            context=context_path,
         )
-        return {
-            'writing_output': result['artifact_path'],
-            'writing_output_md': result['output_file_path'],
-        }
+        output_path = result.get('output_file_path') or ''
+        markdown = ''
+        if output_path:
+            with open(output_path, 'r', encoding='utf-8') as fh:
+                markdown = fh.read()
+        return _json_dumps({
+            'writing_output': _primary_data(result),
+            'writing_output_md': markdown,
+        })
