@@ -15,16 +15,8 @@ from lazyllm.tools.writer.utils import save_artifact_json
 
 from lazymind.chat.engine.subagent.context import require_context
 from lazymind.chat.engine.tools.writer import (
-    SCHEMA_DRAFT_DOCUMENT,
-    SCHEMA_DRAFT_SECTION,
-    SCHEMA_RESOURCE_PROFILE,
-    SCHEMA_REVIEW_REPORT,
-    SCHEMA_SECTION_INSTRUCTION_LIST,
-    SCHEMA_WRITING_CONTEXT,
-    SCHEMA_WRITING_OUTLINE,
-    SCHEMA_WRITING_OUTPUT,
-    SCHEMA_WRITING_TASK,
     WriterToolGroup,
+    writer_schema,
 )
 
 
@@ -109,7 +101,7 @@ def _collect_resources(user_input: str) -> str:
 def writer_build_writing_task(query: str) -> str:
     """Build a WritingTask artifact and return its file path."""
     content = WriterToolGroup().build_writing_task(query=query)
-    return _save_json_artifact('writing_task', content, SCHEMA_WRITING_TASK)
+    return _save_json_artifact('writing_task', content, writer_schema('task.WritingTask'))
 
 
 def writer_profile_resources(writing_task_path: str, user_input: str) -> str:
@@ -119,7 +111,7 @@ def writer_profile_resources(writing_task_path: str, user_input: str) -> str:
         user_input=user_input,
         resources_json=_collect_resources(user_input),
     )
-    return _save_json_artifact('resource_profiles', content, SCHEMA_RESOURCE_PROFILE)
+    return _save_json_artifact('resource_profiles', content, writer_schema('resource.ResourceProfile'))
 
 
 def writer_create_writing_context(writing_task_path: str, resource_profiles_path: str) -> str:
@@ -128,7 +120,7 @@ def writer_create_writing_context(writing_task_path: str, resource_profiles_path
         writing_task_json=_read_json_string(writing_task_path),
         resource_profiles_json=_read_json_string(resource_profiles_path),
     )
-    return _save_json_artifact('writing_context', content, SCHEMA_WRITING_CONTEXT)
+    return _save_json_artifact('writing_context', content, writer_schema('context.WritingContext'))
 
 
 def writer_generate_outline(writing_task_path: str, writing_context_path: str) -> str:
@@ -137,7 +129,7 @@ def writer_generate_outline(writing_task_path: str, writing_context_path: str) -
         writing_task_json=_read_json_string(writing_task_path),
         writing_context_json=_read_json_string(writing_context_path),
     )
-    return _save_json_artifact('outline', content, SCHEMA_WRITING_OUTLINE)
+    return _save_json_artifact('outline', content, writer_schema('writing.WritingOutline'))
 
 
 def writer_generate_section_instructions(
@@ -152,7 +144,11 @@ def writer_generate_section_instructions(
         writing_context_json=_read_json_string(writing_context_path),
         review_report_json=review_json,
     )
-    return _save_json_artifact('section_instructions', content, SCHEMA_SECTION_INSTRUCTION_LIST)
+    return _save_json_artifact(
+        'section_instructions',
+        content,
+        writer_schema('writing.SectionInstructionList'),
+    )
 
 
 def writer_generate_draft_section(
@@ -183,7 +179,7 @@ def writer_generate_draft_section(
     return _save_json_artifact(
         f'draft_section_{next_index + 1}',
         section_content,
-        SCHEMA_DRAFT_SECTION,
+        writer_schema('writing.DraftSection'),
         directory=draft_sections_dir,
     )
 
@@ -206,7 +202,7 @@ def writer_assemble_draft_document(
         writing_context_json=_read_json_string(writing_context_path),
         outline_json=_read_json_string(outline_path) if outline_path else '',
     )
-    return _save_json_artifact('draft_document', content, SCHEMA_DRAFT_DOCUMENT)
+    return _save_json_artifact('draft_document', content, writer_schema('writing.DraftDocument'))
 
 
 def writer_update_writing_context(content_artifact_path: str, writing_context_path: str) -> str:
@@ -215,7 +211,7 @@ def writer_update_writing_context(content_artifact_path: str, writing_context_pa
         content_artifact_json=_read_json_string(content_artifact_path),
         writing_context_json=_read_json_string(writing_context_path),
     )
-    return _save_json_artifact('writing_context', content, SCHEMA_WRITING_CONTEXT)
+    return _save_json_artifact('writing_context', content, writer_schema('context.WritingContext'))
 
 
 def writer_check_consistency(draft_path: str, writing_context_path: str) -> dict:
@@ -228,7 +224,7 @@ def writer_check_consistency(draft_path: str, writing_context_path: str) -> dict
     review_report_path = save_artifact_json(
         payload.get('review_report') or {},
         str(_workspace_root() / 'review_report.json'),
-        schema_name=SCHEMA_REVIEW_REPORT,
+        schema_name=writer_schema('quality.ReviewReport'),
         created_by='writer-plugin-wrapper',
     )
     return {
@@ -252,7 +248,7 @@ def writer_generate_writing_output(
     output_path = save_artifact_json(
         payload.get('writing_output') or {},
         str(_workspace_root() / 'writing_output.json'),
-        schema_name=SCHEMA_WRITING_OUTPUT,
+        schema_name=writer_schema('writing.WritingOutput'),
         created_by='writer-plugin-wrapper',
     )
     markdown_path = _workspace_root() / 'writing_output.md'

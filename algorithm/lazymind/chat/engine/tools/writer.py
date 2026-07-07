@@ -24,17 +24,16 @@ from lazyllm.tools.writer.tools import (
 from lazyllm.tools.writer.utils import save_artifact_json
 
 
-SCHEMA_WRITING_TASK = 'lazyllm.tools.writer.data_models.task.WritingTask'
-SCHEMA_INPUT_RESOURCE = 'lazyllm.tools.writer.data_models.task.InputResource'
-SCHEMA_WRITING_CONTEXT = 'lazyllm.tools.writer.data_models.context.WritingContext'
-SCHEMA_RESOURCE_PROFILE = 'lazyllm.tools.writer.data_models.resource.ResourceProfile'
-SCHEMA_WRITING_OUTLINE = 'lazyllm.tools.writer.data_models.writing.WritingOutline'
-SCHEMA_SECTION_INSTRUCTION = 'lazyllm.tools.writer.data_models.writing.SectionInstruction'
-SCHEMA_SECTION_INSTRUCTION_LIST = 'lazyllm.tools.writer.data_models.writing.SectionInstructionList'
-SCHEMA_DRAFT_SECTION = 'lazyllm.tools.writer.data_models.writing.DraftSection'
-SCHEMA_DRAFT_DOCUMENT = 'lazyllm.tools.writer.data_models.writing.DraftDocument'
-SCHEMA_REVIEW_REPORT = 'lazyllm.tools.writer.data_models.quality.ReviewReport'
-SCHEMA_WRITING_OUTPUT = 'lazyllm.tools.writer.data_models.writing.WritingOutput'
+WRITER_DATA_MODEL_SCHEMA_PREFIX = 'lazyllm.tools.writer.data_models'
+WRITER_ARTIFACT_SCHEMA_PREFIX = 'lazyllm.tools.writer.artifacts'
+
+
+def writer_schema(name: str) -> str:
+    return f'{WRITER_DATA_MODEL_SCHEMA_PREFIX}.{name}'
+
+
+def writer_artifact_schema(name: str) -> str:
+    return f'{WRITER_ARTIFACT_SCHEMA_PREFIX}.{name}'
 
 
 def _json_dumps(value: Any) -> str:
@@ -105,16 +104,16 @@ def _extract_feishu_resources(user_input: str) -> list[dict]:
 def _infer_content_schema(data: Any) -> str:
     if isinstance(data, dict):
         if 'outline_id' in data and 'nodes' in data:
-            return SCHEMA_WRITING_OUTLINE
+            return writer_schema('writing.WritingOutline')
         if 'draft_id' in data and 'sections' in data:
-            return SCHEMA_DRAFT_DOCUMENT
+            return writer_schema('writing.DraftDocument')
         if 'section_id' in data and 'blocks' in data:
-            return SCHEMA_DRAFT_SECTION
+            return writer_schema('writing.DraftSection')
         if 'output_id' in data and 'content' in data:
-            return SCHEMA_WRITING_OUTPUT
+            return writer_schema('writing.WritingOutput')
         if 'target' in data and 'result' in data:
-            return SCHEMA_REVIEW_REPORT
-    return 'lazyllm.tools.writer.artifacts.content'
+            return writer_schema('quality.ReviewReport')
+    return writer_artifact_schema('content')
 
 
 class WriterToolGroup:
@@ -173,7 +172,7 @@ class WriterToolGroup:
             raise TypeError('resources_json must be a JSON array.')
         resources = resources + _extract_feishu_resources(user_input)
 
-        task_path = _write_input_artifact(root, 'writing_task.json', task_data, SCHEMA_WRITING_TASK)
+        task_path = _write_input_artifact(root, 'writing_task.json', task_data, writer_schema('task.WritingTask'))
         input_resources = [InputResource.model_validate(item) for item in resources]
         result = WriterResourceTools(
             llm=AutoModel(model='llm'),
@@ -185,10 +184,11 @@ class WriterToolGroup:
         """Create writing context from task and resource profile JSON strings."""
         root = _temp_root()
         task_path = _write_input_artifact(
-            root, 'writing_task.json', _json_loads(writing_task_json, {}), SCHEMA_WRITING_TASK,
+            root, 'writing_task.json', _json_loads(writing_task_json, {}), writer_schema('task.WritingTask'),
         )
         profiles_path = _write_input_artifact(
-            root, 'resource_profiles.json', _json_loads(resource_profiles_json, []), SCHEMA_RESOURCE_PROFILE,
+            root, 'resource_profiles.json', _json_loads(resource_profiles_json, []),
+            writer_schema('resource.ResourceProfile'),
         )
         result = WriterContextTools(
             llm=None,
@@ -200,10 +200,11 @@ class WriterToolGroup:
         """Generate a writing outline as JSON."""
         root = _temp_root()
         task_path = _write_input_artifact(
-            root, 'writing_task.json', _json_loads(writing_task_json, {}), SCHEMA_WRITING_TASK,
+            root, 'writing_task.json', _json_loads(writing_task_json, {}), writer_schema('task.WritingTask'),
         )
         context_path = _write_input_artifact(
-            root, 'writing_context.json', _json_loads(writing_context_json, {}), SCHEMA_WRITING_CONTEXT,
+            root, 'writing_context.json', _json_loads(writing_context_json, {}),
+            writer_schema('context.WritingContext'),
         )
         result = WriterPlanningTools(
             llm=AutoModel(model='llm'),
@@ -220,10 +221,11 @@ class WriterToolGroup:
         """Generate section instructions as JSON."""
         root = _temp_root()
         outline_path = _write_input_artifact(
-            root, 'outline.json', _json_loads(outline_json, {}), SCHEMA_WRITING_OUTLINE,
+            root, 'outline.json', _json_loads(outline_json, {}), writer_schema('writing.WritingOutline'),
         )
         context_path = _write_input_artifact(
-            root, 'writing_context.json', _json_loads(writing_context_json, {}), SCHEMA_WRITING_CONTEXT,
+            root, 'writing_context.json', _json_loads(writing_context_json, {}),
+            writer_schema('context.WritingContext'),
         )
         execution_results = _json_loads(review_report_json, None) if review_report_json else None
         result = WriterPlanningTools(
@@ -246,10 +248,11 @@ class WriterToolGroup:
         """Generate one draft section as JSON."""
         root = _temp_root()
         task_path = _write_input_artifact(
-            root, 'writing_task.json', _json_loads(writing_task_json, {}), SCHEMA_WRITING_TASK,
+            root, 'writing_task.json', _json_loads(writing_task_json, {}), writer_schema('task.WritingTask'),
         )
         context_path = _write_input_artifact(
-            root, 'writing_context.json', _json_loads(writing_context_json, {}), SCHEMA_WRITING_CONTEXT,
+            root, 'writing_context.json', _json_loads(writing_context_json, {}),
+            writer_schema('context.WritingContext'),
         )
         instruction_data = _json_loads(section_instruction_json, {})
         instruction = SectionInstruction.model_validate(instruction_data)
@@ -281,15 +284,16 @@ class WriterToolGroup:
         sections_dir.mkdir(parents=True, exist_ok=True)
         for idx, section in enumerate(sections_data, start=1):
             section_paths.append(_write_input_artifact(
-                sections_dir, f'draft_section_{idx}.json', section, SCHEMA_DRAFT_SECTION,
+                sections_dir, f'draft_section_{idx}.json', section, writer_schema('writing.DraftSection'),
             ))
         context_path = _write_input_artifact(
-            root, 'writing_context.json', _json_loads(writing_context_json, {}), SCHEMA_WRITING_CONTEXT,
+            root, 'writing_context.json', _json_loads(writing_context_json, {}),
+            writer_schema('context.WritingContext'),
         )
         outline_path = None
         if outline_json:
             outline_path = _write_input_artifact(
-                root, 'outline.json', _json_loads(outline_json, {}), SCHEMA_WRITING_OUTLINE,
+                root, 'outline.json', _json_loads(outline_json, {}), writer_schema('writing.WritingOutline'),
             )
         result = WriterDraftingTools(
             llm=None,
@@ -309,7 +313,8 @@ class WriterToolGroup:
             root, 'content_artifact.json', content_data, _infer_content_schema(content_data),
         )
         context_path = _write_input_artifact(
-            root, 'writing_context.json', _json_loads(writing_context_json, {}), SCHEMA_WRITING_CONTEXT,
+            root, 'writing_context.json', _json_loads(writing_context_json, {}),
+            writer_schema('context.WritingContext'),
         )
         result = WriterContextTools(
             llm=None,
@@ -325,10 +330,12 @@ class WriterToolGroup:
         """
         root = _temp_root()
         draft_path = _write_input_artifact(
-            root, 'draft_document.json', _json_loads(draft_document_json, {}), SCHEMA_DRAFT_DOCUMENT,
+            root, 'draft_document.json', _json_loads(draft_document_json, {}),
+            writer_schema('writing.DraftDocument'),
         )
         context_path = _write_input_artifact(
-            root, 'writing_context.json', _json_loads(writing_context_json, {}), SCHEMA_WRITING_CONTEXT,
+            root, 'writing_context.json', _json_loads(writing_context_json, {}),
+            writer_schema('context.WritingContext'),
         )
         result = WriterQualityTools(
             llm=AutoModel(model='llm'),
@@ -355,11 +362,13 @@ class WriterToolGroup:
         """
         root = _temp_root()
         draft_path = _write_input_artifact(
-            root, 'draft_document.json', _json_loads(draft_document_json, {}), SCHEMA_DRAFT_DOCUMENT,
+            root, 'draft_document.json', _json_loads(draft_document_json, {}),
+            writer_schema('writing.DraftDocument'),
         )
         _json_loads(review_report_json, {})
         context_path = _write_input_artifact(
-            root, 'writing_context.json', _json_loads(writing_context_json, {}), SCHEMA_WRITING_CONTEXT,
+            root, 'writing_context.json', _json_loads(writing_context_json, {}),
+            writer_schema('context.WritingContext'),
         )
         result = WriterDraftingTools(
             llm=None,
