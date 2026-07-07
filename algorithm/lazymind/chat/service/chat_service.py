@@ -53,6 +53,13 @@ _CITE_MESSAGE_PATTERN = re.compile(
     r'<cite_message>([\s\S]*?)</cite_message>\s*',
     re.IGNORECASE,
 )
+_STATUS_ONLY_ANSWER_PATTERN = re.compile(
+    r'^\s*(?:'
+    r'(?:正在|我(?:会|将|来)|马上|接下来|下面)(?:为你|为您|帮你|帮您|给你|给您)?.{0,80}'
+    r'|(?:I(?:\'ll| will| am going to)|Let me|I am now).{0,80}'
+    r')\s*(?:[。.!！…]|……)?\s*$',
+    re.IGNORECASE,
+)
 
 
 def _normalize_cite_message_query_for_agent(query: str) -> tuple[str, str]:
@@ -81,6 +88,15 @@ def _normalize_cite_message_query_for_agent(query: str) -> tuple[str, str]:
         f'用户本次的问题：\n{user_query}'
     ).strip()
     return user_query, agent_query
+
+
+def _is_status_only_answer(value: Any) -> bool:
+    if not isinstance(value, str):
+        return False
+    text = value.strip()
+    if not text or len(text) > 120:
+        return False
+    return bool(_STATUS_ONLY_ANSWER_PATTERN.match(text))
 
 
 def _normalize_kb_id_filter(raw_kb_id: Any) -> str | list[str] | None:
@@ -582,6 +598,21 @@ async def handle_chat(request: ChatRequest) -> Union[Dict[str, Any], StreamingRe
         stop_tools.append('ask_user')
     react_agent.set_stop_tools(stop_tools)
 
+    def _new_react_agent() -> Any:
+        agent_obj = build_react_agent(
+            llm=AutoModel(model='llm'),
+            tools=all_tools,
+            force_summarize_context=query,
+            prompt=runtime_prompt,
+            skills=agent.available_skills,
+            workspace=_cfg['agentic_workspace'],
+            keep_full_turns=_cfg['agentic_keep_full_turns'],
+            fs=FS,
+            skills_dir=_cfg['skill_fs_url'],
+        )
+        agent_obj.set_stop_tools(stop_tools)
+        return agent_obj
+
     async def event_stream() -> Any:
         final_result: Any = None
 
@@ -607,6 +638,33 @@ async def handle_chat(request: ChatRequest) -> Union[Dict[str, Any], StreamingRe
                             f'[result_type={type(payload).__name__}] [result={str(payload)[:200]}]'
                         )
                         final_result = payload
+
+                if translator.tool_call_turns == 0 and _is_status_only_answer(final_result):
+                    LOG.info(
+                        f'[ChatServer] [STATUS_ONLY_RETRY] [sid={conversation.session_id}] '
+                        f'[result={str(final_result)[:120]}]'
+                    )
+                    retry_query = (
+                        f'{agent_query}\n\n---\n\n'
+                        '## Correction\n'
+                        'Your previous final answer was only a status/progress promise. '
+                        'Do not say that you are about to write or generate content. '
+                        'Return the actual requested content directly now. '
+                        'If the user asked for a story, article, report, or draft, write the body itself.'
+                    )
+                    retry_agent = _new_react_agent()
+                    async for kind, payload in drive_agent(retry_agent, retry_query, history=agent_history):
+                        if kind == 'event':
+                            for frame in translator.feed(payload):
+                                cost = round(time.time() - start_time, 3)
+                                yield log_and_emit_frame(frame, cost, query, conversation.session_id, tag='RETRY_FEED')
+                        else:
+                            LOG.info(
+                                f'[ChatServer] [DBG_AGENT_FINAL_RETRY] [sid={conversation.session_id}] '
+                                f'[tool_call_turns={translator.tool_call_turns}] '
+                                f'[result_type={type(payload).__name__}] [result={str(payload)[:200]}]'
+                            )
+                            final_result = payload
 
             for frame in translator.finish(final_result):
                 cost = round(time.time() - start_time, 3)
