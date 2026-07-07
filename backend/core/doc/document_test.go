@@ -107,6 +107,17 @@ func TestGetSignedStaticFileSubagentPath(t *testing.T) {
 	}
 }
 
+func TestStaticFileURLFromSubagentPathUsesSubagentPrefix(t *testing.T) {
+	subRoot := t.TempDir()
+	t.Setenv("LAZYMIND_SUBAGENT_WORKSPACE", subRoot)
+
+	fullPath := filepath.Join(subRoot, "user-1", "task-1", "output.json")
+	url := StaticFileURLFromAnyStoragePath(fullPath)
+	if !strings.HasPrefix(url, "/static-files/subagent/user-1/task-1/output.json?") {
+		t.Fatalf("expected subagent static file url, got %q", url)
+	}
+}
+
 func TestAggregateDocumentsFiltersUnreadableDatasets(t *testing.T) {
 	db := newDocumentTestDB(t)
 	now := time.Date(2026, 6, 30, 10, 0, 0, 0, time.UTC)
