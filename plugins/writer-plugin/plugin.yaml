@@ -1,19 +1,24 @@
 id: writer-plugin
 name: AI Writer
 description: >
-  Compose long-form articles or technical reports. The workflow runs in six
-  steps: parse the writing intent and scope, generate an outline, plan per-
-  chapter writing instructions, draft the full text, review the draft and
-  surface revision feedback, then produce the final report. Each step supports
-  a full rerun via the state machine self-loop.
+  Compose structured long-form writing, including articles, reports, technical
+  documents, creative stories, fiction, short stories, and novel-style drafts.
+  The workflow runs in six steps: parse the writing intent and scope, generate
+  an outline, plan per-chapter writing instructions, draft the full text,
+  review the draft and surface revision feedback, then produce the final
+  document. Each step supports a full rerun via the state machine self-loop.
 
 when_to_use: >
   Invoke this plugin when the user wants to write, draft, or generate a long
-  article, report, technical document, survey, expository piece, or any other
-  structured long-form text. Typical requests include "write a report on X",
-  "help me draft a technical article on Y", "write a survey", "generate an
-  introduction to Z", or "write an article on some topic". Not suitable for
-  single-paragraph rewrites or translations.
+  article, report, technical document, survey, expository piece, story, short
+  story, fiction piece, novel chapter, or any other structured long-form text.
+  Typical requests include "write a report on X", "help me draft a technical
+  article on Y", "write a survey", "generate an introduction to Z", "write a
+  short story", "write a novel chapter", or "写一篇小说". If the writing request
+  lacks details such as length, style, audience, or plot constraints, still
+  trigger this plugin with the user's exact original request so the workflow
+  can infer sensible defaults or collect context during the writing steps. Not
+  suitable for single-paragraph rewrites or translations.
 
 steps:
   - id: build_context

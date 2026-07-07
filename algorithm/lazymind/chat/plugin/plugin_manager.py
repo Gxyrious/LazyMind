@@ -90,83 +90,6 @@ def _agentic_config() -> Dict[str, Any]:
         return {}
 
 
-def _is_plain_continue(user_input: str) -> bool:
-    text = (user_input or '').strip().lower()
-    if not text:
-        return False
-    compact = ''.join(ch for ch in text if ch not in ' \t\r\n,.!?;:，。！？；：')
-    return compact in {
-        '继续',
-        '下一步',
-        '下一个',
-        '继续生成',
-        '继续执行',
-        '继续下一步',
-        'continue',
-        'next',
-        'goon',
-        'proceed',
-    }
-
-
-def try_auto_continue_plugin_step(user_input: str) -> List[Dict[str, Any]]:
-    """Deterministically advance simple linear plugin sessions for plain continue turns.
-
-    This avoids relying on the ChatAgent to call the advancement tool when a
-    linear pipeline has exactly one next step. Non-continue turns, branching
-    nodes, and ambiguous choices still go through the LLM.
-    """
-    if not _is_plain_continue(user_input):
-        return []
-    cfg = _agentic_config()
-    plugin_id = cfg.get('plugin_id', '')
-    current_step = cfg.get('plugin_step', '')
-    if not plugin_id or not current_step:
-        return []
-    sm = plugin_loader.get_state_machine(plugin_id)
-    if not sm:
-        return []
-    raw_forward = [e.get('to') for e in sm.get_expanded_transitions(current_step)]
-    if raw_forward == ['__end__']:
-        queue = lazyllm.FileSystemQueue()
-        queue.clear()
-        _trigger_plugin_end(plugin_id)
-        events: List[Dict[str, Any]] = [
-            {'tag': 'text', 'delta': '插件流程已完成。'},
-        ]
-        for raw in queue.dequeue():
-            try:
-                event = json.loads(raw)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(event, dict):
-                events.append(event)
-        return events
-    forward = [s for s in sm.get_reachable_steps(current_step) if s not in sm._RESERVED]
-    if len(forward) != 1:
-        return []
-    target_step = forward[0]
-    target_config = plugin_loader.get_step_config(plugin_id, target_step)
-    target_label = target_config.get('label') or target_step
-
-    # We are outside StreamCallHelper here, so explicitly drain the queue events
-    # emitted by _trigger_plugin_step and return them to chat_service for SSE.
-    queue = lazyllm.FileSystemQueue()
-    queue.clear()
-    _trigger_plugin_step(plugin_id, target_step, cfg.get('query', '') or user_input, is_cold_start=False)
-    events: List[Dict[str, Any]] = [
-        {'tag': 'text', 'delta': f'正在进入「{target_label}」步骤。'},
-    ]
-    for raw in queue.dequeue():
-        try:
-            event = json.loads(raw)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(event, dict):
-            events.append(event)
-    return events
-
-
 def _render_step_objective(
     step_config: Dict[str, Any],
     user_input: str,
@@ -1036,7 +959,12 @@ def resolve_plugin_injection(
                     'internally decided is part of a larger multi-step plan. If the user\'s '
                     'request involves multiple steps and only one of those steps would use a '
                     'plugin, do NOT trigger the plugin. Never infer plugin intent from '
-                    'indirect or implicit cues.\n\n'
+                    'indirect or implicit cues.\n'
+                    'When a plugin does match the user\'s primary and direct intent, call '
+                    'the matching `trigger_<plugin>_plugin` tool before using `ask_user`. '
+                    'Do not ask clarification questions first just because optional details '
+                    'are missing; pass the user\'s exact original request to the plugin so its '
+                    'workflow can collect context or proceed with sensible defaults.\n\n'
                 ) + '\n\n---\n\n'.join(s for s in scenarios if s)
     else:
         # No plugin_context provided: still inject cold-start triggers
@@ -1055,7 +983,12 @@ def resolve_plugin_injection(
                 'internally decided is part of a larger multi-step plan. If the user\'s '
                 'request involves multiple steps and only one of those steps would use a '
                 'plugin, do NOT trigger the plugin. Never infer plugin intent from '
-                'indirect or implicit cues.\n\n'
+                'indirect or implicit cues.\n'
+                'When a plugin does match the user\'s primary and direct intent, call '
+                'the matching `trigger_<plugin>_plugin` tool before using `ask_user`. '
+                'Do not ask clarification questions first just because optional details '
+                'are missing; pass the user\'s exact original request to the plugin so its '
+                'workflow can collect context or proceed with sensible defaults.\n\n'
             ) + '\n\n---\n\n'.join(s for s in scenarios if s)
 
     return plugin_tools, plugin_system_prompt, plugin_stop_tools, agentic_config_patch, plugin_artifact_context
@@ -1122,8 +1055,9 @@ def _build_step_status_section(
         if current_step:
             lines.append(f'\nCurrent plugin step state: **{_label(current_step)}**')
             lines.append(
-                'This is the step the session is currently positioned at. '
-                'When the user says "继续", choose a step from "Next forward steps" below, not this current state.'
+                'This is the step the session is currently positioned at; it is not automatically '
+                'the next action target. If the user clearly wants to proceed and does not modify '
+                'the existing intent, choose from "Next forward steps" below.'
             )
         else:
             lines.append('\nCurrent step: pipeline not yet started')
@@ -1176,13 +1110,17 @@ def _build_mode_guidance(
         'step becomes available only AFTER `current_step` succeeds.\n'
         'Never skip steps — do not call a downstream step while an upstream step is\n'
         'still pending.\n\n'
-        '### Rule 3 — "继续" interpretation\n'
-        'When the user says "继续" (or similar) with no other context, you MUST call\n'
-        '`advance_step_and_hand_off` with the first valid target listed in\n'
-        '"Next forward steps (valid targets for continuing)" from the step-status\n'
-        'block. Do NOT reply with prose such as "正在生成..." without calling the\n'
-        'tool. Do NOT pass the current plugin step state unless it is explicitly\n'
-        'listed as a valid target.\n'
+        '### Rule 3 — Workflow advancement requests\n'
+        'If the user clearly asks to proceed with the existing plugin workflow and\n'
+        'does not add new requirements, corrections, or dissatisfaction signals,\n'
+        'you MUST advance the workflow by calling `advance_step_and_hand_off`.\n'
+        'Select the target from "Next forward steps (valid targets for continuing)"\n'
+        'in the step-status block. If multiple forward targets are listed, choose\n'
+        'the target whose transition condition best matches the current artifacts\n'
+        'and user intent; if the choice is genuinely ambiguous, ask the user.\n'
+        'Do NOT reply only with prose such as "正在生成..." without calling a tool.\n'
+        'Do NOT pass the current plugin step state unless it is explicitly listed\n'
+        'as a valid forward or rewind target.\n'
     )
     common = (
         '\n\n## Plugin execution guidance\n\n'

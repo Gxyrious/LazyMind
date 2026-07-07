@@ -2,7 +2,7 @@
 
 ## Scenario
 
-Help users compose structured long-form articles or technical reports. The workflow runs in six steps:
+Help users compose structured long-form writing, including articles, reports, technical documents, creative stories, fiction, short stories, and novel-style drafts. The workflow runs in six steps:
 
 1. **build_context** — parse the writing intent, target audience, core sub-topics, style, and factual consensus
 2. **generate_outline** — produce a structured outline based on the context
@@ -17,9 +17,10 @@ Every step supports a full rerun: when the user is unhappy with a step's result,
 
 ### Cold start (no active session)
 
-- When the user asks for long-form writing such as "write a report", "draft an article", "write a survey", or "write an introduction to X" → invoke `trigger_writer_plugin(user_input=<user's original request>)`.
+- When the user asks for structured writing such as "write a report", "draft an article", "write a survey", "write an introduction to X", "write a short story", "write a novel chapter", or "写一篇小说" → invoke `trigger_writer_plugin(user_input=<user's exact original request>)`.
 
-  `user_input` must be a concrete writing goal statement, including the topic, genre, and any length or style requirements.
+  `user_input` must preserve the user's request verbatim. Do not rewrite, expand, translate, summarize, or add inferred details before calling the trigger tool.
+  If the user does not provide all details, keep the original request intact and trigger the plugin first; the workflow can infer reasonable defaults or collect context during `build_context`.
 
 ### With an active session
 
@@ -37,7 +38,8 @@ When the user or DriverAgent indicates the problem originates from a prior step,
 
 ## Notes
 
-- For cold start, go through `trigger_writer_plugin` and pass the user's original request as `user_input`.
+- For cold start, go through `trigger_writer_plugin` and pass the user's exact original request as `user_input`.
+- Do not use `ask_user` before triggering this plugin merely to collect optional writing preferences such as length, style, audience, plot elements, or structure. Optional details belong inside the plugin workflow.
 - After a tool returns, briefly tell the user which step is currently running, for example:
   - Cold start: "Parsing your writing request, please wait…"
   - Regenerating the outline: "Regenerating the outline…"
