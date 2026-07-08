@@ -25,6 +25,7 @@ from lazymind.chat.service.component import (
     normalize_history_for_agent,
 )
 from lazymind.chat.service.component.status_retry import (
+    _new_react_agent,
     build_status_retry_query,
     is_status_only_answer,
 )
@@ -569,21 +570,6 @@ async def handle_chat(request: ChatRequest) -> Union[Dict[str, Any], StreamingRe
         stop_tools.append('ask_user')
     react_agent.set_stop_tools(stop_tools)
 
-    def _new_react_agent() -> Any:
-        agent_obj = build_react_agent(
-            llm=AutoModel(model='llm'),
-            tools=all_tools,
-            force_summarize_context=query,
-            prompt=runtime_prompt,
-            skills=agent.available_skills,
-            workspace=_cfg['agentic_workspace'],
-            keep_full_turns=_cfg['agentic_keep_full_turns'],
-            fs=FS,
-            skills_dir=_cfg['skill_fs_url'],
-        )
-        agent_obj.set_stop_tools(stop_tools)
-        return agent_obj
-
     async def event_stream() -> Any:
         final_result: Any = None
 
@@ -605,7 +591,15 @@ async def handle_chat(request: ChatRequest) -> Union[Dict[str, Any], StreamingRe
                         f'[result={str(final_result)[:120]}]'
                     )
                     retry_query = build_status_retry_query(agent_query)
-                    retry_agent = _new_react_agent()
+                    retry_agent = _new_react_agent(
+                        all_tools=all_tools,
+                        query=query,
+                        runtime_prompt=runtime_prompt,
+                        agent=agent,
+                        config=_cfg,
+                        fs=FS,
+                        stop_tools=stop_tools,
+                    )
                     async for kind, payload in drive_agent(retry_agent, retry_query, history=agent_history):
                         if kind == 'event':
                             for frame in translator.feed(payload):

@@ -3,6 +3,10 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from lazyllm import AutoModel
+
+from lazymind.chat.engine.agent_core import build_react_agent
+
 
 # Temporary guardrail for a known model behavior: sometimes the chat agent
 # returns only a short progress promise such as "I will write it now" without
@@ -35,3 +39,28 @@ def build_status_retry_query(agent_query: str) -> str:
         'Return the actual requested content directly now. '
         'If the user asked for a story, article, report, or draft, write the body itself.'
     )
+
+
+def _new_react_agent(
+    *,
+    all_tools: list[Any],
+    query: str,
+    runtime_prompt: str,
+    agent: Any,
+    config: Any,
+    fs: Any,
+    stop_tools: list[str],
+) -> Any:
+    agent_obj = build_react_agent(
+        llm=AutoModel(model='llm'),
+        tools=all_tools,
+        force_summarize_context=query,
+        prompt=runtime_prompt,
+        skills=agent.available_skills,
+        workspace=config['agentic_workspace'],
+        keep_full_turns=config['agentic_keep_full_turns'],
+        fs=fs,
+        skills_dir=config['skill_fs_url'],
+    )
+    agent_obj.set_stop_tools(stop_tools)
+    return agent_obj
