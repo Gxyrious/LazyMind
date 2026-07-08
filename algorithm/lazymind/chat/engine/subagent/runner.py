@@ -76,23 +76,7 @@ def _resolve_plugin_step_tools(params: Dict[str, Any]) -> Optional[List[str]]:
         if _loader.get_plugin(plugin_id) is None:
             return None
         declared: List[str] = step_config.get('tools', [])
-        # Framework tools are always available unless the step explicitly
-        # excludes them via state.yml's `exclude_framework_tools` list.
-        # Mirror _merge_tools from plugin_manager: prepend framework tools.
-        _FRAMEWORK_TOOLS = [
-            'save_artifact', 'get_artifact', 'list_artifacts',
-            'list_knowledge_bases', 'read_user_attachment', 'find_user_attachment',
-            'find_artifact', 'patch_artifact', 'discard_draft',
-        ]
-        excluded = set(step_config.get('exclude_framework_tools', []) or [])
-        framework_tools = [t for t in _FRAMEWORK_TOOLS if t not in excluded]
-        seen: set = set()
-        merged: List[str] = []
-        for t in framework_tools + list(declared):
-            if t not in seen:
-                seen.add(t)
-                merged.append(t)
-        return merged
+        return list(declared)
     except Exception as exc:
         LOG.warning(f'[SubAgent] _resolve_plugin_step_tools failed: {exc}')
         return None
@@ -144,14 +128,14 @@ def _resolve_runtime_tools(explicit: Optional[List[str]], plugin_id: Optional[st
     return build_agent_tools(list(DEFAULT_TOOLS))
 
 
-def _build_subagent_tools(extra_tools: Optional[List[Any]],
-                          excluded: Optional[set] = None) -> List[Any]:
-    """Combine SubAgent infra tools with optional domain tools.
+def _build_subagent_tools(extra_tools: Optional[List[Any]]) -> List[Any]:
+    """Combine mandatory SubAgent infra tools with optional domain tools.
 
-    The base set (save_artifact, get_artifact, ...) is always available unless a
-    step explicitly excludes some via state.yml's `exclude_framework_tools` list.
+    save_artifact, get_artifact, list_artifacts, list_knowledge_bases,
+    read_user_attachment, and find_user_attachment are always included regardless of
+    the explicit tools list — they are the SubAgent's core interface and must never
+    be stripped by plugin tool configurations.
     """
-    excluded = excluded or set()
     base = [
         subagent_tools.save_artifact,
         subagent_tools.get_artifact,
@@ -163,26 +147,9 @@ def _build_subagent_tools(extra_tools: Optional[List[Any]],
         subagent_tools.patch_artifact,
         subagent_tools.discard_draft,
     ]
-    base = [t for t in base if t.__name__ not in excluded]
     if extra_tools:
         base.extend(extra_tools)
     return base
-
-
-def _resolve_excluded_framework_tools(params: Dict[str, Any]) -> set:
-    """Read `exclude_framework_tools` from the step's state.yml config."""
-    try:
-        from lazymind.chat.plugin import plugin_loader as _loader
-        plugin_id: str = params.get('plugin_id', '')
-        step_id: str = params.get('step_id', '')
-        if not plugin_id or not step_id:
-            return set()
-        step_config = _loader.get_step_config(plugin_id, step_id)
-        if not step_config:
-            return set()
-        return set(step_config.get('exclude_framework_tools', []) or [])
-    except Exception:
-        return set()
 
 
 _ZH_RE = re.compile('[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]')
@@ -569,10 +536,9 @@ async def run_subagent_stream(
 
         llm = AutoModel(model='llm')
         runtime_tools = _resolve_runtime_tools(tools, plugin_id=params.get('plugin_id') or None)
-        excluded = _resolve_excluded_framework_tools(params)
         agent = build_react_agent(
             llm=llm,
-            tools=_build_subagent_tools(runtime_tools, excluded=excluded),
+            tools=_build_subagent_tools(runtime_tools),
             force_summarize_context=ctx.objective,
             extra_stop_condition=_make_cancel_stop_condition(),
         )

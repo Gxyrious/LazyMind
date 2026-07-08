@@ -70,9 +70,6 @@ steps:
     tools:
       - writer_generate_outline
       - writer_update_writing_context
-    exclude_framework_tools:
-      - read_user_attachment
-      - find_user_attachment
     inputs:
       - slot: writing_task
         required: true
@@ -96,9 +93,6 @@ steps:
       If any of the above tool calls fails, do not perform any extra fallback — stop the step immediately. In particular, do not write content yourself to persist.
     tools:
       - writer_generate_section_instructions
-    exclude_framework_tools:
-      - read_user_attachment
-      - find_user_attachment
     inputs:
       - slot: outline
         required: true
@@ -133,9 +127,6 @@ steps:
       - writer_generate_draft_section
       - writer_assemble_draft_document
       - writer_update_writing_context
-    exclude_framework_tools:
-      - read_user_attachment
-      - find_user_attachment
     inputs:
       - slot: writing_task
         required: true
@@ -164,9 +155,6 @@ steps:
       If any of the above tool calls fails, stop the step and preserve the tool error message for outer-layer retry handling.
     tools:
       - writer_check_consistency
-    exclude_framework_tools:
-      - read_user_attachment
-      - find_user_attachment
     inputs:
       - slot: draft_document
         required: true
@@ -190,9 +178,6 @@ steps:
       If any of the above tool calls fails, stop the step and preserve the tool error message for outer-layer retry handling.
     tools:
       - writer_generate_writing_output
-    exclude_framework_tools:
-      - read_user_attachment
-      - find_user_attachment
     inputs:
       - slot: draft_document
         required: true
