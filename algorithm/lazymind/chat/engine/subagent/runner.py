@@ -286,7 +286,7 @@ def _objective_prompt(ctx: SubAgentContext, db: Optional['SubAgentDB'] = None) -
         'Only use the tools explicitly listed in your tool set.',
     ]
     if is_zh:
-        lines.append('You MUST respond in Simplified Chinese(简体中文).')
+        lines.append('You MUST respond and write all artifact content in Simplified Chinese(简体中文).')
     lines += [
         '',
         f'Objective: {ctx.objective}',

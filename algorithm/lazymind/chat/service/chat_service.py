@@ -24,6 +24,10 @@ from lazymind.chat.service.component import (
     filter_tools,
     normalize_history_for_agent,
 )
+from lazymind.chat.service.component.status_retry import (
+    build_status_retry_query,
+    is_status_only_answer,
+)
 from lazymind.chat.engine.agent_core import build_react_agent, drive_agent
 from lazymind.chat.service.utils import (
     SensitiveFilter,
@@ -51,13 +55,6 @@ sensitive_filter = SensitiveFilter(SENSITIVE_WORDS_PATH)
 _active_sessions: dict[str, str] = {}
 _CITE_MESSAGE_PATTERN = re.compile(
     r'<cite_message>([\s\S]*?)</cite_message>\s*',
-    re.IGNORECASE,
-)
-_STATUS_ONLY_ANSWER_PATTERN = re.compile(
-    r'^\s*(?:'
-    r'(?:正在|我(?:会|将|来)|马上|接下来|下面)(?:为你|为您|帮你|帮您|给你|给您)?.{0,80}'
-    r'|(?:I(?:\'ll| will| am going to)|Let me|I am now).{0,80}'
-    r')\s*(?:[。.!！…]|……)?\s*$',
     re.IGNORECASE,
 )
 
@@ -88,15 +85,6 @@ def _normalize_cite_message_query_for_agent(query: str) -> tuple[str, str]:
         f'用户本次的问题：\n{user_query}'
     ).strip()
     return user_query, agent_query
-
-
-def _is_status_only_answer(value: Any) -> bool:
-    if not isinstance(value, str):
-        return False
-    text = value.strip()
-    if not text or len(text) > 120:
-        return False
-    return bool(_STATUS_ONLY_ANSWER_PATTERN.match(text))
 
 
 def _normalize_kb_id_filter(raw_kb_id: Any) -> str | list[str] | None:
@@ -611,19 +599,12 @@ async def handle_chat(request: ChatRequest) -> Union[Dict[str, Any], StreamingRe
                         # if future.result() raised, drive_agent propagated it before yielding.
                         final_result = payload
 
-                if translator.tool_call_turns == 0 and _is_status_only_answer(final_result):
+                if translator.tool_call_turns == 0 and is_status_only_answer(final_result):
                     LOG.info(
                         f'[ChatServer] [STATUS_ONLY_RETRY] [sid={conversation.session_id}] '
                         f'[result={str(final_result)[:120]}]'
                     )
-                    retry_query = (
-                        f'{agent_query}\n\n---\n\n'
-                        '## Correction\n'
-                        'Your previous final answer was only a status/progress promise. '
-                        'Do not say that you are about to write or generate content. '
-                        'Return the actual requested content directly now. '
-                        'If the user asked for a story, article, report, or draft, write the body itself.'
-                    )
+                    retry_query = build_status_retry_query(agent_query)
                     retry_agent = _new_react_agent()
                     async for kind, payload in drive_agent(retry_agent, retry_query, history=agent_history):
                         if kind == 'event':
