@@ -225,7 +225,7 @@ steps:
 
       This step reviews the draft for consistency and quality. Call get_artifact to retrieve the file paths of writing_context and draft_document, then call writer_check_consistency(draft_path=<draft_document path>, writing_context_path=<writing_context path>). The tool returns review_report (the absolute path of the review_report artifact file) and review_summary (the content summary string produced by validate_draft_document — not a path). Call save_artifact(content_type='file', key='review_report', value=<review_report path>) and save_artifact(content_type='text', key='review_summary', value=<review_summary content>) separately to persist them.
 
-      The content of review_summary decides next_step: if the review passes, advance to finalize_report to produce the final report; if it fails, rewind to plan_sections to replan the sections. The final message of this step must follow this format: "Since {{review_summary}}, recommend advancing the next step to {{next_step}}."
+      When review_summary indicates the review passed, advance to finalize_report. When it indicates the review failed, you must rewind to plan_sections and replan. Do not advance to finalize_report if the review failed. The final message must state the verdict and next step as "Review {{PASSED|FAILED}}. {{review_summary}}. Next step {{next_step}}."
 
       If any of the above tool calls fails, stop the step and preserve the tool error message for outer-layer retry handling.
     tools:
