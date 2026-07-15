@@ -32,7 +32,6 @@ class ChatRuntimeOptions(BaseModel):
     debug: Optional[bool] = False
     reasoning: Optional[bool] = False
     priority: Optional[int] = None
-    trace: Optional[bool] = False
     environment_context: Optional[Dict[str, Any]] = None
     llm_config: Optional[Dict[str, Any]] = None
     ocr_config: Optional[Dict[str, Any]] = None

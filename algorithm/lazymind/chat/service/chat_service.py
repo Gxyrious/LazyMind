@@ -544,8 +544,7 @@ async def handle_chat(request: ChatRequest) -> Union[Dict[str, Any], StreamingRe
     all_tools = (agent_tools + subagent_tools + attachment_tools
                  + schedule_tools + ask_user_tools + plugin_tools + mcp_tools)
     set_trace_context({
-        'enabled': bool(runtime.trace),
-        'trace_id': conversation.session_id if runtime.trace else None,
+        'trace_id': conversation.session_id,
         'session_id': conversation.session_id,
         'sampled': True,
         'module_trace': {'default': True},
