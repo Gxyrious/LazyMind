@@ -167,6 +167,10 @@ def _submit_transition_to_core(
         'preflight_id': preflight_id,
         'external_materials': cfg.get('plugin_external_materials') or {},
     }
+    trace_context = lazyllm.get_trace_context()
+    if trace_context.trace_id and trace_context.parent_span_id:
+        payload['trace_id'] = trace_context.trace_id
+        payload['parent_span_id'] = trace_context.parent_span_id
     if targets:
         payload['targets'] = targets
     endpoint = (
