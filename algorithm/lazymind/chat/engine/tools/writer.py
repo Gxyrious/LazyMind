@@ -409,23 +409,24 @@ class WriterToolkitBase:
         document = WriterDocument.model_validate(
             _json_loads(source_document_json, {}),
         )
-        for block in document.blocks:
-            if block.type != 'paragraph':
-                continue
-            lines = [line.strip() for line in block.content.splitlines() if line.strip()]
-            if not lines:
-                continue
-            block.type = 'heading'
-            block.content = lines[0]
-            block.spans = []
-            block.numbering['level'] = 1
-            if len(lines) > 1:
-                block.children.insert(0, WriterBlock(
-                    node_id=f'{block.node_id}-description',
-                    type='paragraph',
-                    content='\n'.join(lines[1:]),
-                    stage='outline',
-                ))
+        if not any(block.type == 'heading' for block in document.blocks):
+            for block in document.blocks:
+                if block.type != 'paragraph':
+                    continue
+                lines = [line.strip() for line in block.content.splitlines() if line.strip()]
+                if not lines:
+                    continue
+                block.type = 'heading'
+                block.content = lines[0]
+                block.spans = []
+                block.numbering['level'] = 1
+                if len(lines) > 1:
+                    block.children.insert(0, WriterBlock(
+                        node_id=f'{block.node_id}-description',
+                        type='paragraph',
+                        content='\n'.join(lines[1:]),
+                        stage='outline',
+                    ))
         return _set_document_editable(
             document, stage='outline',
         ).model_dump_json(exclude_defaults=True)
