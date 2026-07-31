@@ -32,7 +32,7 @@ from lazyllm.tools.writer.utils import render_document_markdown, save_artifact_j
 WRITER_DATA_MODEL_SCHEMA_PREFIX = 'lazyllm.tools.writer.data_models'
 _FEISHU_URL_RE = re.compile(
     r"https?://[^\s<>\"']*(?:feishu\.(?:cn|com)|larksuite\.com)/"
-    r"[^\s<>\"'，。；！？、）】》」』]+",
+    r"[^\s<>\"'，。；！？、（）【】《》「」『』]+",
     re.IGNORECASE,
 )
 
