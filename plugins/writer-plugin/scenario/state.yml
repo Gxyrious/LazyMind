@@ -70,8 +70,8 @@ steps:
          user_input, source_ir_path when present, and knowledge_text when KB evidence was
          retrieved. Save resource_profiles.
       5. Call writer_create_writing_context with writing_task_path,
-         resource_profiles_path, and source_ir_path when present. Save writing_context
-         and context_ir.
+         resource_profiles_path, and source_ir_path when present. Save its returned path
+         as writing_context.
 
       source_ir and target_document are optional because a from-scratch request has no
       cloud source. Do not invent either artifact. If a required tool fails, stop without
@@ -95,13 +95,12 @@ steps:
       - material: writing_task
       - material: resource_profiles
       - material: writing_context
-      - material: context_ir
       - material: source_ir
         required: false
       - material: target_document
         required: false
     acceptance_criteria: |
-      writing_task, resource_profiles, writing_context, and context_ir are present.
+      writing_task, resource_profiles, and writing_context are present.
       When a Feishu/Lark source was required, source_ir and target_document are also present.
 
   outline:
@@ -220,12 +219,14 @@ steps:
 
          1. Call writer_generate_section_instructions using the latest outline_ir and
             writing_context_after_outline. Save section_instructions and section_plan_ir.
-         2. Call writer_generate_draft_blocks once with writing_task,
+         2. Call writer_generate_draft_blocks_markdown once with writing_task,
             section_instructions, and writing_context_after_outline. It returns every
-            generated block path in order. Save all returned paths as the ordered
-            draft_blocks list, preferably in one save_artifacts call.
-         3. Call writer_generate_draft_document using the last block path, current
-            context, and outline. Save draft_document.
+            generated Markdown section path in order. Save each returned path as a separate
+            draft_blocks entry with content_type="file", preserving order in one
+            save_artifacts call. Never stringify the path list or save the whole list as one
+            content_type="file" entry.
+         3. Call writer_generate_draft_document_markdown using the last section path,
+            current context, and outline. Save draft_document and draft_document_md.
          4. Call writer_update_writing_context using draft_document and save
             writing_context_after_draft.
          5. Call writer_generate_final_document using draft_document and
@@ -262,8 +263,8 @@ steps:
       retried within that same mode.
     tools:
       - writer_generate_section_instructions
-      - writer_generate_draft_blocks
-      - writer_generate_draft_document
+      - writer_generate_draft_blocks_markdown
+      - writer_generate_draft_document_markdown
       - writer_update_writing_context
       - writer_generate_final_document
       - writer_build_revision_task
@@ -292,6 +293,8 @@ steps:
       - material: draft_blocks
         required: false
       - material: draft_document
+        required: false
+      - material: draft_document_md
         required: false
       - material: final_document_md
         required: false

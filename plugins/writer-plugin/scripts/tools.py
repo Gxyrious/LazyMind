@@ -60,6 +60,13 @@ def _json_loads(value: str, default: Any = None) -> Any:
     return parsed
 
 
+def _editable_writer_json(value: str | dict) -> str:
+    """Mark a public WriterDocument editable at the plugin boundary."""
+    payload = _json_loads(value, {}) if isinstance(value, str) else dict(value or {})
+    payload['ui_editable'] = True
+    return json.dumps(payload, ensure_ascii=False)
+
+
 def _save_json_artifact(
     name: str,
     content_json: str,
@@ -69,9 +76,17 @@ def _save_json_artifact(
 ) -> str:
     root = directory or _workspace_root()
     root.mkdir(parents=True, exist_ok=True)
+    extension = (
+        '.lmd'
+        if schema_name in {
+            WriterToolkitBase.WRITER_IR_SCHEMA,
+            WriterToolkitBase.WRITER_BLOCK_SCHEMA,
+        }
+        else '.json'
+    )
     return save_artifact_json(
         _json_loads(content_json, {}),
-        str(root / f'{name}.json'),
+        str(root / f'{name}{extension}'),
         schema_name=schema_name,
         created_by='writer-plugin-wrapper',
     )
@@ -92,7 +107,7 @@ def _save_publish_payload(payload: dict, root: Path) -> dict:
         ),
         'published_document': _save_json_artifact(
             'published_document',
-            json.dumps(payload.get('published_document') or {}, ensure_ascii=False),
+            _editable_writer_json(payload.get('published_document') or {}),
             WriterToolkitBase.WRITER_IR_SCHEMA,
             directory=root,
         ),
@@ -160,25 +175,16 @@ def writer_create_writing_context(
     writing_task_path: str,
     resource_profiles_path: str,
     source_ir_path: str = '',
-) -> dict:
+) -> str:
     """Create WritingContext, optionally incorporating an existing WriterDocument."""
     content = WriterCreateToolkit().create_writing_context(
         writing_task_json=_read_json_string(writing_task_path),
         resource_profiles_json=_read_json_string(resource_profiles_path),
         writer_document_json=_read_json_string(source_ir_path) if source_ir_path else '',
     )
-    return {
-        'writing_context': _save_json_artifact(
-            'writing_context', content, writer_schema('context.WritingContext'),
-        ),
-        'context_ir': _save_json_artifact(
-            'context_ir',
-            build_writer_status_ir(
-                'context_ready', '已成功构造写作上下文', source='writer-plugin',
-            ),
-            WriterToolkitBase.WRITER_IR_SCHEMA,
-        ),
-    }
+    return _save_json_artifact(
+        'writing_context', content, writer_schema('context.WritingContext'),
+    )
 
 
 def writer_prepare_outline(source_ir_path: str) -> str:
@@ -186,7 +192,9 @@ def writer_prepare_outline(source_ir_path: str) -> str:
     content = WriterCreateToolkit().prepare_outline(
         source_document_json=_read_json_string(source_ir_path),
     )
-    return _save_json_artifact('outline_ir', content, WriterToolkitBase.WRITER_IR_SCHEMA)
+    return _save_json_artifact(
+        'outline_ir', _editable_writer_json(content), WriterToolkitBase.WRITER_IR_SCHEMA,
+    )
 
 
 def writer_generate_outline(writing_task_path: str, writing_context_path: str) -> str:
@@ -196,7 +204,7 @@ def writer_generate_outline(writing_task_path: str, writing_context_path: str) -
         writing_context_json=_read_json_string(writing_context_path),
     )
     return _save_json_artifact(
-        'outline_ir', generated, WriterToolkitBase.WRITER_IR_SCHEMA,
+        'outline_ir', _editable_writer_json(generated), WriterToolkitBase.WRITER_IR_SCHEMA,
     )
 
 
@@ -248,6 +256,26 @@ def writer_generate_draft_blocks(
     ]
 
 
+def writer_generate_draft_blocks_markdown(
+    writing_task_path: str,
+    section_instructions_path: str,
+    writing_context_path: str,
+) -> list[str]:
+    """Generate and persist all planned draft sections as Markdown."""
+    sections = _json_loads(WriterCreateToolkit().generate_draft_blocks_markdown(
+        writing_task_json=_read_json_string(writing_task_path),
+        section_instructions_json=_read_json_string(section_instructions_path),
+        writing_context_json=_read_json_string(writing_context_path),
+    ), [])
+    root = _run_root('draft-sections-markdown')
+    paths = []
+    for index, section in enumerate(sections, start=1):
+        path = root / f'draft_section_{index:04d}.md'
+        path.write_text(str(section), encoding='utf-8')
+        paths.append(str(path))
+    return paths
+
+
 def writer_generate_draft_document(
     draft_blocks_anchor_path: str,
     writing_context_path: str,
@@ -260,7 +288,7 @@ def writer_generate_draft_document(
     )
     draft_blocks_dir = anchor if anchor.is_dir() else anchor.parent
     draft_block_paths = sorted(
-        (str(path) for path in draft_blocks_dir.glob('draft_block_*.json')),
+        (str(path) for path in draft_blocks_dir.glob('draft_block_*.lmd')),
         key=lambda path: int(Path(path).stem.rsplit('_', 1)[-1]),
     )
     if not draft_block_paths:
@@ -275,6 +303,45 @@ def writer_generate_draft_document(
         outline_json=_read_json_string(outline_path) if outline_path else '',
     )
     return _save_json_artifact('draft_document', content, WriterToolkitBase.WRITER_IR_SCHEMA)
+
+
+def writer_generate_draft_document_markdown(
+    draft_sections_anchor_path: str,
+    writing_context_path: str,
+    outline_path: str = '',
+) -> dict:
+    """Assemble Markdown sections, then convert the complete draft once to IR."""
+    anchor = (
+        Path(draft_sections_anchor_path)
+        if draft_sections_anchor_path else _workspace_root() / 'draft_sections'
+    )
+    sections_dir = anchor if anchor.is_dir() else anchor.parent
+    section_paths = sorted(
+        sections_dir.glob('draft_section_*.md'),
+        key=lambda path: int(path.stem.rsplit('_', 1)[-1]),
+    )
+    if not section_paths:
+        raise ValueError(
+            'draft_sections_anchor_path must point to a generated Markdown section or directory.',
+        )
+    sections = [path.read_text(encoding='utf-8') for path in section_paths]
+    payload = _json_loads(WriterCreateToolkit().generate_draft_document_markdown(
+        draft_sections_json=json.dumps(sections, ensure_ascii=False),
+        writing_context_json=_read_json_string(writing_context_path),
+        outline_json=_read_json_string(outline_path) if outline_path else '',
+    ), {})
+    root = _run_root('draft-document-markdown')
+    markdown_path = root / 'draft_document.md'
+    markdown_path.write_text(str(payload.get('draft_document_md') or ''), encoding='utf-8')
+    return {
+        'draft_document': _save_json_artifact(
+            'draft_document_ir',
+            _editable_writer_json(payload.get('draft_document') or {}),
+            WriterToolkitBase.WRITER_IR_SCHEMA,
+            directory=root,
+        ),
+        'draft_document_md': str(markdown_path),
+    }
 
 
 def writer_update_writing_context(
@@ -295,7 +362,7 @@ def writer_generate_final_document(
     draft_path: str,
     writing_context_path: str,
 ) -> dict:
-    """Generate an editable final WriterDocument and its Markdown artifact."""
+    """Generate final artifacts from a draft WriterDocument IR (.lmd), not Markdown."""
     content = WriterCreateToolkit().generate_final_document(
         draft_document_json=_read_json_string(draft_path),
         writing_context_json=_read_json_string(writing_context_path),
@@ -303,7 +370,7 @@ def writer_generate_final_document(
     payload = _json_loads(content, {})
     final_document_path = _save_json_artifact(
         'final_document_ir',
-        json.dumps(payload.get('final_document') or {}, ensure_ascii=False),
+        _editable_writer_json(payload.get('final_document') or {}),
         WriterToolkitBase.WRITER_IR_SCHEMA,
     )
     markdown_path = _workspace_root() / 'final_document.md'
@@ -416,7 +483,7 @@ def writer_apply_revision(
         ),
         'revised_ir': _save_json_artifact(
             'revised_ir',
-            json.dumps(payload.get('revised_document') or {}, ensure_ascii=False),
+            _editable_writer_json(payload.get('revised_document') or {}),
             WriterToolkitBase.WRITER_IR_SCHEMA,
             directory=root,
         ),

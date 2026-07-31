@@ -330,7 +330,10 @@ _COLD_START_PLUGIN_PROMPT = (
     "internally decided is part of a larger multi-step plan. If the user's "
     'request involves multiple steps and only one of those steps would use a '
     'workflow, do NOT trigger the workflow. Never infer workflow intent from '
-    'indirect or implicit cues.\n'
+    'indirect or implicit cues. A user request that directly matches a workflow\'s '
+    '`when_to_use` description is itself a PRIMARY and DIRECT intent; the user does '
+    'not need to know or name the workflow. In that case, use the workflow instead '
+    'of producing the workflow\'s final deliverable directly in chat.\n'
     'When a workflow matches, call its `trigger_<workflow>` preflight tool. Trigger does NOT '
     'start a task. It loads the full workflow and returns ready, need_information, '
     'not_applicable, or preflight_failed.\n'
@@ -1522,8 +1525,19 @@ def build_advance_step_and_hand_off_tool(
         include_default_approval=include_approval_guidance,
     )
 
-    def advance_step_and_hand_off(steps: List[Dict[str, Any]]) -> str:
+    def advance_step_and_hand_off(
+        steps: Optional[List[Dict[str, Any]]] = None,
+        step_id: str = '',
+        user_input: str = '',
+        runtime_instruction: str = '',
+    ) -> str:
         """Start one or more Ready steps and end the current ReAct turn."""
+        if not steps and step_id:
+            steps = [{
+                'step_id': step_id,
+                'user_input': user_input,
+                'runtime_instruction': runtime_instruction,
+            }]
         if not isinstance(steps, list) or not steps:
             raise ValueError('steps must contain at least one step command.')
         if len(steps) > 1:
@@ -1586,10 +1600,32 @@ def build_advance_step_tool(
         current_step=current_step if current_step in snapshot.retry_steps else '',
     )
 
-    def advance_step(steps: List[Dict[str, Any]]) -> str:
+    def advance_step(
+        steps: Optional[List[Dict[str, Any]]] = None,
+        step_id: str = '',
+        user_input: str = '',
+        runtime_instruction: str = '',
+    ) -> str:
         """Start one or more Ready steps and wait for their results."""
+        if not steps and step_id:
+            steps = [{
+                'step_id': step_id,
+                'user_input': user_input,
+                'runtime_instruction': runtime_instruction,
+            }]
         if not isinstance(steps, list) or not steps:
             raise ValueError('steps must contain at least one step command.')
+        if any(
+            isinstance(command, dict)
+            and plugin_loader.get_step_mode(
+                plugin_id, str(command.get('step_id') or '')
+            ) == 'human'
+            for command in steps
+        ):
+            raise ValueError(
+                'Steps with default approval required must use '
+                'advance_step_and_hand_off.'
+            )
         if len(steps) > 1:
             submission = _trigger_plugin_steps(plugin_id, steps, hand_off=False)
             if not submission.accepted:
@@ -2347,7 +2383,7 @@ def _build_mode_guidance(
         '    than what the current artifacts reflect.\n'
         'If intent has changed, identify the EARLIEST step whose output is now\n'
         'invalidated and select that step again using `advance_step_and_hand_off` with\n'
-        '`step_id=<affected_step>`. The backend clears affected artifacts and determines\n'
+        '`steps=[{"step_id": "<affected_step>"}]`. The backend clears affected artifacts and determines\n'
         'the lifecycle operation automatically. Do NOT continue to the next forward step.\n\n'
         '### Rule 2 — DAG frontier and atomic batching\n'
         'The authoritative Ready list is the only forward execution frontier. Never infer\n'
