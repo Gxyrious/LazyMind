@@ -629,7 +629,10 @@ async def run_subagent_stream(
         lazyllm.set_trace_context({
             'trace_id': params.get('trace_id') or None,
             'parent_span_id': params.get('parent_span_id') or None,
-            'session_id': params.get('session_id') or params.get('chat_session_id') or None,
+            'session_id': (
+                params.get('session_id') or params.get('chat_session_id')
+                or lazyllm.get_trace_context().session_id
+            ),
             'sampled': True, 'request_tags': ['subagent'],
             'module_trace': {
                 'by_class': {
