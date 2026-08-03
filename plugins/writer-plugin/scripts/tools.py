@@ -12,6 +12,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from lazyllm.tools.writer.data_models import WriterDocument
 from lazyllm.tools.writer.utils import save_artifact_json
 
 from lazymind.chat.engine.subagent.context import require_context
@@ -60,11 +61,26 @@ def _json_loads(value: str, default: Any = None) -> Any:
     return parsed
 
 
-def _editable_writer_json(value: str | dict) -> str:
-    """Mark a public WriterDocument editable at the plugin boundary."""
+def _writer_document_json(
+    value: str | dict,
+    *,
+    expected_stage: str | None = None,
+    editable: bool = False,
+) -> str:
+    """Validate and normalize a WriterDocument before it leaves the writer plugin."""
     payload = _json_loads(value, {}) if isinstance(value, str) else dict(value or {})
-    payload['ui_editable'] = True
-    return json.dumps(payload, ensure_ascii=False)
+    document = WriterDocument.model_validate(payload)
+    if expected_stage is not None and document.stage != expected_stage:
+        raise ValueError(
+            f'WriterDocument must have stage={expected_stage!r}; got {document.stage!r}.',
+        )
+    if document.metadata.get('kind') == 'step_status':
+        raise ValueError('A writer status placeholder cannot be used as a document artifact.')
+    if expected_stage == 'outline' and len(document.blocks) < 3:
+        raise ValueError('An outline WriterDocument must contain at least three top-level blocks.')
+    if editable:
+        document.ui_editable = True
+    return document.model_dump_json(exclude_defaults=True)
 
 
 def _save_json_artifact(
@@ -92,6 +108,27 @@ def _save_json_artifact(
     )
 
 
+def _save_writer_document(
+    name: str,
+    value: str | dict,
+    *,
+    expected_stage: str | None = None,
+    editable: bool = False,
+    directory: Path | None = None,
+) -> str:
+    """Persist a schema-valid WriterDocument as a .lmd artifact."""
+    return _save_json_artifact(
+        name,
+        _writer_document_json(
+            value,
+            expected_stage=expected_stage,
+            editable=editable,
+        ),
+        WriterToolkitBase.WRITER_IR_SCHEMA,
+        directory=directory,
+    )
+
+
 def _markdown_filename(title: str) -> str:
     filename = re.sub(r'[\\/:*?"<>|\x00-\x1f]+', '_', title).strip(' ._')
     return f'{filename[:80] or "文稿"}.md'
@@ -105,10 +142,10 @@ def _save_publish_payload(payload: dict, root: Path) -> dict:
             writer_schema('revision.PatchResult'),
             directory=root,
         ),
-        'published_document': _save_json_artifact(
+        'published_document': _save_writer_document(
             'published_document',
-            _editable_writer_json(payload.get('published_document') or {}),
-            WriterToolkitBase.WRITER_IR_SCHEMA,
+            payload.get('published_document') or {},
+            editable=True,
             directory=root,
         ),
         'published_link': str(payload.get('published_link') or ''),
@@ -129,10 +166,10 @@ def writer_load_document(user_input: str, stage: str = 'final') -> dict:
         {},
     )
     return {
-        'source_ir': _save_json_artifact(
+        'source_ir': _save_writer_document(
             'source_ir',
-            json.dumps(payload.get('source_document') or {}, ensure_ascii=False),
-            WriterToolkitBase.WRITER_IR_SCHEMA,
+            payload.get('source_document') or {},
+            expected_stage=stage,
             directory=root,
         ),
         'target_document': _save_json_artifact(
@@ -192,8 +229,8 @@ def writer_prepare_outline(source_ir_path: str) -> str:
     content = WriterCreateToolkit().prepare_outline(
         source_document_json=_read_json_string(source_ir_path),
     )
-    return _save_json_artifact(
-        'outline_ir', _editable_writer_json(content), WriterToolkitBase.WRITER_IR_SCHEMA,
+    return _save_writer_document(
+        'outline_ir', content, expected_stage='outline', editable=True,
     )
 
 
@@ -203,8 +240,8 @@ def writer_generate_outline(writing_task_path: str, writing_context_path: str) -
         writing_task_json=_read_json_string(writing_task_path),
         writing_context_json=_read_json_string(writing_context_path),
     )
-    return _save_json_artifact(
-        'outline_ir', _editable_writer_json(generated), WriterToolkitBase.WRITER_IR_SCHEMA,
+    return _save_writer_document(
+        'outline_ir', generated, expected_stage='outline', editable=True,
     )
 
 
@@ -302,7 +339,9 @@ def writer_generate_draft_document(
         writing_context_json=_read_json_string(writing_context_path),
         outline_json=_read_json_string(outline_path) if outline_path else '',
     )
-    return _save_json_artifact('draft_document', content, WriterToolkitBase.WRITER_IR_SCHEMA)
+    return _save_writer_document(
+        'draft_document', content, expected_stage='draft', editable=True,
+    )
 
 
 def writer_generate_draft_document_markdown(
@@ -334,10 +373,11 @@ def writer_generate_draft_document_markdown(
     markdown_path = root / 'draft_document.md'
     markdown_path.write_text(str(payload.get('draft_document_md') or ''), encoding='utf-8')
     return {
-        'draft_document': _save_json_artifact(
+        'draft_document': _save_writer_document(
             'draft_document_ir',
-            _editable_writer_json(payload.get('draft_document') or {}),
-            WriterToolkitBase.WRITER_IR_SCHEMA,
+            payload.get('draft_document') or {},
+            expected_stage='draft',
+            editable=True,
             directory=root,
         ),
         'draft_document_md': str(markdown_path),
@@ -368,10 +408,11 @@ def writer_generate_final_document(
         writing_context_json=_read_json_string(writing_context_path),
     )
     payload = _json_loads(content, {})
-    final_document_path = _save_json_artifact(
+    final_document_path = _save_writer_document(
         'final_document_ir',
-        _editable_writer_json(payload.get('final_document') or {}),
-        WriterToolkitBase.WRITER_IR_SCHEMA,
+        payload.get('final_document') or {},
+        expected_stage='final',
+        editable=True,
     )
     markdown_path = _workspace_root() / 'final_document.md'
     markdown_path.write_text(str(payload.get('final_document_md') or ''), encoding='utf-8')
@@ -481,10 +522,11 @@ def writer_apply_revision(
             writer_schema('revision.PatchResult'),
             directory=root,
         ),
-        'revised_ir': _save_json_artifact(
+        'revised_ir': _save_writer_document(
             'revised_ir',
-            _editable_writer_json(payload.get('revised_document') or {}),
-            WriterToolkitBase.WRITER_IR_SCHEMA,
+            payload.get('revised_document') or {},
+            expected_stage='final' if is_body_step else 'outline',
+            editable=True,
             directory=root,
         ),
         'write_result': '',

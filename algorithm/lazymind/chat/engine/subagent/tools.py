@@ -30,18 +30,6 @@ _CONTENT_TYPES = {'text', 'json', 'image', 'file', 'file_list'}
 UPLOAD_MARKER = '/var/lib/lazymind/uploads/'
 SUBAGENT_MARKER = '/data/subagent/'
 
-_WRITER_DOCUMENT_SLOT_STAGES = {
-    'outline_ir': 'outline',
-    'draft_document': 'draft',
-    'final_document': 'final',
-}
-_WRITER_MARKDOWN_SLOTS = {
-    'draft_blocks',
-    'draft_document_md',
-    'final_document_md',
-    'delivered_markdown',
-}
-
 
 def _materialize_local_path(path: str) -> str:
     """Resolve Docker-canonical upload paths onto the real LAZYMIND_UPLOAD_ROOT.
@@ -198,13 +186,12 @@ def _build_artifact_value(value: Any, content_type: str):
     return {'text': str(value)}, 'text'
 
 
-def _validate_declared_artifact(
+def _validate_declared_artifact_type(
     ctx: Any,
     key: str,
-    value: Any,
     content_type: str,
 ) -> Optional[str]:
-    """Validate a plugin artifact against its declared slot contract."""
+    """Validate only the framework-level content type declared by a plugin slot."""
     plugin_id = str((ctx.params or {}).get('plugin_id') or '').strip()
     if not plugin_id:
         return None
@@ -224,42 +211,6 @@ def _validate_declared_artifact(
             'by the producing tool instead of copying its contents.'
         )
 
-    if plugin_id != 'writer-plugin' or content_type != 'file':
-        return None
-
-    path = str(value or '').strip()
-    if key in _WRITER_MARKDOWN_SLOTS:
-        if not path.lower().endswith(('.md', '.markdown')):
-            return f'Writer Markdown artifact {key!r} must be a real .md file path.'
-        return None
-
-    expected_stage = _WRITER_DOCUMENT_SLOT_STAGES.get(key)
-    if expected_stage is None:
-        return None
-    if not path.lower().endswith('.lmd'):
-        return f'Writer IR artifact {key!r} must use the .lmd file suffix.'
-    try:
-        with open(path, 'r', encoding='utf-8') as fh:
-            payload = json.load(fh)
-    except Exception as exc:
-        return f'Writer IR artifact {key!r} is not a readable JSON envelope: {exc}'
-    document = payload.get('data') if isinstance(payload, dict) and 'data' in payload else payload
-    if not isinstance(document, dict):
-        return f'Writer IR artifact {key!r} does not contain a WriterDocument object.'
-    if document.get('stage') != expected_stage:
-        return (
-            f'Writer IR artifact {key!r} must have stage={expected_stage!r}; '
-            f'got {document.get("stage")!r}.'
-        )
-    if document.get('ui_editable') is not True:
-        return f'Writer IR artifact {key!r} must have ui_editable=true.'
-    metadata = document.get('metadata')
-    if isinstance(metadata, dict) and metadata.get('kind') == 'step_status':
-        return f'Writer status placeholder cannot be saved as {key!r}.'
-    if key == 'outline_ir':
-        blocks = document.get('blocks')
-        if not isinstance(blocks, list) or len(blocks) < 3:
-            return 'Writer outline_ir must contain at least three top-level outline blocks.'
     return None
 
 
@@ -323,7 +274,7 @@ def _save_artifact(key: str, value: Any, content_type: str = 'text',
             f'Allowed keys: {", ".join(ctx.output_slots)}',
         )
     ct = content_type if content_type in _CONTENT_TYPES else 'text'
-    contract_error = _validate_declared_artifact(ctx, key, value, ct)
+    contract_error = _validate_declared_artifact_type(ctx, key, ct)
     if contract_error:
         return tool_error('save_artifacts', contract_error)
     built, actual_ct = _build_artifact_value(value, ct)
@@ -339,16 +290,6 @@ def _save_artifact(key: str, value: Any, content_type: str = 'text',
             out_of_range_warning = resolve_err
     if caption is not None:
         built['caption'] = str(caption)
-    for existing in reversed(ctx.local_artifacts([key])):
-        if (
-            existing.get('content_type') == actual_ct
-            and existing.get('value') == built
-        ):
-            return tool_success('save_artifacts', {
-                'status': 'ok',
-                'message': f"Artifact '{key}' was already saved with the same value.",
-                'deduplicated': True,
-            })
     seq = ctx.next_artifact_seq(key)
     ctx.record_local_artifact(key, actual_ct, built, seq)
     ctx.emit({
@@ -380,9 +321,7 @@ def save_artifacts(artifacts: List[Dict[str, Any]]) -> Dict[str, Any]:
     if len(artifacts) > 50:
         return tool_error('save_artifacts', 'At most 50 artifacts may be saved at once.')
 
-    # Preflight the complete batch before emitting anything. Otherwise, one bad
-    # item late in the list leaves earlier items partially saved and a model retry
-    # creates duplicate revisions for those slots.
+    results: List[Dict[str, Any]] = []
     for index, item in enumerate(artifacts):
         if not isinstance(item, dict):
             return tool_error('save_artifacts', f'artifacts[{index}] must be an object.')
@@ -390,32 +329,6 @@ def save_artifacts(artifacts: List[Dict[str, Any]]) -> Dict[str, Any]:
             return tool_error(
                 'save_artifacts', f'artifacts[{index}] requires key and value.',
             )
-        ctx = require_context()
-        key = str(item['key'])
-        if ctx.output_slots and key not in ctx.output_slots:
-            return tool_error(
-                'save_artifacts',
-                f'Artifact key {key!r} is not declared for this step. '
-                f'Allowed keys: {", ".join(ctx.output_slots)}',
-            )
-        content_type = str(item.get('content_type') or 'text')
-        if content_type not in _CONTENT_TYPES:
-            content_type = 'text'
-        contract_error = _validate_declared_artifact(
-            ctx, key, item['value'], content_type,
-        )
-        if contract_error:
-            return tool_error('save_artifacts', contract_error)
-        try:
-            _build_artifact_value(item['value'], content_type)
-        except Exception as exc:
-            return tool_error(
-                'save_artifacts',
-                f'artifacts[{index}] could not be prepared: {exc}',
-            )
-
-    results: List[Dict[str, Any]] = []
-    for item in artifacts:
         saved = _save_artifact(
             key=str(item['key']),
             value=item['value'],
