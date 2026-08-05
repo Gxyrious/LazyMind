@@ -1525,19 +1525,8 @@ def build_advance_step_and_hand_off_tool(
         include_default_approval=include_approval_guidance,
     )
 
-    def advance_step_and_hand_off(
-        steps: Optional[List[Dict[str, Any]]] = None,
-        step_id: str = '',
-        user_input: str = '',
-        runtime_instruction: str = '',
-    ) -> str:
+    def advance_step_and_hand_off(steps: List[Dict[str, Any]]) -> str:
         """Start one or more Ready steps and end the current ReAct turn."""
-        if not steps and step_id:
-            steps = [{
-                'step_id': step_id,
-                'user_input': user_input,
-                'runtime_instruction': runtime_instruction,
-            }]
         if not isinstance(steps, list) or not steps:
             raise ValueError('steps must contain at least one step command.')
         if len(steps) > 1:
@@ -1600,19 +1589,8 @@ def build_advance_step_tool(
         current_step=current_step if current_step in snapshot.retry_steps else '',
     )
 
-    def advance_step(
-        steps: Optional[List[Dict[str, Any]]] = None,
-        step_id: str = '',
-        user_input: str = '',
-        runtime_instruction: str = '',
-    ) -> str:
+    def advance_step(steps: List[Dict[str, Any]]) -> str:
         """Start one or more Ready steps and wait for their results."""
-        if not steps and step_id:
-            steps = [{
-                'step_id': step_id,
-                'user_input': user_input,
-                'runtime_instruction': runtime_instruction,
-            }]
         if not isinstance(steps, list) or not steps:
             raise ValueError('steps must contain at least one step command.')
         if any(
