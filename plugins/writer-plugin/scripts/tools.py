@@ -102,6 +102,7 @@ def _save_json_artifact(
     schema_name: str,
     *,
     directory: Path | None = None,
+    extra_meta: dict[str, Any] | None = None,
 ) -> str:
     root = directory or _workspace_root()
     root.mkdir(parents=True, exist_ok=True)
@@ -118,6 +119,7 @@ def _save_json_artifact(
         str(root / f'{name}{extension}'),
         schema_name=schema_name,
         created_by='writer-plugin-wrapper',
+        extra_meta=extra_meta,
     )
 
 
@@ -128,6 +130,7 @@ def _save_writer_document(
     expected_stage: str | None = None,
     editable: bool = False,
     directory: Path | None = None,
+    extra_meta: dict[str, Any] | None = None,
 ) -> str:
     """Persist a document as .lmd or .md according to its representation."""
     content = _writer_document_json(
@@ -145,6 +148,7 @@ def _save_writer_document(
         return str(path)
     return _save_json_artifact(
         name, content, WriterToolkitBase.WRITER_IR_SCHEMA, directory=directory,
+        extra_meta=extra_meta,
     )
 
 
@@ -154,18 +158,32 @@ def _markdown_filename(title: str) -> str:
 
 
 def _save_publish_payload(payload: dict, root: Path) -> dict:
+    published_document = payload.get('published_document') or {}
+    publish_result = payload.get('publish_result') or {}
+    if isinstance(publish_result, dict):
+        publish_result = {
+            **publish_result,
+            'success': bool(publish_result.get('success', published_document)),
+        }
     return {
         'publish_result': _save_json_artifact(
             'publish_result',
-            json.dumps(payload.get('publish_result') or {}, ensure_ascii=False),
+            json.dumps(publish_result, ensure_ascii=False),
             writer_schema('revision.PatchResult'),
             directory=root,
         ),
         'published_document': _save_writer_document(
             'published_document',
-            payload.get('published_document') or {},
+            published_document,
             editable=True,
             directory=root,
+            extra_meta={
+                'lazymind_provider_sync': {
+                    'confirmed': True,
+                    'provider': 'feishu',
+                    'source': 'initial_auto',
+                },
+            },
         ),
         'published_link': str(payload.get('published_link') or ''),
     }

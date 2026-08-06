@@ -223,6 +223,15 @@ export interface SyncWriterDocumentResult {
   document: Record<string, unknown>;
 }
 
+export interface WriteBackWriterDocumentResult {
+  status: "synced";
+  revision: number;
+  feishu_synced: boolean;
+  artifact_saved: boolean;
+  patch_result: SyncWriterDocumentPatchResult;
+  document: Record<string, unknown>;
+}
+
 // Plugin Session API.
 export function PluginSessionApi() {
   return {
@@ -320,6 +329,27 @@ export function PluginSessionApi() {
       }>(
         `${coreApiBaseUrl}/plugin-sessions/${encodeURIComponent(sessionId)}/slots/${encodeURIComponent(slotId)}/items/idx/${listIndex}:sync-writer-document`,
         payload,
+        options,
+      );
+    },
+    writeBackWriterDocument(
+      sessionId: string,
+      baseRevision: number,
+      sourceDocument: Record<string, unknown>,
+      revisedDocument: Record<string, unknown>,
+      options?: RawAxiosRequestConfig,
+    ) {
+      return axiosInstance.post<{
+        code: number;
+        message: string;
+        data: WriteBackWriterDocumentResult;
+      }>(
+        `${coreApiBaseUrl}/plugin-sessions/${encodeURIComponent(sessionId)}/writer-document:write-back`,
+        {
+          base_revision: baseRevision,
+          source_document: sourceDocument,
+          revised_document: revisedDocument,
+        },
         options,
       );
     },

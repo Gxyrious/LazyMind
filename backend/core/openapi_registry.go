@@ -2087,6 +2087,14 @@ type writerDocumentSyncOpenAPIRequest struct {
 	RevisedDocument map[string]any `json:"revised_document"`
 }
 
+type writerDocumentWriteBackPathParams struct {
+	SessionID string `path:"session_id"`
+}
+
+type writerDocumentWriteBackOpenAPIRequest struct {
+	BaseRevision int `json:"base_revision"`
+}
+
 func registeredCoreOperations() []openAPIOperation {
 	jsonBodyOf := func(v any, required bool) *openAPIBody {
 		return &openAPIBody{Required: required, ContentType: "application/json", Schema: schemaSource{Type: v}}
@@ -2150,6 +2158,15 @@ func registeredCoreOperations() []openAPIOperation {
 			PathParams:  writerDocumentSyncPathParams{},
 			RequestBody: jsonBodyOf(writerDocumentSyncOpenAPIRequest{}, true),
 			Responses:   map[int]openAPIResponse{200: evoJSONResp("WriterDocument sync result")},
+		},
+		{
+			Method:      "POST",
+			Path:        "/plugin-sessions/{session_id}/writer-document:write-back",
+			Summary:     "Write the active WriterDocument back to Feishu",
+			Tags:        []string{"plugin", "writer"},
+			PathParams:  writerDocumentWriteBackPathParams{},
+			RequestBody: jsonBodyOf(writerDocumentWriteBackOpenAPIRequest{}, true),
+			Responses:   map[int]openAPIResponse{200: evoJSONResp("WriterDocument write-back result")},
 		},
 		{
 			Method:      "GET",

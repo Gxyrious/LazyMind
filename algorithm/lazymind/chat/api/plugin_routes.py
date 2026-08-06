@@ -10,6 +10,7 @@ Routes:
 from __future__ import annotations
 
 import tempfile
+import logging
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Header, HTTPException, Query
@@ -24,6 +25,7 @@ from lazyllm.tools.writer.utils import load_artifact_json
 from lazymind.chat.plugin import plugin_loader
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 class DriverRequest(BaseModel):
@@ -98,6 +100,7 @@ def sync_writer_document(request: WriterDocumentSyncRequest) -> dict:
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
+        logger.exception('Writer document provider sync failed')
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
