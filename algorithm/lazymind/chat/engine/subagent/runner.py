@@ -239,6 +239,19 @@ def _build_subagent_tools(
     return base
 
 
+def _resolve_attachment_configs(
+    agentic_config: Dict[str, Any], agent_type: str, params: Dict[str, Any],
+) -> List[Any]:
+    configs = [*USER_ATTACHMENT_TOOL_CONFIGS, ATTACHMENT_EDIT_TOOL_CONFIG]
+    if agent_type == 'workflow_step':
+        declared = params.get('legacy_tools') or params.get('tools') or []
+        declared_names = {str(name).strip() for name in declared}
+        return [config for config in configs if config.name in declared_names]
+    if agentic_config.get('files') or agentic_config.get('history_files_per_turn'):
+        return configs
+    return []
+
+
 def _tool_configs_for_runtime_tools(runtime_tools: List[Any]) -> list:
     runtime_ids = {id(tool) for tool in runtime_tools}
     return [cfg for cfg in DEFAULT_TOOLS if id(cfg.tool) in runtime_ids]
@@ -740,16 +753,8 @@ async def run_subagent_stream(
 
         llm = AutoModel(model='llm')
         runtime_tools = _resolve_runtime_tools(tools, params)
-        # Workflow steps often need find_user_attachment even when the current synthetic
-        # chat turn has no files; keep the tools available and let the tool report empty.
-        attachment_configs = (
-            [*USER_ATTACHMENT_TOOL_CONFIGS, ATTACHMENT_EDIT_TOOL_CONFIG]
-            if (
-                agentic_config.get('files')
-                or agentic_config.get('history_files_per_turn')
-                or effective_agent_type == 'workflow_step'
-            )
-            else []
+        attachment_configs = _resolve_attachment_configs(
+            agentic_config, effective_agent_type, params,
         )
         subagent_tools_all = _build_subagent_tools(runtime_tools, attachment_configs)
         runtime_configs = _tool_configs_for_runtime_tools(runtime_tools)

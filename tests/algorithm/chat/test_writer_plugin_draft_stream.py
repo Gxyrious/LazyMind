@@ -6,6 +6,8 @@ import sys
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
+import pytest
+
 
 _ROOT = Path(__file__).resolve().parents[3]
 _TOOLS_PATH = _ROOT / 'workflows' / 'writer-workflow' / 'scripts' / 'tools.py'
@@ -157,3 +159,40 @@ def test_selection_rewrite_uses_slot_ir_artifact_filename(monkeypatch, tmp_path)
     artifact = result['artifact']['value']
     assert artifact['filename'] == 'draft_document.lmd'
     assert Path(artifact['path']).name == 'draft_document.lmd'
+
+
+def test_load_local_lmd_rejects_invalid_document(monkeypatch, tmp_path):
+    tools = _load_tools_module()
+    source = tmp_path / 'broken.lmd'
+    source.write_text('{"stage":"outline","blocks":[]}', encoding='utf-8')
+    context = SimpleNamespace(
+        workspace_path=str(tmp_path),
+        params={'history_files_per_turn': {'turn-1': [str(source)]}},
+    )
+    monkeypatch.setattr(tools, 'require_context', lambda: context)
+
+    with pytest.raises(ValueError, match=r'Cannot parse LMD file broken\.lmd'):
+        tools.writer_load_local_document('broken.lmd')
+
+
+def test_load_local_lmd_removes_cloud_binding(monkeypatch, tmp_path):
+    tools = _load_tools_module()
+    source = tmp_path / 'bound.lmd'
+    source.write_text(json.dumps({'document_id': 'local-doc', 'blocks': [{
+        'node_id': 'p1', 'type': 'paragraph', 'content': 'body',
+        'provider_binding': {'block_id': 'cloud-block'},
+    }], 'provider_binding': {'provider': 'feishu', 'document_id': 'cloud-doc'},
+        'metadata': {'source': {'uri': 'https://example.feishu.cn/docx/cloud-doc'}},
+    }), encoding='utf-8')
+    context = SimpleNamespace(
+        workspace_path=str(tmp_path),
+        params={'history_files_per_turn': {'turn-1': [str(source)]}},
+    )
+    monkeypatch.setattr(tools, 'require_context', lambda: context)
+
+    loaded = tools._read_json_file(tools.writer_load_local_document('bound.lmd'))
+
+    assert loaded['document_id'] == 'local-doc'
+    assert not loaded.get('provider_binding')
+    assert 'source' not in loaded.get('metadata', {})
+    assert not loaded['blocks'][0].get('provider_binding')

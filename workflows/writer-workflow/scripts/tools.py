@@ -299,9 +299,22 @@ def writer_load_local_document(filename: str = '') -> str:
     if len(candidates) != 1:
         raise ValueError('Exactly one matching Markdown, text, or .lmd source file is required.')
     source = candidates[0]
+    try:
+        document = _read_json_file(str(source))
+        if source.suffix.lower() == '.lmd':
+            local_document = WriterDocument.model_validate(document)
+            local_document.provider_binding.clear()
+            local_document.metadata.pop('source', None)
+            for block in local_document.iter_blocks():
+                block.provider_binding.clear()
+            document = local_document.model_dump(exclude_defaults=True)
+    except (json.JSONDecodeError, ValueError) as exc:
+        if source.suffix.lower() != '.lmd':
+            raise
+        raise ValueError(f'Cannot parse LMD file {source.name}: {exc}') from exc
     return _save_writer_document(
         'source_document',
-        _read_json_file(str(source)),
+        document,
         directory=_run_root('load-local-document'),
     )
 
@@ -1009,8 +1022,17 @@ def writer_sync_document(
             markdown_content, target_document=target_document, title=title,
             artifact_store=artifact_store,
         )
-    if source_document is None or revised_document is None:
-        raise ValueError('source_document and revised_document are required for IR sync.')
+    if revised_document is None:
+        raise ValueError('revised_document is required for IR sync.')
+    if source_document is None:
+        document = WriterDocument.model_validate(revised_document)
+        return _replace_document_and_read_back(
+            document,
+            title=document.title,
+            media_assets=media_assets,
+            artifact_store=artifact_store,
+            source_format='lmd',
+        )
     return sync_writer_documents(
         source_document,
         revised_document,
@@ -1030,19 +1052,38 @@ def _sync_markdown_document(
     markdown = markdown_content.strip()
     if not markdown:
         raise ValueError('Markdown draft is empty.')
+    heading = re.search(r'^#\s+(.+?)\s*$', markdown, flags=re.MULTILINE)
+    document_title = (heading.group(1).strip() if heading else title.strip()) or '未命名文档'
+    return _replace_document_and_read_back(
+        markdown_content,
+        title=document_title,
+        target_document=target_document,
+        artifact_store=artifact_store,
+        source_format='markdown',
+    )
+
+
+def _replace_document_and_read_back(
+    content: str | WriterDocument,
+    *,
+    title: str,
+    artifact_store: str,
+    source_format: str,
+    target_document: Mapping[str, Any] | None = None,
+    media_assets: Mapping[str, Any] | None = None,
+) -> dict:
+    """Replace a Feishu document and return its provider-confirmed Writer IR."""
     root = _action_root(artifact_store, 'sync-document')
     if target_document:
         target = TargetDocument.model_validate(target_document)
     else:
-        heading = re.search(r'^#\s+(.+?)\s*$', markdown, flags=re.MULTILINE)
-        document_title = (heading.group(1).strip() if heading else title.strip()) or '未命名文档'
         created = _json_loads(
-            WriterResourceToolkit().create_document(title=document_title), {},
+            WriterResourceToolkit().create_document(title=title.strip() or '未命名文档'), {},
         )
         target = TargetDocument.model_validate(created)
 
     resource = WriterResourceTools(llm=None, artifact_store=str(root))
-    write_output = resource.replace_document(markdown_content, target)
+    write_output = resource.replace_document(content, target, media_assets)
     write_result = _read_json_file(_action_result_path(write_output))
     refresh_target = target.model_copy(deep=True)
     refresh_target.meta = {**refresh_target.meta, 'stage': 'final'}
@@ -1053,10 +1094,14 @@ def _sync_markdown_document(
     persisted.ui_editable = True
     result = PatchResult(
         success=True,
-        message='Markdown converted to IR and document replaced.',
+        message=(
+            'Markdown converted to IR and document replaced.'
+            if source_format == 'markdown'
+            else 'Document written to Feishu and read back as Writer IR.'
+        ),
         meta={
             'mode': 'replace',
-            'source_format': 'markdown',
+            'source_format': source_format,
             'write_result': write_result,
         },
     )

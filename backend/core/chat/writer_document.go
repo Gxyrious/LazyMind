@@ -297,34 +297,6 @@ func WriteBackWriterDocument(w http.ResponseWriter, r *http.Request) {
 			common.ReplyErr(w, "invalid current WriterDocument: "+normalizeErr.Error(), http.StatusBadRequest)
 			return
 		}
-		baseline, baselineErr := loadWriterWriteBackBaseline(ctx, db, sessionID, draft.Revision.Revision)
-		if baselineErr != nil {
-			common.ReplyErrWithData(w, "initial Feishu write-back has not completed", map[string]any{
-				"status": "baseline_not_found", "current_revision": draft.Revision.Revision,
-			}, http.StatusConflict)
-			return
-		}
-		baselineDocument, baselineErr := writerArtifactData(baseline.Value, true)
-		if baselineErr != nil {
-			common.ReplyErr(w, "invalid synchronized WriterDocument baseline", http.StatusConflict)
-			return
-		}
-		baselineDocument, baselineErr = normalizeWriterDocumentForSync(baselineDocument)
-		if baselineErr != nil {
-			common.ReplyErr(w, "invalid synchronized WriterDocument baseline", http.StatusConflict)
-			return
-		}
-		revisedDocument, normalizeErr = preserveExistingWriterImageBlocks(baselineDocument, revisedDocument)
-		if normalizeErr != nil {
-			common.ReplyErr(w, "invalid current WriterDocument: "+normalizeErr.Error(), http.StatusBadRequest)
-			return
-		}
-		if pairErr := validateWriterWriteBackPair(baselineDocument, revisedDocument); pairErr != nil {
-			common.ReplyErr(w, pairErr.Error(), http.StatusConflict)
-			return
-		}
-		syncRequest.SourceDocument = baselineDocument
-		syncRequest.RevisedDocument = revisedDocument
 		mediaAssets, mediaErr := loadSelectedWriterArtifact(ctx, db, sessionID, "resolved_media_assets")
 		if mediaErr == nil {
 			syncRequest.MediaAssets, mediaErr = writerArtifactData(mediaAssets.Value, false)
@@ -335,6 +307,38 @@ func WriteBackWriterDocument(w http.ResponseWriter, r *http.Request) {
 		} else if !errors.Is(mediaErr, gorm.ErrRecordNotFound) {
 			common.ReplyErr(w, "load resolved_media_assets failed", http.StatusInternalServerError)
 			return
+		}
+		if writerDocumentIsUnbound(revisedDocument) {
+			syncRequest.RevisedDocument = revisedDocument
+		} else {
+			baseline, baselineErr := loadWriterWriteBackBaseline(ctx, db, sessionID, draft.Revision.Revision)
+			if baselineErr != nil {
+				common.ReplyErrWithData(w, "initial Feishu write-back has not completed", map[string]any{
+					"status": "baseline_not_found", "current_revision": draft.Revision.Revision,
+				}, http.StatusConflict)
+				return
+			}
+			baselineDocument, baselineErr := writerArtifactData(baseline.Value, true)
+			if baselineErr != nil {
+				common.ReplyErr(w, "invalid synchronized WriterDocument baseline", http.StatusConflict)
+				return
+			}
+			baselineDocument, baselineErr = normalizeWriterDocumentForSync(baselineDocument)
+			if baselineErr != nil {
+				common.ReplyErr(w, "invalid synchronized WriterDocument baseline", http.StatusConflict)
+				return
+			}
+			revisedDocument, normalizeErr = preserveExistingWriterImageBlocks(baselineDocument, revisedDocument)
+			if normalizeErr != nil {
+				common.ReplyErr(w, "invalid current WriterDocument: "+normalizeErr.Error(), http.StatusBadRequest)
+				return
+			}
+			if pairErr := validateWriterWriteBackPair(baselineDocument, revisedDocument); pairErr != nil {
+				common.ReplyErr(w, pairErr.Error(), http.StatusConflict)
+				return
+			}
+			syncRequest.SourceDocument = baselineDocument
+			syncRequest.RevisedDocument = revisedDocument
 		}
 	}
 	result, status, err := algo.SyncWriterDocument(ctx, syncRequest)
@@ -475,6 +479,11 @@ func loadWriterWriteBackBaseline(
 type writerDocumentIdentity struct {
 	DocumentID      string         `json:"document_id"`
 	ProviderBinding map[string]any `json:"provider_binding"`
+}
+
+func writerDocumentIsUnbound(document json.RawMessage) bool {
+	var identity writerDocumentIdentity
+	return json.Unmarshal(document, &identity) == nil && len(identity.ProviderBinding) == 0
 }
 
 func validateWriterWriteBackPair(source, revised json.RawMessage) error {
@@ -645,7 +654,7 @@ func writerArtifactRevisionSynced(artifact *selectedWriterArtifact) bool {
 	if artifact.Revision.ChangeSource == "provider_sync" {
 		return true
 	}
-	return artifact.Revision.ChangeSource == "ai" &&
+	return (artifact.Revision.ChangeSource == "ai" || artifact.Revision.ChangeSource == "host") &&
 		writerArtifactEnvelopeProviderSynced(artifact.Value)
 }
 

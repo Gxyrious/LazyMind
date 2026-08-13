@@ -89,6 +89,12 @@ func writerWriteBackState(
 			return info
 		}
 		binding, hasBinding = writerProviderBindingFromArtifact(sourceValue)
+		if !hasBinding && writerArtifactIsUnboundIR(sourceValue) {
+			binding, hasBinding = writerProviderBindingFromArtifact(draftValue)
+			if !hasBinding {
+				info.State = writerWriteBackInitialDelivery
+			}
+		}
 		if !hasBinding {
 			return info
 		}
@@ -164,7 +170,7 @@ func writerSlotRevisionSynced(changeSource string, value json.RawMessage) bool {
 	if changeSource == "provider_sync" {
 		return true
 	}
-	if changeSource != "ai" {
+	if changeSource != "ai" && changeSource != "host" {
 		return false
 	}
 	resolved, ok := resolveWriterArtifact(value)
@@ -235,6 +241,29 @@ func writerArtifactIsMarkdown(value json.RawMessage) bool {
 	}
 	content, err := os.ReadFile(path)
 	return err == nil && strings.TrimSpace(string(content)) != ""
+}
+
+func writerArtifactIsUnboundIR(value json.RawMessage) bool {
+	resolved, ok := resolveWriterArtifact(value)
+	if !ok {
+		return false
+	}
+	var envelope struct {
+		Data json.RawMessage `json:"data"`
+	}
+	if json.Unmarshal(resolved, &envelope) != nil {
+		return false
+	}
+	document := resolved
+	if len(envelope.Data) > 0 {
+		document = envelope.Data
+	}
+	var valueDocument struct {
+		DocumentID      string         `json:"document_id"`
+		ProviderBinding map[string]any `json:"provider_binding"`
+	}
+	return json.Unmarshal(document, &valueDocument) == nil && valueDocument.DocumentID != "" &&
+		len(valueDocument.ProviderBinding) == 0
 }
 
 func writerArtifactPathAllowed(path string) bool {
