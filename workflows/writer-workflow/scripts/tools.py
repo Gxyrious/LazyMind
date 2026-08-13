@@ -458,14 +458,25 @@ def writer_prepare_outline(source_document_path: str) -> str:
 
 
 def writer_generate_outline(writing_task_path: str, writing_context_path: str) -> str:
-    """Generate an editable outline-stage WriterDocument."""
-    generated = WriterCreateToolkit().generate_outline(
-        writing_task_json=_read_json_string(writing_task_path),
-        writing_context_json=_read_json_string(writing_context_path),
+    """Generate an outline-stage artifact with a Markdown preview stream."""
+    events = DraftMarkdownStreamEventEmitter(
+        require_context().emit,
+        slot='outline_document',
     )
-    return _save_writer_document(
-        'outline_document', generated, expected_stage='outline', editable=True,
-    )
+    try:
+        generated = WriterCreateToolkit().stream_outline(
+            writing_task_json=_read_json_string(writing_task_path),
+            writing_context_json=_read_json_string(writing_context_path),
+            on_delta=events.feed,
+        )
+        outline_path = _save_writer_document(
+            'outline_document', generated, expected_stage='outline', editable=True,
+        )
+    except Exception as exc:
+        events.abort(str(exc))
+        raise
+    events.end()
+    return outline_path
 
 
 def writer_generate_rewrite_outline(

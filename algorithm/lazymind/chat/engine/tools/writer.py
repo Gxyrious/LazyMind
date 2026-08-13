@@ -48,7 +48,7 @@ _FEISHU_URL_RE = re.compile(
 
 
 class DraftMarkdownStreamEventEmitter:
-    """Publish each Draft Markdown delta in one attempt-scoped event stream."""
+    """Publish one attempt-scoped Markdown preview for a Writer artifact."""
 
     EVENT_TYPES: ClassVar[dict[str, str]] = {
         'start': 'artifact_stream_start',
@@ -60,8 +60,13 @@ class DraftMarkdownStreamEventEmitter:
     def __init__(
         self,
         emit: Callable[[dict[str, Any]], None],
+        *,
+        slot: str = 'draft_document',
     ) -> None:
+        if not slot.strip():
+            raise ValueError('slot must not be empty.')
         self._emit = emit
+        self._slot = slot.strip()
         self._stream_id = uuid.uuid4().hex
         self._chunk_index = 0
         self._closed = False
@@ -101,7 +106,7 @@ class DraftMarkdownStreamEventEmitter:
         self._chunk_index += 1
         payload: dict[str, Any] = {
             'type': self.EVENT_TYPES[event],
-            'slot': 'draft_document',
+            'slot': self._slot,
             'content_type': 'text/markdown',
             'stream_id': self._stream_id,
             'chunk_index': self._chunk_index,
@@ -113,7 +118,7 @@ class DraftMarkdownStreamEventEmitter:
         try:
             self._emit(payload)
         except Exception as exc:  # noqa: BLE001 - preview forwarding is best effort.
-            LOG.warning('[Writer] failed to forward Draft Markdown stream event: %s', exc)
+            LOG.warning('[Writer] failed to forward artifact stream event: %s', exc)
 
 
 def writer_schema(name: str) -> str:
@@ -632,6 +637,17 @@ class WriterToolkitBase:
 
     def generate_outline(self, writing_task_json: str, writing_context_json: str) -> str:
         """Generate an outline in the task's selected representation."""
+        planning, task_path, context_path = self._outline_planning(
+            writing_task_json, writing_context_json,
+        )
+        result = planning.generate_outline(task=task_path, context=context_path)
+        return self._outline_result(result)
+
+    def _outline_planning(
+        self,
+        writing_task_json: str,
+        writing_context_json: str,
+    ) -> tuple[WriterPlanningTools, str, str]:
         root = _temp_root()
         task_path = _write_input_artifact(
             root, 'writing_task.json', _json_loads(writing_task_json, {}), writer_schema('task.WritingTask'),
@@ -640,13 +656,36 @@ class WriterToolkitBase:
             root, 'writing_context.json', _json_loads(writing_context_json, {}),
             writer_schema('context.WritingContext'),
         )
-        result = WriterPlanningTools(
+        planning = WriterPlanningTools(
             llm=AutoModel(model='llm'), artifact_store=str(root),
-        ).generate_outline(task=task_path, context=context_path)
+        )
+        return planning, task_path, context_path
+
+    @staticmethod
+    def _outline_result(result: dict) -> str:
         outline = _primary_data(result)
         if isinstance(outline, str):
             return outline
         return _set_document_editable(outline, stage='outline').model_dump_json(exclude_defaults=True)
+
+    def stream_outline(
+        self,
+        writing_task_json: str,
+        writing_context_json: str,
+        on_delta: Callable[[str], None],
+    ) -> str:
+        """Generate an outline while exposing its Markdown preview deltas."""
+        planning, task_path, context_path = self._outline_planning(
+            writing_task_json, writing_context_json,
+        )
+        with planning.stream_outline(task=task_path, context=context_path) as stream:
+            for delta in stream:
+                try:
+                    on_delta(delta)
+                except Exception as exc:  # noqa: BLE001 - preview forwarding is best effort.
+                    LOG.warning('[Writer] Outline delta callback failed: %s', exc)
+            result = stream.result()
+        return self._outline_result(result)
 
     def generate_rewrite_outline(
         self,

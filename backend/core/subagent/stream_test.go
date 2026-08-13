@@ -50,8 +50,8 @@ func TestIsWriterDraftStreamTaskUsesWorkflowIdentity(t *testing.T) {
 	}
 
 	task.Params = []byte(`{"workflow_id":"writer-workflow","step_id":"outline"}`)
-	if isWriterDraftStreamTask(task) {
-		t.Fatal("outline step must not enable Draft stream heartbeats")
+	if !isWriterDraftStreamTask(task) {
+		t.Fatal("expected Writer workflow outline task to enable stream heartbeats")
 	}
 
 	task.AgentType = "plugin_step"                                                   // workflow-naming: persistence

@@ -116,7 +116,8 @@ func isWriterDraftStreamTask(task *orm.SubAgentTask) bool {
 		StepID     string `json:"step_id"`
 	}
 	return json.Unmarshal(task.Params, &params) == nil &&
-		params.WorkflowID == "writer-workflow" && params.StepID == "write_document"
+		params.WorkflowID == "writer-workflow" &&
+		(params.StepID == "outline" || params.StepID == "write_document")
 }
 
 func writerDraftHeartbeatsEnabled(ctx context.Context, db *gorm.DB, taskID string) bool {
