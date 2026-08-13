@@ -71,7 +71,10 @@ steps:
          target_document. Do not call writer_load_document for unrelated ordinary URLs.
       3. Call writer_build_writing_task(query="{{user_input}}",
          representation=<resolved `ir` or `markdown`>) and save its path as writing_task.
-      4. Call writer_collect_available_media with writing_task_path. It returns
+      4. Call writer_collect_available_media with writing_task_path and
+         source_document_path when source_document exists. It extracts images from the
+         loaded Feishu/Lark source and downloads external Markdown image URLs into the
+         local media library, in addition to collecting image attachments. It returns
          media_assets and profile_input_resources file paths. Save media_assets and
          retain profile_input_resources for step 6. This call is required even when
          the user uploaded no images.

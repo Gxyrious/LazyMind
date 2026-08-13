@@ -415,6 +415,7 @@ class WriterToolkitBase:
         input_resources_json: str = '[]',
         media_store: str = '',
         use_vision_model: bool = False,
+        source_document_json: str = '',
     ) -> str:
         """Collect available images through LazyLLM's multimodal writer tools."""
         root = _temp_root()
@@ -430,12 +431,20 @@ class WriterToolkitBase:
             _json_loads(input_resources_json, []),
             writer_schema('task.InputResource'),
         )
+        source_document_path = (
+            _write_document_input(root, 'source_document', source_document_json)
+            if source_document_json else None
+        )
         artifact_store = Path(media_store.strip()) if media_store.strip() else root
         artifact_store.mkdir(parents=True, exist_ok=True)
         result = WriterMultimodalTools(
             llm=AutoModel(model='vlm') if use_vision_model else None,
             artifact_store=str(artifact_store),
-        ).collect_available_media(task=task_path, input_resources=resources_path)
+        ).collect_available_media(
+            task=task_path,
+            input_resources=resources_path,
+            source_document=source_document_path,
+        )
         return _json_dumps({
             'media_assets': _result_data(result, 'media_assets'),
             'profile_input_resources': _result_data(result, 'profile_input_resources'),
