@@ -24,6 +24,22 @@ def _load_tools_module() -> ModuleType:
     return module
 
 
+@pytest.mark.parametrize(
+    ('query', 'expected'),
+    [
+        ('写一篇 800 字左右的小说', {'target_chars': 800, 'max_chars': 880}),
+        ('写一篇不超过500字的摘要', {'target_chars': 500, 'max_chars': 500}),
+        ('写一篇短文', {}),
+    ],
+)
+def test_build_writing_task_extracts_document_length_constraints(query, expected):
+    tools = _load_tools_module()
+
+    task = json.loads(tools.WriterCreateToolkit().build_writing_task(query))
+
+    assert task.get('constraints', {}) == expected
+
+
 def test_write_document_revision_emits_markdown_draft_stream(monkeypatch, tmp_path):
     tools = _load_tools_module()
     events: list[dict] = []
