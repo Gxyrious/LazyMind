@@ -1031,6 +1031,35 @@ class WriterToolkitBase:
         if not isinstance(instructions, list):
             raise TypeError('section_instructions_json must contain instructions.')
 
+        def forward_delta(delta: str) -> None:
+            try:
+                on_delta(delta)
+            except Exception as exc:  # noqa: BLE001 - preview forwarding is best effort.
+                LOG.warning(
+                    '[Writer] Draft %s delta callback failed: %s',
+                    representation, exc,
+                )
+
+        instruction_list_meta = instructions_data.get('meta')
+        if not isinstance(instruction_list_meta, dict):
+            instruction_list_meta = {}
+        first_instruction = instructions[0] if instructions and isinstance(instructions[0], dict) else {}
+        first_instruction_meta = first_instruction.get('meta')
+        if not isinstance(first_instruction_meta, dict):
+            first_instruction_meta = {}
+        document_title = ''
+        for candidate in (
+            instruction_list_meta.get('document_title'),
+            instruction_list_meta.get('outline_title'),
+            first_instruction_meta.get('document_title'),
+            first_instruction_meta.get('outline_title'),
+        ):
+            document_title = str(candidate or '').strip()
+            if document_title:
+                break
+        if document_title:
+            forward_delta(f'# {document_title}\n\n')
+
         root = _temp_root()
         task_path = _write_input_artifact(
             root, 'writing_task.json', _json_loads(writing_task_json, {}),
@@ -1082,13 +1111,7 @@ class WriterToolkitBase:
                 **stream_kwargs,
             ) as stream:
                 for delta in stream:
-                    try:
-                        on_delta(delta)
-                    except Exception as exc:  # noqa: BLE001 - preview forwarding is best effort.
-                        LOG.warning(
-                            '[Writer] Draft %s delta callback failed: %s',
-                            representation, exc,
-                        )
+                    forward_delta(delta)
                 result = stream.result()
             section = _primary_data(result)
             if representation == 'markdown' and not isinstance(section, str):
