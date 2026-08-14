@@ -37,11 +37,7 @@ from lazyllm.tools.writer.tools import (
     WriterResourceTools,
     WriterRevisionTools,
 )
-from lazyllm.tools.writer.utils import (
-    render_block_markdown,
-    render_document_markdown,
-    save_artifact_json,
-)
+from lazyllm.tools.writer.utils import render_document_markdown, save_artifact_json
 
 WRITER_DATA_MODEL_SCHEMA_PREFIX = 'lazyllm.tools.writer.data_models'
 _FEISHU_URL_RE = re.compile(
@@ -1122,26 +1118,6 @@ class WriterToolkitBase:
         sections: list[Any] = []
         for instruction_data in instructions:
             instruction = SectionInstruction.model_validate(instruction_data)
-            if isinstance(instruction.meta.get('max_chars'), int):
-                result = drafting.generate_draft_section(
-                    task=task_path,
-                    section_instruction=instruction,
-                    context=context_path,
-                    previous_blocks=sections,
-                    visual_plan=visual_plan_path if representation == 'ir' else None,
-                    media_assets=media_assets_path if representation == 'ir' else None,
-                )
-                section = _primary_data(result)
-                preview = (
-                    section
-                    if isinstance(section, str)
-                    else render_block_markdown(WriterBlock.model_validate(section), level=2)
-                )
-                on_delta(preview.rstrip() + '\n')
-                sections.append(section)
-                if on_section_end is not None:
-                    on_section_end()
-                continue
             stream_factory = (
                 drafting.stream_draft_section
                 if representation == 'markdown'
