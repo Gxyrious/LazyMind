@@ -44,7 +44,8 @@ steps:
       doing so stores the path string instead of the file.
 
       Prepare the user's complete writing workspace without generating an outline or
-      document body.
+      document body. Use the deterministic writer_prepare_workspace entry point; do not
+      invoke its internal Writer tools separately.
 
       Before creating any artifact, verify resource identity. If the request refers to
       "this", "my", "the supplied", or "the original" Feishu/Lark outline or document,
@@ -52,69 +53,35 @@ steps:
       that the source locator was lost or missing. Do not continue as a from-scratch
       request and do not reconstruct the document from a summary.
 
-      1. Resolve the working document and representation before building the task:
-         - A Feishu/Lark source or supplied `.lmd` file uses `ir`.
-         - A supplied Markdown/plain-text source and a from-scratch request use
-           `markdown`, even when the final request explicitly asks for Feishu delivery.
-         - If the user is modifying or continuing one supplied `.md`, `.markdown`,
-           `.txt`, or `.lmd` file, call writer_load_local_document and save its path as
-           source_document. This Writer tool resolves the uploaded file from the current
-           attachment history; do not call read_user_attachment or find_user_attachment
-           first, and do not copy the file contents into the task prompt. Do not treat
-           ordinary reference attachments as the working document.
-      2. If the request contains a Feishu/Lark document that must be read, call
-         writer_load_document(user_input="{{user_input}}", stage=<draft for a direct
-         in-place revision of an existing document; outline only when the user explicitly
-         wants to create, use, or revise the document as an authoring outline>). Merely
-         mentioning an outline title, outline section, or text located before/after an
-         outline does not make the whole document an outline. Save source_document and
-         target_document. Do not call writer_load_document for unrelated ordinary URLs.
-      3. Call writer_build_writing_task(query="{{user_input}}",
-         representation=<resolved `ir` or `markdown`>) and save its path as writing_task.
-      4. Call writer_collect_available_media with writing_task_path and
-         source_document_path when source_document exists. It extracts images from the
-         loaded Feishu/Lark source and downloads external Markdown image URLs into the
-         local media library, in addition to collecting image attachments. It returns
-         media_assets and profile_input_resources file paths. Save media_assets and
-         retain profile_input_resources for step 6. This call is required even when
-         the user uploaded no images.
-      5. If the request selects or references a knowledge base, use the kb framework
-         tools to retrieve the relevant evidence first. Preserve the returned evidence
-         text for the next call.
-      6. Call writer_profile_resources with writing_task_path, the complete original
-         user_input, source_document_path when present, and knowledge_text when KB evidence was
-         retrieved. Also pass the profile_input_resources path returned by step 4. Save
-         resource_profiles.
-      7. Call writer_create_writing_context with writing_task_path,
-         resource_profiles_path, and source_document_path when present. Save its returned path
-         as writing_context.
+      1. Select exactly one operation for writer_prepare_workspace:
+         - create: start from scratch; ordinary attachments remain reference resources.
+         - use_outline: use or revise a supplied outline.
+         - rewrite_document: rewrite or restructure a supplied complete document.
+         - revise_document: make targeted changes to a supplied complete document.
+         - prepare_only: read and prepare a supplied source without continuing to writing.
+         This is the only semantic routing decision in this step.
+      2. If the request explicitly selects or references a knowledge base, use the kb
+         framework once and preserve its evidence as knowledge_text. Otherwise skip KB.
+      3. Call writer_prepare_workspace exactly once with the complete original user_input,
+         selected operation, exact source_filename when the user supplied a working local
+         document, and knowledge_text when retrieved. The tool resolves representation,
+         loads the working source when required, builds the task, collects media, profiles
+         resources, creates context, and returns every output path plus next_step.
+      4. Save writing_task, media_assets, resource_profiles, and writing_context from the
+         returned paths in one save_artifacts call. Save source_document and target_document
+         only when returned. Every path must use content_type="file".
 
       source_document and target_document are optional because a from-scratch request has no
       cloud source. Do not invent either artifact. If a required tool fails, stop without
       synthesizing a fallback artifact.
 
-      In the final summary, when source_document exists, report its representation and
-      required next step. Route a source explicitly supplied as an authoring outline to
-      outline; route targeted changes to a supplied complete document to write_document,
-      even when the request names headings or section numbers. For IR, stage="outline"
-      routes to outline, while stage="draft" or stage="final" routes to write_document.
-      A request to rewrite, condense, expand, restructure, retitle, or polish an uploaded
-      complete Markdown/plain-text document is always a direct-document operation. Its
-      final summary MUST say `REQUIRED_NEXT_STEP: write_document`; it MUST NOT recommend
-      outline, generate an outline first, or ask the user to confirm an outline. Keeping,
-      changing, or naming headings does not change this rule.
-      When source_document does not exist, explicitly state: "No source file was provided.
-      Continue directly to outline without requesting confirmation." Do not emit this
-      instruction when source_document exists.
+      In the final summary, report the representation and emit
+      `REQUIRED_NEXT_STEP: <next_step>` using the exact next_step returned by the tool.
+      When source_document was not returned, also state: "No source file was provided.
+      Continue directly to outline without requesting confirmation."
     tools:
       - kb
-      - cloud_files
-      - writer_build_writing_task
-      - writer_load_local_document
-      - writer_collect_available_media
-      - writer_load_document
-      - writer_profile_resources
-      - writer_create_writing_context
+      - writer_prepare_workspace
     outputs:
       - material: writing_task
       - material: media_assets

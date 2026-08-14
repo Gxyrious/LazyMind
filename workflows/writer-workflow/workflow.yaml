@@ -37,6 +37,7 @@ tool_scripts:
       - writer_load_document
       - writer_profile_resources
       - writer_create_writing_context
+      - writer_prepare_workspace
       - writer_prepare_outline
       - writer_generate_outline
       - writer_generate_rewrite_outline

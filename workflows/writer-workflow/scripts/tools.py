@@ -12,7 +12,7 @@ import re
 import tempfile
 import uuid
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Literal, Mapping
 
 from lazyllm import AutoModel
 from lazyllm.tools.writer.data_models import (
@@ -487,6 +487,108 @@ def writer_create_writing_context(
     return _save_json_artifact(
         'writing_context', content, writer_schema('context.WritingContext'),
     )
+
+
+def writer_prepare_workspace(
+    user_input: str,
+    operation: Literal[
+        'create',
+        'use_outline',
+        'rewrite_document',
+        'revise_document',
+        'prepare_only',
+    ] = 'create',
+    source_filename: str = '',
+    knowledge_text: str = '',
+) -> dict:
+    """Run the deterministic writer preparation chain through existing tools."""
+    supported_operations = {
+        'create',
+        'use_outline',
+        'rewrite_document',
+        'revise_document',
+        'prepare_only',
+    }
+    if operation not in supported_operations:
+        raise ValueError(
+            'operation must be create, use_outline, rewrite_document, '
+            'revise_document, or prepare_only.',
+        )
+
+    source_document = ''
+    target_document = ''
+    representation = 'markdown'
+    if operation != 'create':
+        ctx = require_context()
+        files_by_turn = ctx.params.get('history_files_per_turn') or {}
+        local_candidates = [
+            Path(path)
+            for paths in files_by_turn.values()
+            for path in paths or []
+            if Path(path).suffix.lower() in {'.md', '.markdown', '.txt', '.lmd'}
+        ]
+        has_cloud_source = bool(re.search(
+            r"https?://[^\s<>\"']*(?:feishu\.(?:cn|com)|larksuite\.com)/",
+            user_input or '',
+            re.IGNORECASE,
+        ))
+        if source_filename or (local_candidates and not has_cloud_source):
+            source_document = writer_load_local_document(source_filename)
+            representation = (
+                'ir' if Path(source_document).suffix.lower() == '.lmd' else 'markdown'
+            )
+        else:
+            source_stage = {
+                'use_outline': 'outline',
+                'rewrite_document': 'draft',
+                'revise_document': 'draft',
+                'prepare_only': 'final',
+            }[operation]
+            loaded = writer_load_document(user_input=user_input, stage=source_stage)
+            source_document = loaded['source_document']
+            target_document = loaded['target_document']
+            representation = 'ir'
+
+    writing_task = writer_build_writing_task(
+        query=user_input,
+        representation=representation,
+    )
+    media_result = writer_collect_available_media(
+        writing_task_path=writing_task,
+        source_document_path=source_document,
+    )
+    resource_profiles = writer_profile_resources(
+        writing_task_path=writing_task,
+        user_input=user_input,
+        source_document_path=source_document,
+        knowledge_text=knowledge_text,
+        profile_input_resources_path=media_result['profile_input_resources'],
+    )
+    writing_context = writer_create_writing_context(
+        writing_task_path=writing_task,
+        resource_profiles_path=resource_profiles,
+        source_document_path=source_document,
+    )
+    result = {
+        'writing_task': writing_task,
+        'media_assets': media_result['media_assets'],
+        'resource_profiles': resource_profiles,
+        'writing_context': writing_context,
+        'representation': representation,
+        'next_step': {
+            'create': 'outline',
+            'use_outline': 'outline',
+            'rewrite_document': 'write_document',
+            'revise_document': 'write_document',
+            'prepare_only': '__end__',
+        }[operation],
+        'warnings': media_result.get('warnings') or [],
+    }
+    if source_document:
+        result['source_document'] = source_document
+    if target_document:
+        result['target_document'] = target_document
+    return result
 
 
 def writer_prepare_outline(source_document_path: str) -> str:
