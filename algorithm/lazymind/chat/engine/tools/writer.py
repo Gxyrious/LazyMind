@@ -71,6 +71,8 @@ def _extract_length_constraints(query: str) -> dict[str, int]:
 class DraftMarkdownStreamEventEmitter:
     """Publish one attempt-scoped Markdown preview for a Writer artifact."""
 
+    MAX_DELTA_CHARS: ClassVar[int] = 2
+
     EVENT_TYPES: ClassVar[dict[str, str]] = {
         'start': 'artifact_stream_start',
         'delta': 'artifact_stream',
@@ -105,7 +107,15 @@ class DraftMarkdownStreamEventEmitter:
         with self._lock:
             if self._closed:
                 return
-            self._publish_locked('delta', delta=delta)
+            # Model providers and the IR/Markdown normalizers may deliver a
+            # whole sentence or paragraph in one callback. Keep the artifact
+            # stream's display contract stable by publishing small deltas while
+            # preserving the exact text and order.
+            for start in range(0, len(delta), self.MAX_DELTA_CHARS):
+                self._publish_locked(
+                    'delta',
+                    delta=delta[start:start + self.MAX_DELTA_CHARS],
+                )
 
     def end(self) -> None:
         self._finish('end')

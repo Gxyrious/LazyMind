@@ -74,14 +74,20 @@ def test_write_document_revision_emits_markdown_draft_stream(monkeypatch, tmp_pa
     assert Path(result['draft_document']).read_text(encoding='utf-8') == (
         '# Revised title\n\nUpdated body.\n'
     )
-    assert [event['type'] for event in events] == [
-        'artifact_stream_start',
-        'artifact_stream',
-        'artifact_stream_end',
-    ]
+    assert events[0]['type'] == 'artifact_stream_start'
+    assert events[-1]['type'] == 'artifact_stream_end'
     assert all(event['slot'] == 'draft_document' for event in events)
     assert all(event['content_type'] == 'text/markdown' for event in events)
-    assert events[1]['delta'] == '# Revised title\n\nUpdated body.\n'
+    deltas = [
+        event['delta']
+        for event in events
+        if event['type'] == 'artifact_stream'
+    ]
+    assert ''.join(deltas) == '# Revised title\n\nUpdated body.\n'
+    assert all(0 < len(delta) <= 2 for delta in deltas)
+    assert [event['chunk_index'] for event in events] == list(
+        range(1, len(events) + 1),
+    )
 
 
 def test_selection_rewrite_uses_slot_markdown_artifact_filename(monkeypatch, tmp_path):
