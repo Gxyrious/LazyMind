@@ -504,6 +504,17 @@ func WriteBackWriterDocument(w http.ResponseWriter, r *http.Request) {
 		}
 		syncRequest.MarkdownContent = activeDraft.Markdown
 		syncRequest.Title = activeDraft.Title
+		mediaAssets, mediaErr := loadSelectedWriterArtifact(ctx, db, sessionID, "resolved_media_assets")
+		if mediaErr == nil {
+			syncRequest.MediaAssets, mediaErr = writerArtifactData(mediaAssets.Value, false)
+			if mediaErr != nil {
+				common.ReplyErr(w, "invalid resolved_media_assets", http.StatusConflict)
+				return
+			}
+		} else if !errors.Is(mediaErr, gorm.ErrRecordNotFound) {
+			common.ReplyErr(w, "load resolved_media_assets failed", http.StatusInternalServerError)
+			return
+		}
 	} else {
 		revisedDocument, normalizeErr := normalizeWriterDocumentForSync(activeDraft.Document)
 		if normalizeErr != nil {

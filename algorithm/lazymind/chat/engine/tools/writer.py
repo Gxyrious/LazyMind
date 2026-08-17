@@ -37,13 +37,11 @@ from lazyllm.tools.writer.tools import (
     WriterResourceTools,
     WriterRevisionTools,
 )
-from lazyllm.tools.writer.numbering import (
-    build_numbering_view_from_ir,
-    compute_numbering,
-    materialize_markdown,
-    materialize_ir,
+from lazyllm.tools.writer.numbering import materialize_markdown
+from lazyllm.tools.writer.utils import (
+    save_artifact_json,
+    writer_document_to_markdown,
 )
-from lazyllm.tools.writer.utils import render_document_markdown, save_artifact_json
 
 WRITER_DATA_MODEL_SCHEMA_PREFIX = 'lazyllm.tools.writer.data_models'
 _FEISHU_URL_RE = re.compile(
@@ -191,6 +189,25 @@ def _json_loads(value: str, default: Any = None) -> Any:
     if isinstance(parsed, dict) and 'data' in parsed:
         return parsed['data']
     return parsed
+
+
+def _bind_document_cross_reference_targets(instructions: list[Any]) -> None:
+    targets = list(dict.fromkeys(
+        str(target)
+        for instruction in instructions if isinstance(instruction, dict)
+        for target in [
+            (instruction.get('meta') or {}).get('outline_node_id'),
+            *[
+                item.get('target')
+                for item in (instruction.get('meta') or {}).get('cross_references') or []
+                if isinstance(item, dict)
+            ],
+        ]
+        if target
+    ))
+    for instruction in instructions:
+        if isinstance(instruction, dict):
+            instruction.setdefault('meta', {})['cross_reference_targets'] = targets
 
 
 def _read_artifact_data(path: str) -> Any:
@@ -1037,6 +1054,7 @@ class WriterToolkitBase:
         )
         if not isinstance(instructions, list):
             raise TypeError('section_instructions_json must contain instructions.')
+        _bind_document_cross_reference_targets(instructions)
 
         blocks: list[Any] = []
         for instruction in instructions:
@@ -1127,6 +1145,7 @@ class WriterToolkitBase:
         )
         if not isinstance(instructions, list):
             raise TypeError('section_instructions_json must contain instructions.')
+        _bind_document_cross_reference_targets(instructions)
 
         def forward_delta(delta: str) -> None:
             try:
@@ -1344,10 +1363,9 @@ class WriterToolkitBase:
                 'markdown': materialize_markdown(value),
             })
         document = WriterDocument.model_validate(value)
-        numbering = compute_numbering(build_numbering_view_from_ir(document))
         return _json_dumps({
             'title': document.title,
-            'markdown': render_document_markdown(materialize_ir(document, numbering)),
+            'markdown': writer_document_to_markdown(document),
         })
 
     def locate_revision_target(

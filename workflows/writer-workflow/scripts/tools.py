@@ -1524,7 +1524,7 @@ def writer_sync_document(
     if markdown_content:
         return _sync_markdown_document(
             markdown_content, target_document=target_document, title=title,
-            artifact_store=artifact_store,
+            media_assets=media_assets, artifact_store=artifact_store,
         )
     if revised_document is None:
         raise ValueError('revised_document is required for IR sync.')
@@ -1550,6 +1550,7 @@ def _sync_markdown_document(
     *,
     target_document: Mapping[str, Any] | None,
     title: str,
+    media_assets: Mapping[str, Any] | None,
     artifact_store: str,
 ) -> dict:
     """Convert Markdown against a provider target, replace it, then read back IR."""
@@ -1562,6 +1563,7 @@ def _sync_markdown_document(
         markdown_content,
         title=document_title,
         target_document=target_document,
+        media_assets=media_assets,
         artifact_store=artifact_store,
         source_format='markdown',
     )

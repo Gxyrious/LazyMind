@@ -485,7 +485,11 @@ async def handle_chat(request: ChatRequest) -> Union[Dict[str, Any], StreamingRe
         started = time.time()
         routing_task = asyncio.create_task(asyncio.to_thread(
             _resolve_task_profile_with_model, inputs,
-            trace_id=(request.conversation.conversation_id or '').strip(),
+            trace_id=(
+                request.conversation.conversation_id
+                or request.conversation.session_id
+                or ''
+            ).strip(),
             session_id=request.conversation.session_id,
         ))
         for status_delta in ('正在', '分析', '用户意图', '，请稍后'):
@@ -514,7 +518,11 @@ async def handle_chat(request: ChatRequest) -> Union[Dict[str, Any], StreamingRe
         if request.runtime.context_preview_allow_llm_routing:
             profile = await asyncio.to_thread(
             _resolve_task_profile_with_model, inputs,
-            trace_id=(request.conversation.conversation_id or '').strip(),
+            trace_id=(
+                request.conversation.conversation_id
+                or request.conversation.session_id
+                or ''
+            ).strip(),
             session_id=request.conversation.session_id,
         )
         return await _handle_chat_impl(
@@ -906,7 +914,8 @@ async def _handle_chat_impl(
         skill_config = selected_skills
         workflow_skill_dir = workflow_skills_dir()
     set_trace_context({
-        'trace_id': conversation_id, 'session_id': conversation.session_id, 'sampled': True,
+        'trace_id': conversation_id or conversation.session_id,
+        'session_id': conversation.session_id, 'sampled': True,
         'module_trace': {
             'by_class': {
                 'FunctionCall': False, 'ToolManager': False,

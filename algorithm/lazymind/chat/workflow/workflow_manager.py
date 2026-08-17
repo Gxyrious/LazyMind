@@ -50,6 +50,7 @@ def _client() -> WorkflowClient:
         str(cfg.get('user_id') or ''),
         host='lazymind',
         transport=httpx,
+        trace_context=lazyllm.get_trace_context,
     )
 
 
