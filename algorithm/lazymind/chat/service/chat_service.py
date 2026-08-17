@@ -821,6 +821,19 @@ async def _handle_chat_impl(
         [cfg for cfg in DEFAULT_TOOLS if cfg.name not in disabled],
         user_query=language_query,
     )
+    writer_workflow_available = any(
+        getattr(tool, '__name__', '') == 'trigger_writer_workflow'
+        for tool in workflow_tools
+        if not isinstance(tool, dict)
+    )
+    if writer_workflow_available:
+        # The Writer Workflow owns end-to-end document creation and revision.
+        # Do not let the ChatAgent bypass its session, ordered steps, artifacts,
+        # and UI card by calling the low-level Writer Toolkits directly.
+        active_configs = [
+            cfg for cfg in active_configs
+            if cfg.name not in {'writer_create', 'writer_revision'}
+        ]
     if not personalization.use_memory:
         active_configs = [cfg for cfg in active_configs if cfg.name != 'memory']
     agent_tools = [cfg.tool for cfg in active_configs]
