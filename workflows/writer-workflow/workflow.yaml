@@ -40,6 +40,7 @@ tool_scripts:
       - writer_prepare_workspace
       - writer_prepare_outline
       - writer_generate_outline
+      - writer_outline_workspace
       - writer_generate_rewrite_outline
       - writer_generate_rewrite_section_instructions
       - writer_generate_section_instructions

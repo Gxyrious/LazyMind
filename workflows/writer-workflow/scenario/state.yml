@@ -113,51 +113,45 @@ steps:
       `.lmd` with stage="outline" and ui_editable=true. Every successful execution saves
       the result under the same slot as a new revision rather than a second card.
 
-      Retrieve writing_task, writing_context, resource_profiles, and source_document when it
-      exists. Also retrieve the latest selected outline_document and
-      writing_context_after_outline when previous revisions exist.
+      Retrieve only artifact file references; do not read their contents. Retrieve
+      writing_task and writing_context, plus source_document when it exists. Also retrieve
+      the latest selected outline_document and writing_context_after_outline when previous
+      revisions exist. Use writing_context_after_outline as the current context when it
+      exists; otherwise use writing_context. Do not retrieve resource_profiles or
+      media_assets because this step does not consume them.
 
       Dynamically select exactly one mode:
 
       A. Prepare supplied outline:
          When no outline_document exists and the user supplied source_document as the outline to use,
-         call writer_prepare_outline(source_document_path=<source_document path>).
+         select operation="use_source".
 
       B. Generate or regenerate outline:
          When no outline_document exists without a supplied outline, or the user explicitly
-         requests complete regeneration, call writer_generate_outline using writing_task
-         and the current writing_context.
+         requests complete regeneration, select operation="generate".
 
       C. Revise current outline:
          When outline_document exists and the user requests a targeted change, use the latest
-         selected outline_document as base_document. Call writer_build_revision_task with the current
-         user instruction, then call writer_locate_revision_target,
-         writer_generate_modify_plan, writer_generate_revision_set, and
-         writer_apply_revision in that order.
-         Pass base_document_path consistently. writer_generate_revision_set selects an
-         IR PatchSet for `.lmd` and a StringReplaceSet for Markdown. Persist the returned
-         task, locate result, modify plan, revision set, and revision result under the
-         outline_* internal keys. If write_result is non-empty, persist
-         it as outline_write_result. Save the returned outline_document path as
-         outline_document, not under a new key.
+         selected outline_document as base_document and select operation="revise".
 
-      Do not call generation and revision tools in the same execution. After the selected
-      mode produces the new outline_document, call writer_update_writing_context using that
-      outline and the latest available context. Save the result as
-      writing_context_after_outline.
+      Call writer_outline_workspace exactly once with the selected operation and current
+      context path. For generate, also pass writing_task_path. For use_source, also pass
+      source_document_path. For revise, also pass the complete current user_input and latest
+      outline_document_path. The tool preserves the existing generation, source preparation,
+      Markdown/IR revision, cloud synchronization, and context-update chains. Do not invoke
+      its internal Writer tools separately.
+
+      Save outline_document and writing_context_after_outline from the returned paths in one
+      save_artifacts call. When revise returns outline_revision_task,
+      outline_locate_result, outline_modify_plan, outline_revision_set,
+      outline_revision_result, or outline_write_result, save each under that exact key in
+      the same call. Do not read the saved outline again merely to produce the final summary.
 
       A cloud-bound outline revision is synchronized by writer_apply_revision and the
       returned outline_document is the provider-confirmed document. Human frontend edits also
       remain revisions of this same outline_document slot.
     tools:
-      - writer_prepare_outline
-      - writer_generate_outline
-      - writer_build_revision_task
-      - writer_locate_revision_target
-      - writer_generate_modify_plan
-      - writer_generate_revision_set
-      - writer_apply_revision
-      - writer_update_writing_context
+      - writer_outline_workspace
     inputs:
       - material: writing_task
         required: true

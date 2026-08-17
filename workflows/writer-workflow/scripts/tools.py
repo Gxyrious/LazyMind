@@ -6,6 +6,7 @@ tooling and the existing workflow artifact mechanism.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
@@ -621,6 +622,176 @@ def writer_generate_outline(writing_task_path: str, writing_context_path: str) -
         raise
     events.end()
     return outline_path
+
+
+def _outline_workspace_fingerprint(
+    operation: str,
+    writing_context_path: str,
+    user_input: str,
+    writing_task_path: str,
+    source_document_path: str,
+    outline_document_path: str,
+) -> str:
+    payload = json.dumps({
+        'operation': operation,
+        'writing_context_path': writing_context_path,
+        'user_input': user_input,
+        'writing_task_path': writing_task_path,
+        'source_document_path': source_document_path,
+        'outline_document_path': outline_document_path,
+    }, ensure_ascii=False, sort_keys=True)
+    return hashlib.sha256(payload.encode('utf-8')).hexdigest()
+
+
+def _outline_workspace_checkpoint_path(fingerprint: str) -> Path | None:
+    try:
+        require_context()
+    except RuntimeError:
+        return None
+    return _workspace_root() / 'writer-workflow' / f'outline-workspace-{fingerprint}.json'
+
+
+def _write_outline_workspace_checkpoint(path: Path, state: Mapping[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f'.{path.name}.{uuid.uuid4().hex}.tmp')
+    temporary.write_text(
+        json.dumps(dict(state), ensure_ascii=False, indent=2),
+        encoding='utf-8',
+    )
+    temporary.replace(path)
+
+
+def _outline_workspace_state(fingerprint: str) -> tuple[dict[str, Any], Path | None]:
+    path = _outline_workspace_checkpoint_path(fingerprint)
+    if path and path.exists():
+        try:
+            state = json.loads(path.read_text(encoding='utf-8'))
+        except (OSError, json.JSONDecodeError):
+            state = {}
+        if state.get('fingerprint') == fingerprint:
+            return state, path
+    return {
+        'schema_version': 1,
+        'fingerprint': fingerprint,
+        'result': {},
+        'completed': False,
+    }, path
+
+
+def _persist_outline_workspace_state(
+    state: dict[str, Any],
+    path: Path | None,
+    *,
+    completed: bool = False,
+) -> None:
+    state['completed'] = completed
+    if path:
+        _write_outline_workspace_checkpoint(path, state)
+
+
+def writer_outline_workspace(
+    operation: Literal['generate', 'use_source', 'revise'],
+    writing_context_path: str,
+    user_input: str = '',
+    writing_task_path: str = '',
+    source_document_path: str = '',
+    outline_document_path: str = '',
+) -> dict:
+    """Run one existing outline workflow branch without changing its semantics."""
+    if operation not in {'generate', 'use_source', 'revise'}:
+        raise ValueError('operation must be generate, use_source, or revise.')
+    if not writing_context_path:
+        raise ValueError('writing_context_path is required.')
+
+    fingerprint = _outline_workspace_fingerprint(
+        operation,
+        writing_context_path,
+        user_input,
+        writing_task_path,
+        source_document_path,
+        outline_document_path,
+    )
+    state, checkpoint_path = _outline_workspace_state(fingerprint)
+    result: dict[str, Any] = dict(state.get('result') or {})
+    result['operation'] = operation
+    if state.get('completed'):
+        return result
+
+    if operation == 'generate':
+        if not writing_task_path:
+            raise ValueError('writing_task_path is required for generate.')
+        if not result.get('outline_document'):
+            result['outline_document'] = writer_generate_outline(
+                writing_task_path=writing_task_path,
+                writing_context_path=writing_context_path,
+            )
+            state['result'] = result
+            _persist_outline_workspace_state(state, checkpoint_path)
+    elif operation == 'use_source':
+        if not source_document_path:
+            raise ValueError('source_document_path is required for use_source.')
+        if not result.get('outline_document'):
+            result['outline_document'] = writer_prepare_outline(source_document_path)
+            state['result'] = result
+            _persist_outline_workspace_state(state, checkpoint_path)
+    else:
+        if not user_input:
+            raise ValueError('user_input is required for revise.')
+        if not outline_document_path:
+            raise ValueError('outline_document_path is required for revise.')
+        if not result.get('outline_revision_task'):
+            result['outline_revision_task'] = writer_build_revision_task(
+                query=user_input,
+                base_document_path=outline_document_path,
+            )
+            state['result'] = result
+            _persist_outline_workspace_state(state, checkpoint_path)
+        if not result.get('outline_locate_result'):
+            result['outline_locate_result'] = writer_locate_revision_target(
+                base_document_path=outline_document_path,
+                writing_context_path=writing_context_path,
+                revision_task_path=result['outline_revision_task'],
+            )
+            state['result'] = result
+            _persist_outline_workspace_state(state, checkpoint_path)
+        if not result.get('outline_modify_plan'):
+            result['outline_modify_plan'] = writer_generate_modify_plan(
+                base_document_path=outline_document_path,
+                writing_context_path=writing_context_path,
+                revision_task_path=result['outline_revision_task'],
+                locate_result_path=result['outline_locate_result'],
+            )
+            state['result'] = result
+            _persist_outline_workspace_state(state, checkpoint_path)
+        if not result.get('outline_revision_set'):
+            result['outline_revision_set'] = writer_generate_revision_set(
+                base_document_path=outline_document_path,
+                writing_context_path=writing_context_path,
+                modify_plan_path=result['outline_modify_plan'],
+            )
+            state['result'] = result
+            _persist_outline_workspace_state(state, checkpoint_path)
+        if not result.get('outline_document'):
+            applied = writer_apply_revision(
+                base_document_path=outline_document_path,
+                writing_context_path=writing_context_path,
+                revision_set_path=result['outline_revision_set'],
+            )
+            result['outline_document'] = applied['outline_document']
+            result['outline_revision_result'] = applied['revision_result']
+            if applied.get('write_result'):
+                result['outline_write_result'] = applied['write_result']
+            state['result'] = result
+            _persist_outline_workspace_state(state, checkpoint_path)
+
+    if not result.get('writing_context_after_outline'):
+        result['writing_context_after_outline'] = writer_update_writing_context(
+            content_artifact_path=result['outline_document'],
+            writing_context_path=writing_context_path,
+        )
+    state['result'] = result
+    _persist_outline_workspace_state(state, checkpoint_path, completed=True)
+    return result
 
 
 def writer_generate_rewrite_outline(
