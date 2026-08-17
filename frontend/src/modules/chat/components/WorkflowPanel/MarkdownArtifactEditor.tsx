@@ -36,6 +36,7 @@ import {
 } from './artifactRewriteSelection';
 import { WorkflowPanelTabActiveContext, SlotEditingContext } from './slotEditingContext';
 import type { RewriteSelectionPreview } from '@/modules/chat/utils/request';
+import { resolveMarkdownImageUrlAsync } from '@/modules/knowledge/utils/imageUrl';
 import './MarkdownArtifactEditor.scss';
 
 function backtickRunLength(value: string, start: number): number {
@@ -504,7 +505,9 @@ export function MarkdownArtifactEditor({
           linkDialogPlugin(),
           tablePlugin(),
           frontmatterPlugin(),
-          imagePlugin(),
+          imagePlugin({
+            imagePreviewHandler: resolveMarkdownImageUrlAsync,
+          }),
           codeBlockPlugin({ defaultCodeBlockLanguage: 'text' }),
           codeMirrorPlugin({ codeBlockLanguages: MARKDOWN_CODE_LANGUAGES }),
           markdownShortcutPlugin(),

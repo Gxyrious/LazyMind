@@ -68,6 +68,23 @@ def _extract_length_constraints(query: str) -> dict[str, int]:
     }
 
 
+_MARKDOWN_NO_MEDIA_PATTERNS = (
+    re.compile(
+        r'(?:不要|不需要|无需|不用|禁止)\s*(?:使用|添加|插入|生成|展示|显示)?\s*'
+        r'(?:任何\s*)?(?:图片|图像|插图|配图|视觉(?:素材|内容)?)'
+        r'|不(?:使用|添加|插入|生成|展示|显示)\s*(?:任何\s*)?'
+        r'(?:图片|图像|插图|配图|视觉(?:素材|内容)?)'
+        r'|不插图|无图',
+    ),
+    re.compile(
+        r'\b(?:no|without)\s+(?:any\s+)?(?:images?|pictures?|illustrations?|visuals?)\b'
+        r'|\b(?:do\s+not|don\'t)\s+(?:use|include|add|generate|insert|show|display)\s+'
+        r'(?:any\s+)?(?:images?|pictures?|illustrations?|visuals?)\b',
+        re.IGNORECASE,
+    ),
+)
+
+
 class DraftMarkdownStreamEventEmitter:
     """Publish one attempt-scoped Markdown preview for a Writer artifact."""
 
@@ -200,6 +217,11 @@ def _document_value(value: str) -> Any:
         return _json_loads(value, {})
     except json.JSONDecodeError:
         return value
+
+
+def _markdown_media_is_explicitly_disabled(query: str) -> bool:
+    """Return whether the user forbids Markdown media, not text tables."""
+    return any(pattern.search(query or '') for pattern in _MARKDOWN_NO_MEDIA_PATTERNS)
 
 
 def _write_document_input(root: Path, name: str, value: str) -> str:
@@ -786,6 +808,18 @@ class WriterToolkitBase:
         document_title = str(instructions.meta.get('document_title') or '').strip()
         visual_plan: dict[str, Any] = VisualPlan().model_dump()
         warnings = []
+        if (
+            representation == 'markdown'
+            and _markdown_media_is_explicitly_disabled(
+                str(_json_loads(writing_task_json, {}).get('query') or ''),
+            )
+        ):
+            return _json_dumps({
+                'section_instructions': instructions.model_dump(exclude_defaults=True),
+                'visual_plan': visual_plan,
+                'document_title': document_title,
+                'warnings': warnings,
+            })
         if representation == 'ir':
             transient_outline = WriterDocument(
                 document_id=f'{instructions.instruction_set_id}-visual-outline',
@@ -808,16 +842,26 @@ class WriterToolkitBase:
                 transient_outline.model_dump(exclude_defaults=True),
                 self.WRITER_IR_SCHEMA,
             )
-            try:
-                visual_result = planning.generate_visual_plan(
-                    task=task_path,
-                    outline=outline_path,
-                    context=context_path,
-                )
-                visual_plan = _primary_data(visual_result)
-                warnings.extend((visual_result.get('metadata') or {}).get('warnings') or [])
-            except Exception as exc:
-                warnings.append(f'Visual planning failed: {type(exc).__name__}: {exc}')
+        else:
+            transient_markdown = f'# {document_title}\n' + '\n'.join(
+                f'## {instruction.section_title}'
+                for instruction in instructions.instructions
+            )
+            outline_path = _write_document_input(
+                root,
+                'rewrite_visual_outline',
+                transient_markdown,
+            )
+        try:
+            visual_result = planning.generate_visual_plan(
+                task=task_path,
+                outline=outline_path,
+                context=context_path,
+            )
+            visual_plan = _primary_data(visual_result)
+            warnings.extend((visual_result.get('metadata') or {}).get('warnings') or [])
+        except Exception as exc:
+            warnings.append(f'Visual planning failed: {type(exc).__name__}: {exc}')
         return _json_dumps({
             'section_instructions': instructions.model_dump(exclude_defaults=True),
             'visual_plan': visual_plan,
@@ -873,17 +917,23 @@ class WriterToolkitBase:
             llm=AutoModel(model='llm'), artifact_store=str(root),
         )
         warnings = []
-        try:
-            visual_result = planning.generate_visual_plan(
-                task=task_path,
-                outline=outline_path,
-                context=context_path,
+        visual_plan = VisualPlan().model_dump()
+        if not (
+            isinstance(_document_value(outline_json), str)
+            and _markdown_media_is_explicitly_disabled(
+                str(_json_loads(writing_task_json, {}).get('query') or ''),
             )
-            visual_plan = _primary_data(visual_result)
-            warnings.extend((visual_result.get('metadata') or {}).get('warnings') or [])
-        except Exception as exc:
-            visual_plan = VisualPlan().model_dump()
-            warnings.append(f'Visual planning failed: {type(exc).__name__}: {exc}')
+        ):
+            try:
+                visual_result = planning.generate_visual_plan(
+                    task=task_path,
+                    outline=outline_path,
+                    context=context_path,
+                )
+                visual_plan = _primary_data(visual_result)
+                warnings.extend((visual_result.get('metadata') or {}).get('warnings') or [])
+            except Exception as exc:
+                warnings.append(f'Visual planning failed: {type(exc).__name__}: {exc}')
         visual_plan_path = _write_input_artifact(
             root,
             'visual_plan.json',
@@ -1000,12 +1050,14 @@ class WriterToolkitBase:
         writing_task_json: str,
         section_instructions_json: str,
         writing_context_json: str,
+        visual_plan_json: str = '',
     ) -> str:
         """Generate every planned draft section in Markdown, in order."""
         return self.generate_draft_blocks(
             writing_task_json=writing_task_json,
             section_instructions_json=section_instructions_json,
             writing_context_json=writing_context_json,
+            visual_plan_json=visual_plan_json,
         )
 
     def stream_draft_blocks_markdown(
@@ -1015,6 +1067,7 @@ class WriterToolkitBase:
         writing_context_json: str,
         on_delta: Callable[[str], None],
         on_section_end: Callable[[], None] | None = None,
+        visual_plan_json: str = '',
     ) -> str:
         """Generate Markdown sections through LazyLLM's non-tool streaming API."""
         return self._stream_draft_blocks(
@@ -1024,6 +1077,7 @@ class WriterToolkitBase:
             representation='markdown',
             on_delta=on_delta,
             on_section_end=on_section_end,
+            visual_plan_json=visual_plan_json,
         )
 
     def stream_draft_blocks_ir(
@@ -1139,11 +1193,10 @@ class WriterToolkitBase:
                 'context': context_path,
                 'previous_blocks': sections,
             }
-            if representation == 'ir':
-                if visual_plan_path is not None:
-                    stream_kwargs['visual_plan'] = visual_plan_path
-                if media_assets_path is not None:
-                    stream_kwargs['media_assets'] = media_assets_path
+            if visual_plan_path is not None:
+                stream_kwargs['visual_plan'] = visual_plan_path
+            if media_assets_path is not None:
+                stream_kwargs['media_assets'] = media_assets_path
             with stream_factory(
                 **stream_kwargs,
             ) as stream:
@@ -1362,6 +1415,10 @@ class WriterToolkitBase:
                 )
             if not visual.purpose.strip() or not visual.required:
                 raise ValueError('revision image visual_instruction must be required and non-empty.')
+            if visual.preferred_strategy not in {None, 'image_generation'}:
+                raise ValueError(
+                    'revision image preferred_strategy must be null or image_generation.',
+                )
             instructions.append(visual)
         return _json_dumps(VisualPlan(instructions=instructions).model_dump(exclude_defaults=True))
 

@@ -21,7 +21,6 @@ import {
 import { customSchema } from "./config";
 import rehypeRaw from "rehype-raw";
 import {
-  resolveCoreAssetUrl,
   resolveMarkdownImageUrlAsync,
 } from "@/modules/knowledge/utils/imageUrl";
 import HtmlBlock from "./HtmlBlock";
@@ -101,15 +100,13 @@ const ImageComponent = (props: any) => {
   const { t } = useTranslation();
   const [imageLoadError, setImageLoadError] = useState(false);
   const [previewVisible, setPreviewVisible] = useState(false);
-  const [resolvedSrc, setResolvedSrc] = useState(() =>
-    resolveCoreAssetUrl(props.src || ""),
-  );
+  const [resolvedSrc, setResolvedSrc] = useState("");
 
   useEffect(() => {
     let cancelled = false;
     const rawSrc = props.src || "";
     setImageLoadError(false);
-    setResolvedSrc(resolveCoreAssetUrl(rawSrc));
+    setResolvedSrc("");
 
     resolveMarkdownImageUrlAsync(rawSrc)
       .then((url) => {
@@ -119,7 +116,7 @@ const ImageComponent = (props: any) => {
       })
       .catch(() => {
         if (!cancelled) {
-          setResolvedSrc(resolveCoreAssetUrl(rawSrc));
+          setResolvedSrc("");
         }
       });
 

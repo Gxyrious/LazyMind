@@ -90,6 +90,205 @@ def test_write_document_revision_emits_markdown_draft_stream(monkeypatch, tmp_pa
     )
 
 
+def test_markdown_draft_blocks_do_not_pass_resolved_media(monkeypatch, tmp_path):
+    tools = _load_tools_module()
+    context = SimpleNamespace(
+        workspace_path=str(tmp_path),
+        params={'step_id': 'write_document'},
+        emit=lambda _event: None,
+    )
+    captured = {}
+
+    class FakeWriterCreateToolkit:
+        def stream_draft_blocks_markdown(self, **kwargs):
+            captured.update(kwargs)
+            return json.dumps(['## 第一章\n\n正文。\n'])
+
+    monkeypatch.setattr(tools, 'require_context', lambda: context)
+    monkeypatch.setattr(tools, 'WriterCreateToolkit', FakeWriterCreateToolkit)
+    writing_task_path = tmp_path / 'writing_task.json'
+    writing_task_path.write_text('{}', encoding='utf-8')
+    section_instructions_path = tmp_path / 'section_instructions.json'
+    section_instructions_path.write_text('{}', encoding='utf-8')
+    writing_context_path = tmp_path / 'writing_context.json'
+    writing_context_path.write_text('{}', encoding='utf-8')
+    visual_plan_path = tmp_path / 'visual_plan.json'
+    visual_plan_path.write_text('{"instructions": []}', encoding='utf-8')
+
+    paths = tools.writer_generate_draft_blocks_markdown(
+        str(writing_task_path),
+        str(section_instructions_path),
+        str(writing_context_path),
+        str(visual_plan_path),
+    )
+
+    assert 'media_assets_json' not in captured
+    assert captured['visual_plan_json'] == '{"instructions": []}'
+    assert Path(paths[0]).read_text(encoding='utf-8') == '## 第一章\n\n正文。\n'
+
+
+def test_markdown_media_fill_replaces_resolved_and_drops_unresolved():
+    tools = _load_tools_module()
+
+    filled = tools._fill_markdown_media_placeholders(
+        '\n'.join([
+            '# Draft',
+            '',
+            '![Resolved](media-placeholder://need-1)',
+            '![Unresolved](media-placeholder://need-2)',
+            '![[Legacy]](media-placeholder://need-1)',
+            '(media-placeholder://need-3)',
+        ]),
+        {
+            'assets': {
+                'asset-1': {
+                    'uri': 'https://example.com/generated-1.png',
+                    'local_path': '/data/subagent/assets/generated-1.png',
+                },
+                'asset-2': {'uri': 'https://example.com/unmaterialized.png'},
+            },
+            'visual_need_asset_ids': {
+                'need-1': ['asset-1'],
+                'need-2': ['asset-2'],
+            },
+        },
+    )
+
+    assert '![Resolved](/data/subagent/assets/generated-1.png)' in filled
+    assert '![Legacy](/data/subagent/assets/generated-1.png)' in filled
+    assert 'Unresolved' not in filled
+    assert 'unmaterialized.png' not in filled
+    assert 'media-placeholder://' not in filled
+    assert 'media-asset://' not in filled
+
+
+def test_markdown_revision_fills_resolved_media_placeholder(monkeypatch, tmp_path):
+    tools = _load_tools_module()
+    context = SimpleNamespace(
+        workspace_path=str(tmp_path),
+        params={'step_id': 'write_document'},
+        emit=lambda _event: None,
+    )
+
+    class FakeWriterRevisionToolkit:
+        def apply_string_replace(self, **_kwargs) -> str:
+            return json.dumps({
+                'string_replace_result': {'replaced': 1},
+                'revised_document': '![Visual](media-placeholder://need-1)',
+            })
+
+    monkeypatch.setattr(tools, 'require_context', lambda: context)
+    monkeypatch.setattr(tools, 'WriterRevisionToolkit', FakeWriterRevisionToolkit)
+    base_document_path = tmp_path / 'draft.md'
+    base_document_path.write_text('# Original\n', encoding='utf-8')
+    writing_context_path = tmp_path / 'context.json'
+    writing_context_path.write_text('{}', encoding='utf-8')
+    revision_set_path = tmp_path / 'revisions.json'
+    revision_set_path.write_text('{}', encoding='utf-8')
+    media_assets_path = tmp_path / 'media_assets.json'
+    media_assets_path.write_text(json.dumps({
+        'assets': {'asset-1': {'local_path': '/data/subagent/assets/visual.png'}},
+        'visual_need_asset_ids': {'need-1': ['asset-1']},
+    }), encoding='utf-8')
+
+    result = tools.writer_apply_revision(
+        str(base_document_path),
+        str(writing_context_path),
+        str(revision_set_path),
+        str(media_assets_path),
+    )
+
+    assert Path(result['draft_document']).read_text(encoding='utf-8') == (
+        '![Visual](/data/subagent/assets/visual.png)'
+    )
+
+
+def test_markdown_no_image_request_skips_visual_planning(monkeypatch, tmp_path):
+    from lazymind.chat.engine.tools import writer
+
+    calls = []
+
+    class FakePlanningTools:
+        def __init__(self, **_kwargs):
+            pass
+
+        def generate_visual_plan(self, **_kwargs):
+            calls.append('generate_visual_plan')
+            raise AssertionError('explicit no-image request must skip visual planning')
+
+        def generate_section_instructions(self, **_kwargs):
+            path = tmp_path / 'section_instructions.json'
+            path.write_text(json.dumps({
+                'data': {
+                    'instruction_set_id': 'instructions-1',
+                    'instructions': [],
+                    'meta': {'representation': 'markdown'},
+                },
+            }), encoding='utf-8')
+            return {'artifact_path': str(path)}
+
+    monkeypatch.setattr(writer, 'WriterPlanningTools', FakePlanningTools)
+    monkeypatch.setattr(writer, 'AutoModel', lambda **_kwargs: object())
+
+    result = json.loads(writer.WriterCreateToolkit().generate_section_instructions(
+        writing_task_json=json.dumps({
+            'task_id': 'task-1',
+            'query': '请扩写这个大纲，不要图片',
+            'task_type': 'write',
+        }),
+        outline_json='# 标题\n\n## 第一章\n',
+        writing_context_json=json.dumps({'context_id': 'context-1'}),
+    ))
+
+    assert calls == []
+    assert result['visual_plan']['instructions'] == []
+
+
+def test_markdown_rewrite_no_image_request_skips_visual_planning(monkeypatch, tmp_path):
+    from lazymind.chat.engine.tools import writer
+
+    calls = []
+
+    class FakePlanningTools:
+        def __init__(self, **_kwargs):
+            pass
+
+        def generate_rewrite_section_instructions(self, **_kwargs):
+            path = tmp_path / 'rewrite_section_instructions.json'
+            path.write_text(json.dumps({
+                'data': {
+                    'instruction_set_id': 'instructions-1',
+                    'instructions': [],
+                    'meta': {
+                        'representation': 'markdown',
+                        'document_title': 'Rewritten title',
+                    },
+                },
+            }), encoding='utf-8')
+            return {'artifact_path': str(path)}
+
+        def generate_visual_plan(self, **_kwargs):
+            calls.append('generate_visual_plan')
+            raise AssertionError('explicit no-image request must skip visual planning')
+
+    monkeypatch.setattr(writer, 'WriterPlanningTools', FakePlanningTools)
+    monkeypatch.setattr(writer, 'AutoModel', lambda **_kwargs: object())
+
+    result = json.loads(writer.WriterCreateToolkit().generate_rewrite_section_instructions(
+        writing_task_json=json.dumps({
+            'task_id': 'task-1',
+            'query': '请重写全文，不要图片',
+            'task_type': 'write',
+        }),
+        source_document_json='# 原文\n\n正文。\n',
+        writing_context_json=json.dumps({'context_id': 'context-1'}),
+    ))
+
+    assert calls == []
+    assert result['visual_plan']['instructions'] == []
+    assert result['document_title'] == 'Rewritten title'
+
+
 def test_selection_rewrite_uses_slot_markdown_artifact_filename(monkeypatch, tmp_path):
     tools = _load_tools_module()
 

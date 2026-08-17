@@ -270,8 +270,11 @@ steps:
             outline_document, and writing_context_after_outline. Save section_instructions
             and visual_plan.
          2. Route from the outline file format without changing representation:
-            - Markdown outline: call writer_generate_draft_blocks_markdown, then
-              writer_generate_draft_document_markdown.
+            - Markdown outline: when visual_plan contains needs, call
+              writer_resolve_visual_media using visual_plan and media_assets and save
+              resolved_media_assets. Then call writer_generate_draft_blocks_markdown,
+              passing visual_plan when it exists, followed by
+              writer_generate_draft_document_markdown with resolved_media_assets when it exists.
             - IR outline: call writer_resolve_visual_media using visual_plan and
               media_assets, save resolved_media_assets, then call
               writer_generate_draft_blocks with visual_plan and resolved_media_assets,
@@ -309,8 +312,11 @@ steps:
             visual_plan, and retain the returned document_title for final assembly. This
             call plans sections directly; do not generate or expose an outline artifact.
          3. Route from rewrite_base_document's file format without changing representation:
-            - Markdown: call writer_generate_draft_blocks_markdown, then
-              writer_generate_draft_document_markdown with document_title.
+            - Markdown: when visual_plan contains needs, call writer_resolve_visual_media
+              using visual_plan and media_assets and save resolved_media_assets. Call
+              writer_generate_draft_blocks_markdown with visual_plan when it exists, then
+              writer_generate_draft_document_markdown with document_title
+              and resolved_media_assets when it exists.
             - IR: call writer_resolve_visual_media using visual_plan and media_assets, save
               resolved_media_assets, call writer_generate_draft_blocks with visual_plan and
               resolved_media_assets, then writer_generate_draft_document with document_title.
@@ -345,10 +351,10 @@ steps:
 
          1. Call writer_build_revision_task with the current user instruction and
             base_document_path.
-         2. Call writer_locate_revision_target and writer_generate_modify_plan. For an IR
+         2. Call writer_locate_revision_target and writer_generate_modify_plan. For a
             ModifyPlan containing visual_instruction, call writer_resolve_revision_media
             with modify_plan and media_assets and save resolved_media_assets. This resolver
-            is strict: a required image failure stops the revision. Do not resolve media
+            is strict: a required visual failure stops the revision. Do not resolve media
             for delete-only or pure-text revisions.
          3. Call writer_generate_revision_set and writer_apply_revision using the same base
             document and latest context. Pass resolved_media_assets as media_assets_path
