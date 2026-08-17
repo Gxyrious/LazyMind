@@ -408,7 +408,17 @@ def _task_profile_inputs(request: ChatRequest) -> dict[str, Any]:
     }
 
 
-def _resolve_task_profile_with_model(inputs: dict[str, Any]) -> Any:
+def _resolve_task_profile_with_model(
+    inputs: dict[str, Any],
+    *,
+    trace_id: str = '',
+    session_id: str = '',
+) -> Any:
+    set_trace_context({
+        'trace_id': trace_id,
+        'session_id': session_id or trace_id,
+        'sampled': True,
+    })
     def classify(prompt: str) -> Any:
         router_llm = AutoModel(model='llm')
         return router_llm(
@@ -464,6 +474,8 @@ async def handle_chat(request: ChatRequest) -> Union[Dict[str, Any], StreamingRe
         started = time.time()
         routing_task = asyncio.create_task(asyncio.to_thread(
             _resolve_task_profile_with_model, inputs,
+            trace_id=(request.conversation.conversation_id or '').strip(),
+            session_id=request.conversation.session_id,
         ))
         for status_delta in ('正在', '分析', '用户意图', '，请稍后'):
             yield log_and_emit_frame(
@@ -489,7 +501,11 @@ async def handle_chat(request: ChatRequest) -> Union[Dict[str, Any], StreamingRe
     if request.runtime.context_usage_preview or request.runtime.context_prompt_export:
         profile = provisional
         if request.runtime.context_preview_allow_llm_routing:
-            profile = await asyncio.to_thread(_resolve_task_profile_with_model, inputs)
+            profile = await asyncio.to_thread(
+            _resolve_task_profile_with_model, inputs,
+            trace_id=(request.conversation.conversation_id or '').strip(),
+            session_id=request.conversation.session_id,
+        )
         return await _handle_chat_impl(
             request,
             task_profile_override=profile,
@@ -866,14 +882,15 @@ async def _handle_chat_impl(
         skill_config = selected_skills
         workflow_skill_dir = workflow_skills_dir()
     set_trace_context({
-        'trace_id': conversation.session_id, 'session_id': conversation.session_id, 'sampled': True,
+        'trace_id': conversation_id, 'session_id': conversation.session_id, 'sampled': True,
         'module_trace': {
             'by_class': {
                 'FunctionCall': False, 'ToolManager': False,
                 'Pipeline': False, 'Diverter': False,
             },
             'by_name': {
-                '_build_history': False, '_post_action': False, '_safe_call': False,
+                '_build_history': False, '_post_action': False,
+                '_safe_call': False, '_indexed_call': False,
             },
         },
         'request_tags': ['handle_chat'],

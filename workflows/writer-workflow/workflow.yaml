@@ -50,6 +50,8 @@ tool_scripts:
       - writer_generate_draft_document_markdown
       - writer_update_writing_context
       - writer_export_markdown
+      - writer_render_document
+      - writer_save_document
       - writer_convert_markdown_to_ir
       - writer_create_document
       - writer_publish_revision
@@ -72,6 +74,13 @@ artifact_actions:
   sync_document:
     slots: [draft_document]
     execute_tool: writer_sync_document
+  render_document:
+    slots: [outline_document, draft_document]
+    preview_tool: writer_render_document
+    execute_tool: writer_render_document
+  save_document:
+    slots: [outline_document, draft_document]
+    execute_tool: writer_save_document
 
 steps:
   - id: prepare

@@ -37,6 +37,12 @@ from lazyllm.tools.writer.tools import (
     WriterResourceTools,
     WriterRevisionTools,
 )
+from lazyllm.tools.writer.numbering import (
+    build_numbering_view_from_ir,
+    compute_numbering,
+    materialize_markdown,
+    materialize_ir,
+)
 from lazyllm.tools.writer.utils import render_document_markdown, save_artifact_json
 
 WRITER_DATA_MODEL_SCHEMA_PREFIX = 'lazyllm.tools.writer.data_models'
@@ -1335,12 +1341,13 @@ class WriterToolkitBase:
             title_match = re.search(r'^#\s+(.+)$', value, re.MULTILINE)
             return _json_dumps({
                 'title': title_match.group(1).strip() if title_match else '',
-                'markdown': value,
+                'markdown': materialize_markdown(value),
             })
         document = WriterDocument.model_validate(value)
+        numbering = compute_numbering(build_numbering_view_from_ir(document))
         return _json_dumps({
             'title': document.title,
-            'markdown': render_document_markdown(document),
+            'markdown': render_document_markdown(materialize_ir(document, numbering)),
         })
 
     def locate_revision_target(

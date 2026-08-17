@@ -422,6 +422,8 @@ func registerAllRoutes(r *mux.Router) {
 	handleAPI(r, "PATCH", "/workflow-sessions/{session_id}/slots/{slot_id}/items/idx/{list_index}", []string{"qa.write"}, workflow.PatchSlotItemByIndex)
 	handleAPI(r, "POST", "/workflow-sessions/{session_id}/slots/{slot_id}/items/idx/{list_index}:sync-writer-document", []string{"qa.write"}, chat.SyncWriterDocument)
 	handleAPI(r, "POST", "/workflow-sessions/{session_id}/writer-document:write-back", []string{"qa.write"}, chat.WriteBackWriterDocument)
+	handleAPI(r, "POST", "/workflow-sessions/{session_id}/writer-document:render", []string{"qa.read"}, chat.RenderWriterDocument)
+	handleAPI(r, "POST", "/workflow-sessions/{session_id}/writer-document:save", []string{"qa.write"}, chat.SaveWriterDocument)
 	handleAPI(r, "GET", "/workflow-sessions/{session_id}/slots/{slot_id}/items/idx/{list_index}/versions", []string{"qa.read"}, workflow.GetSlotItemVersionsByIndex)
 	handleAPI(r, "POST", "/workflow-sessions/{session_id}/slots/{slot_id}/items/idx/{list_index}/rollback", []string{"qa.write"}, workflow.RollbackSlotItemByIndex)
 	handleAPI(r, "PATCH", "/workflow-sessions/{session_id}/slots/{slot_id}/items/idx/{list_index}/caption", []string{"qa.write"}, workflow.PatchSlotCaptionByIndex)

@@ -25,12 +25,20 @@ from lazyllm.tools.writer.data_models import (
     TargetDocument,
     WriterDocument,
 )
+from lazyllm.tools.writer.numbering import (
+    build_numbering_view_from_ir,
+    build_numbering_view_from_markdown,
+    compute_numbering,
+    dematerialize_markdown,
+    dematerialize_ir,
+    materialize_ir,
+    materialize_markdown,
+)
 from lazyllm.tools.writer.tools import WriterResourceTools, WriterRevisionTools
 from lazyllm.tools.writer.tools.revision_tools import apply_patch_to_ir
 from lazyllm.tools.writer.utils import (
     load_artifact_json,
     parse_document_markdown,
-    render_document_markdown,
     save_artifact_json,
 )
 from lazymind.chat.engine.subagent.context import require_context
@@ -221,11 +229,22 @@ def _emit_draft_markdown_preview(document_path: str) -> None:
     """Publish a saved writer document through the draft Markdown stream."""
     try:
         document = _read_json_file(document_path)
-        markdown = (
-            document
-            if isinstance(document, str)
-            else render_document_markdown(WriterDocument.model_validate(document))
-        )
+        rendered = writer_render_document(document)
+        representation = rendered.get('representation')
+        if representation == 'markdown':
+            markdown = str(rendered.get('document') or '')
+        elif representation == 'ir':
+            preview = _json_loads(
+                WriterCreateToolkit().render_markdown(
+                    writer_document_json=json.dumps(
+                        document, ensure_ascii=False,
+                    ),
+                ),
+                {},
+            )
+            markdown = str(preview.get('markdown') or '')
+        else:
+            markdown = ''
     except Exception:
         return
     if not markdown:
@@ -578,10 +597,6 @@ def _acquire_generated_image(
     generator: Callable[..., dict] | None = None,
 ) -> dict:
     visual_type = str(request.get('visual_type') or '')
-    if visual_type not in {'image', 'diagram'}:
-        raise ValueError(
-            f'image generation does not support visual type {visual_type!r}',
-        )
     prompt = WRITER_IMAGE_ACQUISITION_PROMPT.format(
         visual_type=visual_type,
         purpose=str(request.get('purpose') or ''),
@@ -641,7 +656,11 @@ def writer_resolve_visual_media(
     strict_required: bool = False,
     allowed_strategies_json: str = '',
 ) -> dict:
-    """Resolve visual needs and materialize missing media through registered acquirers."""
+    """Resolve visual needs and materialize missing media through registered acquirers.
+
+    allowed_strategies_json: optional JSON list restricting acquisition strategies
+    (image_generation is the only strategy currently registered).
+    """
     root = _run_root('resolve-media')
     media_root = root / 'media'
     media_root.mkdir(parents=True, exist_ok=True)
@@ -671,6 +690,10 @@ def writer_resolve_visual_media(
     acquired_resources = {}
     acquired_by_purpose = {}
     for request in matched.get('acquisition_requests') or []:
+        strategies = list(request.get('strategies') or [])
+        if not any(strategy in acquirers for strategy in strategies) \
+                and 'image_generation' in acquirers:
+            request = {**request, 'strategies': ['image_generation']}
         instruction_id = str(request['instruction_id'])
         key = (
             str(request.get('visual_type') or ''),
@@ -686,7 +709,8 @@ def writer_resolve_visual_media(
             if strict_required and request.get('required'):
                 raise RuntimeError(
                     f'Failed to acquire required visual media for {instruction_id!r}: '
-                    f'{request.get("purpose") or "current visual requirement"}'
+                    f'{request.get("purpose") or "current visual requirement"}: '
+                    f'{type(exc).__name__}: {exc}'
                 ) from exc
             message = (
                 f'Failed to acquire visual instruction {instruction_id!r}: '
@@ -711,6 +735,24 @@ def writer_resolve_visual_media(
             ],
         }
     warnings.extend(outcome.get('warnings') or [])
+    plan_value = _json_loads(visual_plan_json, {})
+    plan_data = plan_value.get('data', plan_value) if isinstance(plan_value, dict) else plan_value
+    resolved_library = outcome.get('media_assets') or {}
+    resolved_assets = resolved_library.get('assets') or {}
+    resolved_bindings = resolved_library.get('visual_need_asset_ids') or {}
+    unresolved_required = [
+        str(instruction.get('need_id'))
+        for instruction in (plan_data.get('instructions') or [])
+        if instruction.get('required', True) and not any(
+            asset_id in resolved_assets
+            and Path(str(resolved_assets[asset_id].get('local_path') or '')).is_file()
+            for asset_id in resolved_bindings.get(str(instruction.get('need_id')), [])
+        )
+    ]
+    if unresolved_required:
+        raise RuntimeError(
+            'Failed to resolve required visual media for: ' + ', '.join(unresolved_required)
+        )
     resolved_path = save_artifact_json(
         outcome.get('media_assets') or {},
         str(root / 'resolved_media_assets.json'),
@@ -828,10 +870,18 @@ def writer_generate_draft_document(
         Path(draft_blocks_anchor_path)
         if draft_blocks_anchor_path else _workspace_root() / 'draft_blocks'
     )
+    if not anchor.exists():
+        candidates = sorted(
+            (_workspace_root() / 'writer-workflow').glob('draft-blocks-*'),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )
+        if candidates:
+            anchor = candidates[0]
     draft_blocks_dir = anchor if anchor.is_dir() else anchor.parent
     draft_block_paths = sorted(
         (str(path) for path in draft_blocks_dir.glob('draft_block_*.lmd')),
-        key=lambda path: int(Path(path).stem.rsplit('_', 1)[-1]),
+        key=lambda path: int(re.match(r'draft_block_(\d+)', Path(path).stem).group(1)),
     )
     if not draft_block_paths:
         raise ValueError(
@@ -904,10 +954,18 @@ def writer_generate_draft_document_markdown(
         Path(draft_sections_anchor_path)
         if draft_sections_anchor_path else _workspace_root() / 'draft_sections'
     )
+    if not anchor.exists():
+        candidates = sorted(
+            (_workspace_root() / 'writer-workflow').glob('draft-sections-*'),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )
+        if candidates:
+            anchor = candidates[0]
     sections_dir = anchor if anchor.is_dir() else anchor.parent
     section_paths = sorted(
         sections_dir.glob('draft_section_*.md'),
-        key=lambda path: int(path.stem.rsplit('_', 1)[-1]),
+        key=lambda path: int(re.match(r'draft_section_(\d+)', path.stem).group(1)),
     )
     if not section_paths:
         raise ValueError(
@@ -960,6 +1018,61 @@ def writer_export_markdown(content_path: str) -> str:
     )
     output_path.write_text(str(payload.get('markdown') or ''), encoding='utf-8')
     return str(output_path)
+
+
+def writer_render_document(artifact: Any) -> dict:
+    """Render a Writer IR or Markdown artifact with automatic numbering."""
+    document = _action_artifact_data(artifact)
+    if isinstance(document, str):
+        title_match = re.search(r'^#\s+(.+)$', document, re.MULTILINE)
+        return {
+            'title': title_match.group(1).strip() if title_match else '',
+            'representation': 'markdown',
+            'document': materialize_markdown(document),
+        }
+    source = WriterDocument.model_validate(document)
+    numbering = compute_numbering(build_numbering_view_from_ir(source))
+    materialized = materialize_ir(source, numbering)
+    return {
+        'title': source.title,
+        'representation': 'ir',
+        'document': materialized.model_dump(exclude_defaults=True),
+    }
+
+
+def writer_save_document(artifact: Any, base_artifact: Any) -> dict:
+    """Normalize a submitted IR edit back to clean source and re-materialize it."""
+    current_value = _action_artifact_data(artifact)
+    if isinstance(current_value, str):
+        base_value = _action_artifact_data(base_artifact)
+        base_numbering = (
+            compute_numbering(build_numbering_view_from_markdown(base_value))
+            if isinstance(base_value, str)
+            else {}
+        )
+        clean = dematerialize_markdown(current_value, base_numbering)
+        rendered = _json_loads(
+            WriterCreateToolkit().render_markdown(writer_document_json=clean),
+            {},
+        )
+        return {
+            'source_document': clean,
+            'title': rendered.get('title') or '',
+            'representation': 'markdown',
+            'document': rendered.get('markdown') or '',
+        }
+    current = WriterDocument.model_validate(current_value)
+    base = WriterDocument.model_validate(_action_artifact_data(base_artifact))
+    base_numbering = compute_numbering(build_numbering_view_from_ir(base))
+    clean = dematerialize_ir(current, base_numbering)
+    numbering = compute_numbering(build_numbering_view_from_ir(clean))
+    materialized = materialize_ir(clean, numbering)
+    return {
+        'source_document': clean.model_dump(exclude_defaults=True),
+        'title': clean.title,
+        'representation': 'ir',
+        'document': materialized.model_dump(exclude_defaults=True),
+    }
 
 
 def writer_build_revision_task(query: str, base_document_path: str) -> str:

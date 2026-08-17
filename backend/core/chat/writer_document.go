@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -39,6 +40,16 @@ type writerDocumentWriteBackBody struct {
 	RevisedDocument json.RawMessage `json:"revised_document"`
 }
 
+type writerDocumentSaveBody struct {
+	BaseRevision int             `json:"base_revision"`
+	Document     json.RawMessage `json:"document"`
+	Slot         string          `json:"slot"`
+}
+
+type writerDocumentRenderBody struct {
+	Slot string `json:"slot"`
+}
+
 type selectedWriterArtifact struct {
 	Revision orm.WorkflowSlotRevision
 	Value    json.RawMessage
@@ -49,6 +60,13 @@ type writerWriteBackArtifact struct {
 	Document json.RawMessage
 	Markdown string
 	Title    string
+}
+
+func writerDocumentSlot(slot string) (string, bool) {
+	if slot == "" {
+		return "draft_document", true
+	}
+	return slot, slot == "outline_document" || slot == "draft_document"
 }
 
 // SyncWriterDocument writes an edited WriterDocument to Feishu, then commits
@@ -199,6 +217,201 @@ func SyncWriterDocument(w http.ResponseWriter, r *http.Request) {
 		revision.Revision, revision.ListIndex, "human",
 	)
 	writerSyncReply(w, "synced", revision.Revision, true, result)
+}
+
+// RenderWriterDocument renders an outline or draft with automatic numbering.
+// It returns the original representation and its materialized document.
+func RenderWriterDocument(w http.ResponseWriter, r *http.Request) {
+	sessionID := common.PathVar(r, "session_id")
+	if sessionID == "" {
+		common.ReplyErr(w, "session_id required", http.StatusBadRequest)
+		return
+	}
+	var body writerDocumentRenderBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
+		common.ReplyErr(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+	slot, ok := writerDocumentSlot(body.Slot)
+	if !ok {
+		common.ReplyErr(w, "slot must be outline_document or draft_document", http.StatusBadRequest)
+		return
+	}
+	db := store.DB()
+	if db == nil {
+		common.ReplyErr(w, "store not initialized", http.StatusInternalServerError)
+		return
+	}
+	ctx := r.Context()
+	userID := store.UserID(r)
+	session, err := workflow.GetSession(ctx, db, sessionID)
+	if err != nil || session == nil || session.WorkflowID != "writer-workflow" || session.Dismissed ||
+		(session.CreateUserID != "" && userID != "" && session.CreateUserID != userID) {
+		common.ReplyErr(w, "writer session not found", http.StatusNotFound)
+		return
+	}
+	draft, err := loadSelectedWriterArtifact(ctx, db, sessionID, slot)
+	if err != nil {
+		common.ReplyErr(w, "active "+slot+" not found", http.StatusNotFound)
+		return
+	}
+	response, status, err := algo.InvokeWorkflowAction(ctx, algo.WorkflowActionInvokeRequest{
+		WorkflowID: session.WorkflowID,
+		RevisionID: session.WorkflowRevisionID,
+		TreeHash:   session.WorkflowTreeHash,
+		UserID:     userID,
+		Action:     "render_document",
+		Phase:      "execute",
+		Slot:       slot,
+		Artifact:   draft.Value,
+		Arguments:  map[string]any{},
+	})
+	if err != nil {
+		if status < 400 || status > 599 {
+			status = http.StatusBadGateway
+		}
+		common.ReplyErrWithData(w, "render writer document failed", map[string]any{
+			"detail": err.Error(),
+		}, status)
+		return
+	}
+	var result map[string]any
+	if json.Unmarshal(response.Result, &result) != nil {
+		common.ReplyErr(w, "invalid render response", http.StatusBadGateway)
+		return
+	}
+	common.ReplyOK(w, result)
+}
+
+// SaveWriterDocument saves an IR or Markdown edit as a new revision.
+// It returns the re-materialized document and its representation.
+func SaveWriterDocument(w http.ResponseWriter, r *http.Request) {
+	sessionID := common.PathVar(r, "session_id")
+	if sessionID == "" {
+		common.ReplyErr(w, "session_id required", http.StatusBadRequest)
+		return
+	}
+	var body writerDocumentSaveBody
+	if json.NewDecoder(r.Body).Decode(&body) != nil || body.BaseRevision <= 0 ||
+		len(body.Document) == 0 {
+		common.ReplyErr(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+	slot, ok := writerDocumentSlot(body.Slot)
+	if !ok {
+		common.ReplyErr(w, "slot must be outline_document or draft_document", http.StatusBadRequest)
+		return
+	}
+	db := store.DB()
+	if db == nil {
+		common.ReplyErr(w, "store not initialized", http.StatusInternalServerError)
+		return
+	}
+	ctx := r.Context()
+	userID := store.UserID(r)
+	session, err := workflow.GetSession(ctx, db, sessionID)
+	if err != nil || session == nil || session.WorkflowID != "writer-workflow" || session.Dismissed ||
+		(session.CreateUserID != "" && userID != "" && session.CreateUserID != userID) {
+		common.ReplyErr(w, "writer session not found", http.StatusNotFound)
+		return
+	}
+	draft, err := loadSelectedWriterArtifact(ctx, db, sessionID, slot)
+	if err != nil {
+		common.ReplyErr(w, "active "+slot+" not found", http.StatusNotFound)
+		return
+	}
+	if draft.Revision.Revision != body.BaseRevision {
+		common.ReplyErrWithData(w, "revision conflict", map[string]any{
+			"code":             "REVISION_CONFLICT",
+			"current_revision": draft.Revision.Revision,
+		}, http.StatusConflict)
+		return
+	}
+	response, status, err := algo.InvokeWorkflowAction(ctx, algo.WorkflowActionInvokeRequest{
+		WorkflowID: session.WorkflowID,
+		RevisionID: session.WorkflowRevisionID,
+		TreeHash:   session.WorkflowTreeHash,
+		UserID:     userID,
+		Action:     "save_document",
+		Phase:      "execute",
+		Slot:       slot,
+		Artifact:   body.Document,
+		Arguments:  map[string]any{"base_artifact": draft.Value},
+	})
+	if err != nil {
+		if status < 400 || status > 599 {
+			status = http.StatusBadGateway
+		}
+		common.ReplyErrWithData(w, "writer document sync failed", map[string]any{
+			"detail": err.Error(),
+		}, status)
+		return
+	}
+	var result map[string]any
+	if json.Unmarshal(response.Result, &result) != nil {
+		common.ReplyErr(w, "invalid workflow action response", http.StatusBadGateway)
+		return
+	}
+	sourceValue, ok := result["source_document"]
+	if !ok {
+		common.ReplyErr(w, "invalid workflow action response", http.StatusBadGateway)
+		return
+	}
+	schema := "lazyllm.tools.writer.data_models.writer_ir.WriterDocument"
+	if _, isMarkdown := sourceValue.(string); isMarkdown {
+		schema = "text/markdown"
+	}
+	artifact, err := json.Marshal(map[string]any{
+		"schema":         schema,
+		"schema_version": "0.1",
+		"data":           sourceValue,
+		"meta": map[string]any{
+			"created_by": "writer-document-save-api",
+			"created_at": time.Now().UTC().Format(time.RFC3339Nano),
+		},
+	})
+	if err != nil {
+		common.ReplyErr(w, "marshal writerdocument artifact failed", http.StatusInternalServerError)
+		return
+	}
+	revision, err := workflow.WriteSlotRevisionWithHumanArtifact(
+		ctx, db, sessionID, draft.Revision.SlotID, draft.Revision.Slot,
+		draft.Revision.StepID, draft.Revision.Attempt, "single", nil,
+		"json", artifact, nil,
+		&body.BaseRevision,
+	)
+	if err != nil {
+		if errors.Is(err, workflow.ErrConflict) || errors.Is(err, gorm.ErrRecordNotFound) {
+			currentRevision := 0
+			if current, currentErr := loadSelectedWriterArtifact(ctx, db, sessionID, slot); currentErr == nil {
+				currentRevision = current.Revision.Revision
+			}
+			common.ReplyErrWithData(w, "revision conflict", map[string]any{
+				"code":             "REVISION_CONFLICT",
+				"current_revision": currentRevision,
+			}, http.StatusConflict)
+			return
+		}
+		common.ReplyErrWithData(w, "artifact save failed", map[string]any{
+			"detail": err.Error(),
+		}, http.StatusInternalServerError)
+		return
+	}
+	workflow.NotifyWorkflowArtifactUpdated(
+		ctx, db, sessionID, revision.StepID, revision.SlotID, revision.Slot,
+		revision.Revision, revision.ListIndex, "human",
+	)
+	reply := map[string]any{
+		"revision": revision.Revision,
+		"title":    result["title"],
+	}
+	if representation, ok := result["representation"]; ok {
+		reply["representation"] = representation
+	}
+	if document, ok := result["document"]; ok {
+		reply["document"] = document
+	}
+	common.ReplyOK(w, reply)
 }
 
 // WriteBackWriterDocument writes the active IR or Markdown draft to Feishu and

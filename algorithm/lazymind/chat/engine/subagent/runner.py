@@ -736,7 +736,8 @@ async def run_subagent_stream(
                     'Pipeline': False, 'Diverter': False,
                 },
                 'by_name': {
-                    '_build_history': False, '_post_action': False, '_safe_call': False,
+                    '_build_history': False, '_post_action': False,
+                    '_safe_call': False, '_indexed_call': False,
                 },
             }
         })
