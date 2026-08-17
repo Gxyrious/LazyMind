@@ -68,6 +68,36 @@ from lazymind.model_config import is_model_role_available
 LOG = logging.getLogger(__name__)
 
 
+_REQUIRE_INPUT_IMAGE_REUSE = re.compile(
+    r'(?:必须|务必|只能|仅限|只).{0,12}复用.{0,16}'
+    r'(?:我)?(?:上传(?:的)?(?:原图|图片|图像)|原图)'
+    r'|(?:必须|务必|只能|仅限|只).{0,12}(?:使用|采用).{0,16}'
+    r'(?:我)?(?:上传(?:的)?(?:原图|图片|图像)|原图).{0,20}(?:插入|放入|嵌入)'
+    r'|(?:must|only).{0,20}reuse.{0,20}'
+    r'(?:uploaded|original).{0,12}(?:image|picture|photo)'
+    r'|(?:must|only).{0,20}use.{0,20}'
+    r'(?:uploaded|original).{0,12}(?:image|picture|photo).{0,20}(?:insert|embed|include)',
+    re.IGNORECASE,
+)
+_FORBID_IMAGE_GENERATION = re.compile(
+    r'(?:不要|禁止|不得).{0,12}(?:生成|改用|替换|替代).{0,12}(?:图|图片|图像)'
+    r"|(?:do\s+not|don't|never).{0,20}(?:generate|replace|substitute).{0,20}"
+    r'(?:image|picture|photo)',
+    re.IGNORECASE,
+)
+
+
+def _extract_visual_policy(query: str) -> dict[str, bool]:
+    require_reuse = bool(_REQUIRE_INPUT_IMAGE_REUSE.search(query or ''))
+    forbid_generation = bool(_FORBID_IMAGE_GENERATION.search(query or ''))
+    if not require_reuse and not forbid_generation:
+        return {}
+    return {
+        'require_input_image_reuse': require_reuse,
+        'allow_image_generation': not (require_reuse or forbid_generation),
+    }
+
+
 def _workspace_root() -> Path:
     ctx = require_context()
     root = Path(ctx.workspace_path) if ctx.workspace_path else Path('/tmp')
@@ -304,6 +334,12 @@ def writer_build_writing_task(query: str, representation: str = 'markdown') -> s
     task = _json_loads(WriterCreateToolkit().build_writing_task(
         query=query, task_id=workflow_session_id,
     ), {})
+    visual_policy = _extract_visual_policy(query)
+    if visual_policy:
+        task['constraints'] = {
+            **(task.get('constraints') or {}),
+            'visual_policy': visual_policy,
+        }
     task['output'] = {**(task.get('output') or {}), 'representation': representation}
     content = json.dumps(task, ensure_ascii=False)
     return _save_json_artifact('writing_task', content, writer_schema('task.WritingTask'))
@@ -427,10 +463,18 @@ def writer_collect_available_media(
         ),
         [],
     )
+    writing_task_json = _read_json_string(writing_task_path)
+    writing_task_value = _json_loads(writing_task_json, {})
+    visual_policy = (writing_task_value.get('constraints') or {}).get('visual_policy') or {}
+    if visual_policy.get('require_input_image_reuse'):
+        for resource in resources:
+            resource['meta'] = {
+                **(resource.get('meta') or {}),
+                'origin': 'user_upload',
+            }
     root = _run_root('collect-media')
     media_root = root / 'media'
     media_root.mkdir(parents=True, exist_ok=True)
-    writing_task_json = _read_json_string(writing_task_path)
     try:
         payload = _json_loads(toolkit.collect_available_media(
             writing_task_json=writing_task_json,
@@ -946,11 +990,14 @@ def writer_resolve_visual_media(
     media_root = root / 'media'
     media_root.mkdir(parents=True, exist_ok=True)
     toolkit = WriterCreateToolkit()
+    media_assets_json = _read_json_string(media_assets_path)
+    media_assets_value = _json_loads(media_assets_json, {})
+    visual_policy = (media_assets_value.get('meta') or {}).get('visual_policy') or {}
+    allow_image_generation = visual_policy.get('allow_image_generation') is not False
     acquirers = {}
-    if is_model_role_available('image_generator'):
+    if allow_image_generation and is_model_role_available('image_generator'):
         acquirers['image_generation'] = _acquire_generated_image
     visual_plan_json = _read_json_string(visual_plan_path)
-    media_assets_json = _read_json_string(media_assets_path)
     try:
         matched = _json_loads(toolkit.resolve_visual_needs(
             visual_plan_json=visual_plan_json,
@@ -972,7 +1019,8 @@ def writer_resolve_visual_media(
     acquired_by_purpose = {}
     for request in matched.get('acquisition_requests') or []:
         strategies = list(request.get('strategies') or [])
-        if not any(strategy in acquirers for strategy in strategies) \
+        if allow_image_generation \
+                and not any(strategy in acquirers for strategy in strategies) \
                 and 'image_generation' in acquirers:
             request = {**request, 'strategies': ['image_generation']}
         instruction_id = str(request['instruction_id'])
