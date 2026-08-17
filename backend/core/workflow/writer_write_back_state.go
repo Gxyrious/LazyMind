@@ -96,6 +96,9 @@ func writerWriteBackState(
 			}
 		}
 		if !hasBinding {
+			if writerArtifactIsMarkdown(draftValue) {
+				info.State = writerWriteBackInitialDelivery
+			}
 			return info
 		}
 	} else {

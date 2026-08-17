@@ -822,6 +822,8 @@ def writer_generate_rewrite_section_instructions(
         source_document_json=_read_json_string(source_document_path),
         writing_context_json=_read_json_string(writing_context_path),
     ), {})
+    visual_plan = payload.get('visual_plan') or {'instructions': []}
+    visual_needs = visual_plan.get('instructions') or []
     return {
         'section_instructions': _save_json_artifact(
             'section_instructions',
@@ -830,9 +832,11 @@ def writer_generate_rewrite_section_instructions(
         ),
         'visual_plan': _save_json_artifact(
             'visual_plan',
-            json.dumps(payload.get('visual_plan') or {'instructions': []}, ensure_ascii=False),
+            json.dumps(visual_plan, ensure_ascii=False),
             writer_schema('multimodal.VisualPlan'),
         ),
+        'visual_need_count': len(visual_needs),
+        'visual_need_ids': [str(need.get('need_id') or '') for need in visual_needs],
         'document_title': payload.get('document_title') or '',
         'warnings': payload.get('warnings') or [],
     }
@@ -842,13 +846,15 @@ def writer_generate_section_instructions(
     writing_task_path: str,
     outline_path: str,
     writing_context_path: str,
-) -> str:
+) -> dict:
     """Generate internal section instructions from the selected outline IR."""
     payload = _json_loads(WriterCreateToolkit().generate_section_instructions(
         writing_task_json=_read_json_string(writing_task_path),
         outline_json=_read_json_string(outline_path),
         writing_context_json=_read_json_string(writing_context_path),
     ), {})
+    visual_plan = payload.get('visual_plan') or {'instructions': []}
+    visual_needs = visual_plan.get('instructions') or []
     return {
         'section_instructions': _save_json_artifact(
             'section_instructions',
@@ -857,9 +863,11 @@ def writer_generate_section_instructions(
         ),
         'visual_plan': _save_json_artifact(
             'visual_plan',
-            json.dumps(payload.get('visual_plan') or {'instructions': []}, ensure_ascii=False),
+            json.dumps(visual_plan, ensure_ascii=False),
             writer_schema('multimodal.VisualPlan'),
         ),
+        'visual_need_count': len(visual_needs),
+        'visual_need_ids': [str(need.get('need_id') or '') for need in visual_needs],
         'warnings': payload.get('warnings') or [],
     }
 
@@ -1256,6 +1264,11 @@ def writer_generate_draft_document_markdown(
         markdown = _fill_markdown_media_placeholders(
             markdown,
             _read_json_file(resolved_media_assets_path),
+        )
+    if 'media-placeholder://' in markdown:
+        raise ValueError(
+            'Markdown draft contains unresolved media placeholders; '
+            'resolve visual media before assembling the final document.'
         )
     root = _run_root('draft-document-markdown')
     return _save_writer_document(

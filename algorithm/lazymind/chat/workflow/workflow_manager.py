@@ -158,6 +158,30 @@ def _artifact_by_handle(toolkit: HostWorkflowToolkit, session_id: str,
     return matches[0]
 
 
+def _with_terminal_agent_control(result: Dict[str, Any]) -> Dict[str, Any]:
+    workflow_state = result.get('workflow_state')
+    workflow_state = workflow_state if isinstance(workflow_state, dict) else {}
+    projection = result.get('projection')
+    if not isinstance(projection, dict):
+        projection = workflow_state.get('projection')
+    projection = projection if isinstance(projection, dict) else {}
+    completed = (
+        projection.get('completed') is True
+        or workflow_state.get('status') == 'completed'
+        or result.get('status') == 'completed'
+    )
+    if not completed:
+        return result
+    return {
+        **result,
+        '_agent_control': {
+            'stop': True,
+            'reason': 'workflow_completed',
+            'final_text': '工作流已完成，最终产物已生成。',
+        },
+    }
+
+
 def _safe_session_tools(
     toolkit: HostWorkflowToolkit,
     session: Union[str, Callable[[], str]],
@@ -217,8 +241,8 @@ def _safe_session_tools(
                     ),
                 )
                 if state_refreshed:
-                    return {**result, **_state_refresh_notice()}
-                return result
+                    result = {**result, **_state_refresh_notice()}
+                return _with_terminal_agent_control(result)
             except WorkflowClientError as exc:
                 if exc.code != 'STATE_VERSION_CONFLICT' or attempt > 0:
                     raise

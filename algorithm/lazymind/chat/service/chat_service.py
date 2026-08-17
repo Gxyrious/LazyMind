@@ -445,7 +445,12 @@ async def handle_chat(request: ChatRequest) -> Union[Dict[str, Any], StreamingRe
         classifier=None,
         enable_llm_fallback=False,
     )
-    if not provisional.routing_review_required:
+    has_explicit_workflow = bool(
+        request.explicit_resource_bindings.workflow_refs
+        or request.workflow.allowed_workflow_refs
+        or str((request.workflow.workflow_context or {}).get('workflow_ref') or '').strip()
+    )
+    if has_explicit_workflow or not provisional.routing_review_required:
         return await _handle_chat_impl(request, task_profile_override=provisional)
 
     raw_query = str(request.message.query or '')
