@@ -46,10 +46,8 @@ tool_scripts:
       - writer_generate_section_instructions
       - writer_resolve_visual_media
       - writer_resolve_revision_media
-      - writer_generate_draft_blocks
-      - writer_generate_draft_blocks_markdown
       - writer_generate_draft_document
-      - writer_generate_draft_document_markdown
+      - writer_draft_workspace
       - writer_update_writing_context
       - writer_export_markdown
       - writer_render_document

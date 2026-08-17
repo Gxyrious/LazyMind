@@ -1123,6 +1123,7 @@ def writer_generate_draft_blocks(
     writing_context_path: str,
     visual_plan_path: str = '',
     media_assets_path: str = '',
+    checkpoint_dir: str = '',
 ) -> list[str]:
     """Generate and persist all planned draft blocks."""
     events = DraftMarkdownStreamEventEmitter(require_context().emit)
@@ -1139,6 +1140,7 @@ def writer_generate_draft_blocks(
             ),
             on_delta=events.feed,
             on_section_end=events.flush,
+            checkpoint_dir=checkpoint_dir,
         ), [])
         root = _run_root('draft-blocks')
         paths = []
@@ -1161,6 +1163,7 @@ def writer_generate_draft_blocks_markdown(
     section_instructions_path: str,
     writing_context_path: str,
     visual_plan_path: str = '',
+    checkpoint_dir: str = '',
 ) -> list[str]:
     """Generate and persist all planned draft sections as Markdown."""
     events = DraftMarkdownStreamEventEmitter(require_context().emit)
@@ -1174,6 +1177,7 @@ def writer_generate_draft_blocks_markdown(
             ),
             on_delta=events.feed,
             on_section_end=events.flush,
+            checkpoint_dir=checkpoint_dir,
         ), [])
         root = _run_root('draft-sections-markdown')
         paths = []
@@ -1188,7 +1192,7 @@ def writer_generate_draft_blocks_markdown(
     return paths
 
 
-def writer_generate_draft_document(
+def _assemble_draft_document_ir(
     draft_blocks_anchor_path: str,
     writing_context_path: str,
     outline_path: str = '',
@@ -1271,7 +1275,7 @@ def _fill_markdown_media_placeholders(markdown: str, resolved_media_assets: Any)
     return filled
 
 
-def writer_generate_draft_document_markdown(
+def _assemble_draft_document_markdown(
     draft_sections_anchor_path: str,
     writing_context_path: str,
     outline_path: str = '',
@@ -1326,6 +1330,75 @@ def writer_generate_draft_document_markdown(
         editable=True,
         directory=root,
     )
+
+
+def writer_generate_draft_document(
+    writing_task_path: str,
+    section_instructions_path: str,
+    writing_context_path: str,
+    outline_path: str = '',
+    visual_plan_path: str = '',
+    resolved_media_assets_path: str = '',
+    document_title: str = '',
+) -> dict:
+    """Generate sections concurrently, stream in outline order, and assemble the draft."""
+    task = _read_json_file(writing_task_path)
+    representation = str(((task.get('output') or {}).get('representation') or '')).strip()
+    checkpoint_payload = json.dumps({
+        'version': 1,
+        'task': _read_json_string(writing_task_path),
+        'instructions': _read_json_string(section_instructions_path),
+        'context': _read_json_string(writing_context_path),
+        'outline': _read_json_string(outline_path) if outline_path else '',
+        'visual_plan': _read_json_string(visual_plan_path) if visual_plan_path else '',
+        'media_assets': (
+            _read_json_string(resolved_media_assets_path)
+            if resolved_media_assets_path else ''
+        ),
+        'document_title': document_title,
+        'representation': representation,
+    }, ensure_ascii=False, sort_keys=True)
+    checkpoint_key = hashlib.sha256(checkpoint_payload.encode('utf-8')).hexdigest()
+    checkpoint_dir = str(
+        _workspace_root() / 'writer-workflow' / f'draft-sections-{checkpoint_key}'
+    )
+    if representation == 'markdown':
+        draft_blocks = writer_generate_draft_blocks_markdown(
+            writing_task_path=writing_task_path,
+            section_instructions_path=section_instructions_path,
+            writing_context_path=writing_context_path,
+            visual_plan_path=visual_plan_path,
+            checkpoint_dir=checkpoint_dir,
+        )
+        draft_document = _assemble_draft_document_markdown(
+            draft_sections_anchor_path=draft_blocks[0] if draft_blocks else '',
+            writing_context_path=writing_context_path,
+            outline_path=outline_path,
+            document_title=document_title,
+            resolved_media_assets_path=resolved_media_assets_path,
+        )
+    elif representation == 'ir':
+        draft_blocks = writer_generate_draft_blocks(
+            writing_task_path=writing_task_path,
+            section_instructions_path=section_instructions_path,
+            writing_context_path=writing_context_path,
+            visual_plan_path=visual_plan_path,
+            media_assets_path=resolved_media_assets_path,
+            checkpoint_dir=checkpoint_dir,
+        )
+        draft_document = _assemble_draft_document_ir(
+            draft_blocks_anchor_path=draft_blocks[0] if draft_blocks else '',
+            writing_context_path=writing_context_path,
+            outline_path=outline_path,
+            document_title=document_title,
+        )
+    else:
+        raise ValueError("writing_task output representation must be 'markdown' or 'ir'.")
+    return {
+        'draft_blocks': draft_blocks,
+        'draft_document': draft_document,
+        'representation': representation,
+    }
 
 
 def writer_update_writing_context(
@@ -1862,3 +1935,346 @@ def writer_create_document(
         writer_schema('task.TargetDocument'),
         directory=root,
     )
+
+
+def _draft_workspace_fingerprint(
+    operation: str,
+    user_input: str,
+    writing_task_path: str,
+    writing_context_path: str,
+    media_assets_path: str,
+    outline_document_path: str,
+    source_document_path: str,
+    draft_document_path: str,
+    target_document_path: str,
+) -> str:
+    payload = json.dumps({
+        'operation': operation,
+        'user_input': user_input,
+        'writing_task_path': writing_task_path,
+        'writing_context_path': writing_context_path,
+        'media_assets_path': media_assets_path,
+        'outline_document_path': outline_document_path,
+        'source_document_path': source_document_path,
+        'draft_document_path': draft_document_path,
+        'target_document_path': target_document_path,
+    }, ensure_ascii=False, sort_keys=True)
+    return hashlib.sha256(payload.encode('utf-8')).hexdigest()
+
+
+def _draft_workspace_state(fingerprint: str) -> tuple[dict[str, Any], Path]:
+    path = _workspace_root() / 'writer-workflow' / f'draft-workspace-{fingerprint}.json'
+    if path.exists():
+        try:
+            state = json.loads(path.read_text(encoding='utf-8'))
+        except (OSError, json.JSONDecodeError):
+            state = {}
+        if state.get('fingerprint') == fingerprint:
+            return state, path
+    return {
+        'schema_version': 1,
+        'fingerprint': fingerprint,
+        'result': {},
+        'completed': False,
+    }, path
+
+
+def _persist_draft_workspace_state(
+    state: dict[str, Any],
+    path: Path,
+    *,
+    completed: bool = False,
+) -> None:
+    state['completed'] = completed
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f'.{path.name}.{uuid.uuid4().hex}.tmp')
+    temporary.write_text(
+        json.dumps(state, ensure_ascii=False, indent=2),
+        encoding='utf-8',
+    )
+    temporary.replace(path)
+
+
+def _cloud_bound_ir(path: str) -> bool:
+    if not path or Path(path).suffix.lower() != '.lmd':
+        return False
+    document = _read_json_file(path)
+    return isinstance(document, dict) and bool(document.get('provider_binding'))
+
+
+def _modify_plan_needs_media(path: str) -> bool:
+    plan = _read_json_file(path)
+    return any(
+        isinstance(instruction, dict) and bool(instruction.get('visual_instruction'))
+        for instruction in (plan.get('instructions') or [])
+    )
+
+
+def _save_draft_workspace_artifacts(result: Mapping[str, Any]) -> list[str]:
+    from lazymind.chat.engine.subagent.tools import save_artifacts
+
+    ctx = require_context()
+    allowed = set(ctx.output_slots or [])
+    entries: list[dict[str, Any]] = []
+    saved_keys: list[str] = []
+    for key, value in result.items():
+        if allowed and key not in allowed:
+            continue
+        if key == 'draft_blocks' and isinstance(value, list):
+            for path in value:
+                if isinstance(path, str) and Path(path).is_file():
+                    entries.append({
+                        'key': key,
+                        'value': path,
+                        'content_type': 'file',
+                    })
+                    saved_keys.append(key)
+            continue
+        if isinstance(value, str) and Path(value).is_file():
+            entries.append({
+                'key': key,
+                'value': value,
+                'content_type': 'file',
+            })
+            saved_keys.append(key)
+    if not entries:
+        raise RuntimeError('Draft workspace produced no saveable artifacts.')
+    saved = save_artifacts(entries)
+    if not saved.get('success'):
+        raise RuntimeError(f'Failed to save draft workspace artifacts: {saved!r}')
+    return list(dict.fromkeys(saved_keys))
+
+
+def _draft_workspace_completion(
+    result: Mapping[str, Any],
+    saved_keys: list[str],
+) -> dict[str, Any]:
+    draft_blocks = result.get('draft_blocks')
+    return {
+        'status': 'completed',
+        'operation': result.get('operation'),
+        'representation': result.get('representation'),
+        'draft_section_count': len(draft_blocks) if isinstance(draft_blocks, list) else None,
+        'saved_artifact_keys': saved_keys,
+        'warnings': list(result.get('warnings') or []),
+        'artifacts_saved': True,
+    }
+
+
+def writer_draft_workspace(
+    operation: Literal['generate', 'rewrite', 'revise'],
+    writing_task_path: str,
+    writing_context_path: str,
+    user_input: str = '',
+    media_assets_path: str = '',
+    outline_document_path: str = '',
+    source_document_path: str = '',
+    draft_document_path: str = '',
+    target_document_path: str = '',
+) -> dict:
+    """Run one existing draft workflow branch through deterministic top-level tools."""
+    if operation not in {'generate', 'rewrite', 'revise'}:
+        raise ValueError('operation must be generate, rewrite, or revise.')
+    if not writing_task_path or not writing_context_path:
+        raise ValueError('writing_task_path and writing_context_path are required.')
+
+    fingerprint = _draft_workspace_fingerprint(
+        operation,
+        user_input,
+        writing_task_path,
+        writing_context_path,
+        media_assets_path,
+        outline_document_path,
+        source_document_path,
+        draft_document_path,
+        target_document_path,
+    )
+    state, checkpoint_path = _draft_workspace_state(fingerprint)
+    result: dict[str, Any] = dict(state.get('result') or {})
+    result['operation'] = operation
+    if state.get('completed'):
+        saved_keys = list(state.get('saved_artifact_keys') or [])
+        if not state.get('artifacts_saved'):
+            saved_keys = _save_draft_workspace_artifacts(result)
+            state['artifacts_saved'] = True
+            state['saved_artifact_keys'] = saved_keys
+            _persist_draft_workspace_state(state, checkpoint_path, completed=True)
+        return _draft_workspace_completion(result, saved_keys)
+
+    resolved_media = str(result.get('resolved_media_assets') or '')
+    if operation in {'generate', 'rewrite'}:
+        if operation == 'generate':
+            if not outline_document_path:
+                raise ValueError('outline_document_path is required for generate.')
+            if not result.get('section_instructions'):
+                planning = writer_generate_section_instructions(
+                    writing_task_path=writing_task_path,
+                    outline_path=outline_document_path,
+                    writing_context_path=writing_context_path,
+                )
+                result.update({
+                    'section_instructions': planning['section_instructions'],
+                    'visual_plan': planning['visual_plan'],
+                    'visual_need_count': planning['visual_need_count'],
+                    'warnings': list(planning.get('warnings') or []),
+                })
+                state['result'] = result
+                _persist_draft_workspace_state(state, checkpoint_path)
+            document_title = ''
+            outline_path = outline_document_path
+        else:
+            rewrite_base = draft_document_path or source_document_path
+            if not rewrite_base:
+                raise ValueError('draft_document_path or source_document_path is required for rewrite.')
+            if not result.get('section_instructions'):
+                planning = writer_generate_rewrite_section_instructions(
+                    writing_task_path=writing_task_path,
+                    source_document_path=rewrite_base,
+                    writing_context_path=writing_context_path,
+                )
+                result.update({
+                    'section_instructions': planning['section_instructions'],
+                    'visual_plan': planning['visual_plan'],
+                    'visual_need_count': planning['visual_need_count'],
+                    'document_title': planning.get('document_title') or '',
+                    'warnings': list(planning.get('warnings') or []),
+                })
+                state['result'] = result
+                _persist_draft_workspace_state(state, checkpoint_path)
+            document_title = str(result.get('document_title') or '')
+            outline_path = ''
+
+        task = _read_json_file(writing_task_path)
+        representation = str(((task.get('output') or {}).get('representation') or '')).strip()
+        needs_media = representation == 'ir' or int(result.get('visual_need_count') or 0) > 0
+        if needs_media and not resolved_media:
+            if not media_assets_path:
+                raise ValueError('media_assets_path is required when the draft has visual media.')
+            media = writer_resolve_visual_media(
+                visual_plan_path=result['visual_plan'],
+                media_assets_path=media_assets_path,
+            )
+            resolved_media = media['resolved_media_assets']
+            result['resolved_media_assets'] = resolved_media
+            result['warnings'] = [
+                *(result.get('warnings') or []),
+                *(media.get('warnings') or []),
+            ]
+            state['result'] = result
+            _persist_draft_workspace_state(state, checkpoint_path)
+
+        if not result.get('draft_document'):
+            generated = writer_generate_draft_document(
+                writing_task_path=writing_task_path,
+                section_instructions_path=result['section_instructions'],
+                writing_context_path=writing_context_path,
+                outline_path=outline_path,
+                visual_plan_path=result['visual_plan'],
+                resolved_media_assets_path=resolved_media,
+                document_title=document_title,
+            )
+            result['draft_blocks'] = generated['draft_blocks']
+            result['draft_document'] = generated['draft_document']
+            result['representation'] = generated['representation']
+            state['result'] = result
+            _persist_draft_workspace_state(state, checkpoint_path)
+
+        should_write_back = (
+            _cloud_bound_ir(source_document_path)
+            and (operation == 'rewrite' or not draft_document_path)
+        )
+        if should_write_back and not result.get('document_write_result'):
+            published = writer_replace_document(
+                content_path=result['draft_document'],
+                source_document_path=source_document_path,
+                target_document_path=target_document_path,
+                media_assets_path=resolved_media,
+            )
+            result['document_write_result'] = published['publish_result']
+            result['draft_document'] = published['draft_document']
+            state['result'] = result
+            _persist_draft_workspace_state(state, checkpoint_path)
+    else:
+        base_document = draft_document_path or source_document_path
+        if not user_input or not base_document:
+            raise ValueError('user_input and a draft or source document are required for revise.')
+        if not result.get('document_revision_task'):
+            result['document_revision_task'] = writer_build_revision_task(
+                query=user_input,
+                base_document_path=base_document,
+            )
+            state['result'] = result
+            _persist_draft_workspace_state(state, checkpoint_path)
+        if not result.get('document_locate_result'):
+            result['document_locate_result'] = writer_locate_revision_target(
+                base_document_path=base_document,
+                writing_context_path=writing_context_path,
+                revision_task_path=result['document_revision_task'],
+            )
+            state['result'] = result
+            _persist_draft_workspace_state(state, checkpoint_path)
+        if not result.get('document_modify_plan'):
+            result['document_modify_plan'] = writer_generate_modify_plan(
+                base_document_path=base_document,
+                writing_context_path=writing_context_path,
+                revision_task_path=result['document_revision_task'],
+                locate_result_path=result['document_locate_result'],
+            )
+            state['result'] = result
+            _persist_draft_workspace_state(state, checkpoint_path)
+        if _modify_plan_needs_media(result['document_modify_plan']) and not resolved_media:
+            if not media_assets_path:
+                raise ValueError('media_assets_path is required for a visual revision.')
+            media = writer_resolve_revision_media(
+                modify_plan_path=result['document_modify_plan'],
+                media_assets_path=media_assets_path,
+            )
+            resolved_media = media['resolved_media_assets']
+            result['resolved_media_assets'] = resolved_media
+            result['warnings'] = list(media.get('warnings') or [])
+            state['result'] = result
+            _persist_draft_workspace_state(state, checkpoint_path)
+        if not result.get('document_revision_set'):
+            result['document_revision_set'] = writer_generate_revision_set(
+                base_document_path=base_document,
+                writing_context_path=writing_context_path,
+                modify_plan_path=result['document_modify_plan'],
+                media_assets_path=resolved_media,
+            )
+            state['result'] = result
+            _persist_draft_workspace_state(state, checkpoint_path)
+        if not result.get('draft_document'):
+            applied = writer_apply_revision(
+                base_document_path=base_document,
+                writing_context_path=writing_context_path,
+                revision_set_path=result['document_revision_set'],
+                media_assets_path=resolved_media,
+            )
+            result['document_revision_result'] = applied['revision_result']
+            result['draft_document'] = applied['draft_document']
+            state['result'] = result
+            _persist_draft_workspace_state(state, checkpoint_path)
+        if not draft_document_path and _cloud_bound_ir(source_document_path) \
+                and not result.get('document_write_result'):
+            published = writer_publish_revision(
+                source_document_path=source_document_path,
+                revision_set_path=result['document_revision_set'],
+                media_assets_path=resolved_media,
+            )
+            result['document_write_result'] = published['publish_result']
+            result['draft_document'] = published['draft_document']
+            state['result'] = result
+            _persist_draft_workspace_state(state, checkpoint_path)
+
+    if not result.get('writing_context_after_draft'):
+        result['writing_context_after_draft'] = writer_update_writing_context(
+            content_artifact_path=result['draft_document'],
+            writing_context_path=writing_context_path,
+        )
+    state['result'] = result
+    _persist_draft_workspace_state(state, checkpoint_path)
+    saved_keys = _save_draft_workspace_artifacts(result)
+    state['artifacts_saved'] = True
+    state['saved_artifact_keys'] = saved_keys
+    _persist_draft_workspace_state(state, checkpoint_path, completed=True)
+    return _draft_workspace_completion(result, saved_keys)

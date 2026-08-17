@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import re
 import tempfile
@@ -9,10 +10,11 @@ import uuid
 from collections.abc import Callable
 from copy import deepcopy
 from pathlib import Path
+from queue import Queue
 from threading import RLock
 from typing import Any, ClassVar
 
-from lazyllm import LOG, AutoModel
+from lazyllm import LOG, AutoModel, ThreadPoolExecutor
 from lazyllm.tools.writer.data_models import (
     InputResource,
     MediaAssetLibrary,
@@ -39,6 +41,7 @@ from lazyllm.tools.writer.tools import (
 )
 from lazyllm.tools.writer.numbering import materialize_markdown
 from lazyllm.tools.writer.utils import (
+    render_block_markdown,
     save_artifact_json,
     writer_document_to_markdown,
 )
@@ -1062,7 +1065,7 @@ class WriterToolkitBase:
                 writing_task_json=writing_task_json,
                 section_instruction_json=_json_dumps(instruction),
                 writing_context_json=writing_context_json,
-                previous_blocks_json=_json_dumps(blocks),
+                previous_blocks_json='[]',
                 visual_plan_json=visual_plan_json,
                 media_assets_json=media_assets_json,
             ), {})
@@ -1092,6 +1095,7 @@ class WriterToolkitBase:
         on_delta: Callable[[str], None],
         on_section_end: Callable[[], None] | None = None,
         visual_plan_json: str = '',
+        checkpoint_dir: str = '',
     ) -> str:
         """Generate Markdown sections through LazyLLM's non-tool streaming API."""
         return self._stream_draft_blocks(
@@ -1102,6 +1106,7 @@ class WriterToolkitBase:
             on_delta=on_delta,
             on_section_end=on_section_end,
             visual_plan_json=visual_plan_json,
+            checkpoint_dir=checkpoint_dir,
         )
 
     def stream_draft_blocks_ir(
@@ -1113,6 +1118,7 @@ class WriterToolkitBase:
         on_section_end: Callable[[], None] | None = None,
         visual_plan_json: str = '',
         media_assets_json: str = '',
+        checkpoint_dir: str = '',
     ) -> str:
         """Generate IR sections while exposing their Markdown preview deltas."""
         return self._stream_draft_blocks(
@@ -1124,6 +1130,7 @@ class WriterToolkitBase:
             on_section_end=on_section_end,
             visual_plan_json=visual_plan_json,
             media_assets_json=media_assets_json,
+            checkpoint_dir=checkpoint_dir,
         )
 
     def _stream_draft_blocks(
@@ -1137,6 +1144,7 @@ class WriterToolkitBase:
         on_section_end: Callable[[], None] | None,
         visual_plan_json: str = '',
         media_assets_json: str = '',
+        checkpoint_dir: str = '',
     ) -> str:
         instructions_data = _json_loads(section_instructions_json, {})
         instructions = (
@@ -1201,49 +1209,127 @@ class WriterToolkitBase:
                 _json_loads(media_assets_json, {}),
                 writer_schema('multimodal.MediaAssetLibrary'),
             )
-        drafting = WriterDraftingTools(
-            llm=AutoModel(model='llm'), artifact_store=str(root),
-        )
-        sections: list[Any] = []
-        for instruction_data in instructions:
-            instruction = SectionInstruction.model_validate(instruction_data)
-            stream_factory = (
-                drafting.stream_draft_section
-                if representation == 'markdown'
-                else drafting.stream_draft_section_ir
-            )
-            stream_kwargs: dict[str, Any] = {
-                'task': task_path,
-                'section_instruction': instruction,
-                'context': context_path,
-                'previous_blocks': sections,
-            }
-            if visual_plan_path is not None:
-                stream_kwargs['visual_plan'] = visual_plan_path
-            if media_assets_path is not None:
-                stream_kwargs['media_assets'] = media_assets_path
-            with stream_factory(
-                **stream_kwargs,
-            ) as stream:
-                for delta in stream:
-                    forward_delta(delta)
-                result = stream.result()
-            section = _primary_data(result)
-            if representation == 'markdown' and not isinstance(section, str):
-                raise TypeError(
-                    'Markdown Draft stream returned a non-Markdown artifact.',
+        checkpoint_root = Path(checkpoint_dir) if checkpoint_dir else root / 'section-checkpoints'
+        checkpoint_root.mkdir(parents=True, exist_ok=True)
+        sections: list[Any] = [None] * len(instructions)
+        event_queues: list[Queue] = [Queue() for _ in instructions]
+
+        def checkpoint_path(index: int, instruction_data: dict[str, Any]) -> Path:
+            payload = json.dumps({
+                'version': 1,
+                'representation': representation,
+                'task': _json_loads(writing_task_json, {}),
+                'instruction': instruction_data,
+                'context': _json_loads(writing_context_json, {}),
+                'visual_plan': _json_loads(visual_plan_json, {}),
+                'media_assets': _json_loads(media_assets_json, {}),
+            }, ensure_ascii=False, sort_keys=True, default=str)
+            digest = hashlib.sha256(payload.encode('utf-8')).hexdigest()[:16]
+            suffix = '.md' if representation == 'markdown' else '.json'
+            return checkpoint_root / f'section-{index + 1:04d}-{digest}{suffix}'
+
+        def load_checkpoint(path: Path) -> Any:
+            if not path.is_file():
+                return None
+            try:
+                if representation == 'markdown':
+                    value = path.read_text(encoding='utf-8')
+                    return value if value.strip() else None
+                value = json.loads(path.read_text(encoding='utf-8'))
+                return WriterBlock.model_validate(value).model_dump(exclude_defaults=True)
+            except (OSError, ValueError, TypeError, json.JSONDecodeError):
+                LOG.warning('[Writer] Ignoring invalid draft section checkpoint %s', path)
+                return None
+
+        def save_checkpoint(path: Path, section: Any) -> None:
+            temporary = path.with_name(f'.{path.name}.{uuid.uuid4().hex}.tmp')
+            if representation == 'markdown':
+                temporary.write_text(str(section), encoding='utf-8')
+            else:
+                temporary.write_text(
+                    json.dumps(section, ensure_ascii=False, indent=2),
+                    encoding='utf-8',
                 )
-            if representation == 'ir' and not isinstance(section, dict):
-                raise TypeError('IR Draft stream returned a non-WriterBlock artifact.')
-            sections.append(section)
-            if on_section_end is not None:
-                try:
-                    on_section_end()
-                except Exception as exc:  # noqa: BLE001 - preview forwarding is best effort.
-                    LOG.warning(
-                        '[Writer] Draft %s section callback failed: %s',
-                        representation, exc,
-                    )
+            temporary.replace(path)
+
+        def cached_preview(section: Any) -> str:
+            if representation == 'markdown':
+                return str(section)
+            return render_block_markdown(
+                WriterBlock.model_validate(section), level=2,
+            ).rstrip() + '\n'
+
+        def generate_one(index: int, instruction_data: dict[str, Any]) -> None:
+            events = event_queues[index]
+            path = checkpoint_path(index, instruction_data)
+            try:
+                cached = load_checkpoint(path)
+                if cached is not None:
+                    events.put(('delta', cached_preview(cached)))
+                    events.put(('done', cached))
+                    return
+                instruction = SectionInstruction.model_validate(instruction_data)
+                section_root = root / f'section-{index + 1:04d}'
+                section_root.mkdir(parents=True, exist_ok=True)
+                drafting = WriterDraftingTools(
+                    llm=AutoModel(model='llm'), artifact_store=str(section_root),
+                )
+                stream_factory = (
+                    drafting.stream_draft_section
+                    if representation == 'markdown'
+                    else drafting.stream_draft_section_ir
+                )
+                stream_kwargs: dict[str, Any] = {
+                    'task': task_path,
+                    'section_instruction': instruction,
+                    'context': context_path,
+                }
+                if visual_plan_path is not None:
+                    stream_kwargs['visual_plan'] = visual_plan_path
+                if media_assets_path is not None:
+                    stream_kwargs['media_assets'] = media_assets_path
+                with stream_factory(**stream_kwargs) as stream:
+                    for delta in stream:
+                        events.put(('delta', delta))
+                    result = stream.result()
+                section = _primary_data(result)
+                if representation == 'markdown' and not isinstance(section, str):
+                    raise TypeError('Markdown Draft stream returned a non-Markdown artifact.')
+                if representation == 'ir' and not isinstance(section, dict):
+                    raise TypeError('IR Draft stream returned a non-WriterBlock artifact.')
+                save_checkpoint(path, section)
+                events.put(('done', section))
+            except Exception as exc:  # noqa: BLE001 - propagated on the ordered stream.
+                events.put(('error', exc))
+
+        executor = ThreadPoolExecutor(max_workers=min(3, max(1, len(instructions))))
+        futures = [
+            executor.submit(generate_one, index, instruction_data)
+            for index, instruction_data in enumerate(instructions)
+        ]
+        try:
+            for index, events in enumerate(event_queues):
+                while True:
+                    event, payload = events.get()
+                    if event == 'delta':
+                        forward_delta(payload)
+                        continue
+                    if event == 'error':
+                        raise payload
+                    sections[index] = payload
+                    if on_section_end is not None:
+                        try:
+                            on_section_end()
+                        except Exception as exc:  # noqa: BLE001 - preview forwarding is best effort.
+                            LOG.warning(
+                                '[Writer] Draft %s section callback failed: %s',
+                                representation, exc,
+                            )
+                    break
+        finally:
+            for future in futures:
+                future.cancel()
+            executor.shutdown(wait=True, cancel_futures=True)
         return _json_dumps(sections)
 
     def generate_draft_document(
