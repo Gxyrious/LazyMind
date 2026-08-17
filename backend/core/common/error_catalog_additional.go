@@ -343,6 +343,7 @@ func init() {
 	registerAdditionalError("codex tcp bridge token is required", http.StatusServiceUnavailable, 2002050)
 	registerAdditionalError("parse workflow slot manifest", http.StatusBadRequest, 2002051)
 	registerAdditionalErrorPattern("artifact slot %q is not declared in workflow revision %s", "artifact slot is not declared in workflow revision", http.StatusBadRequest, 2002052)
+	registerAdditionalError("writer download conversion is too large", http.StatusRequestEntityTooLarge, 2002053)
 
 }
 
