@@ -57,6 +57,8 @@ type CompiledNode struct {
 	Acceptance      []string      `json:"acceptance_criteria,omitempty"`
 	Capabilities    []string      `json:"capabilities,omitempty"`
 	LegacyTools     []string      `json:"legacy_tools,omitempty"`
+	TerminalTools   []string      `json:"terminal_tools,omitempty"`
+	ToolsOnly       bool          `json:"tools_only,omitempty"`
 	Mode            string        `json:"mode,omitempty"`
 }
 

@@ -35,8 +35,12 @@ steps:
     label: 写作准备
     mode: auto
     route: choice
+    tools_only: true
     prompt: |
       {{runtime_instruction}}
+
+      Authoritative current user request:
+      {{user_input}}
 
       Prepare the workspace only; do not generate an outline or body.
 
@@ -45,24 +49,38 @@ steps:
       - use_outline: use or revise a supplied outline.
       - rewrite_document: rewrite or restructure a supplied complete document.
       - revise_document: make targeted changes to a supplied complete document.
-      - prepare_only: prepare a supplied source without continuing to writing.
+      - prepare_only: only when the user explicitly requests read-only preparation and no
+        writing change. Never select it merely because this is the prepare step, because a
+        source_document is not available yet, or because you cannot access a URL directly.
 
-      If a Feishu/Lark source is referenced but {{user_input}} has no exact URL, stop and
-      report the missing locator. If a knowledge base is explicitly requested, query it
-      once and pass the evidence as knowledge_text; otherwise skip KB.
+      Do not choose target_stage. writer_prepare_workspace derives the terminal target from
+      the authoritative request: full document by default, outline only when explicitly
+      requested as the final deliverable, and prepared only for an explicit read-only request.
 
-      Call writer_prepare_workspace exactly once with the complete user_input, operation,
-      source_filename when supplied, and knowledge_text when retrieved. In one
-      save_artifacts call, save writing_task, media_assets, resource_profiles, and
-      writing_context; also save source_document and target_document only when returned.
-      Save every returned path as content_type="file". Do not invent fallback artifacts.
+      A supplied Feishu/Lark URL is loaded by writer_prepare_workspace; do not pre-read it.
+      If the current user request references Feishu/Lark but has no exact URL, report the
+      missing locator. If a knowledge base is explicitly requested, query it once and pass
+      the evidence as knowledge_text; otherwise skip KB. Targeted section changes, text
+      expansion, or image insertion in a supplied full document require revise_document.
+
+      Call writer_prepare_workspace exactly once with operation and knowledge_text when retrieved.
+      The wrapper accepts knowledge_text only when a preceding successful knowledge-base
+      retrieval is present in this step's tool history; never compose it from the request,
+      attachments, filenames, URLs, or your own writing instructions.
+      The wrapper reads the authoritative user request directly. Pass source_filename only for an
+      uploaded .md, .markdown, .txt, or .lmd source, using its basename exactly. Never put
+      a Feishu/Lark URL or an uploaded image filename in source_filename. The workspace
+      saves its declared artifacts itself. Do not invent fallback artifacts.
 
       Report representation and the exact `REQUIRED_NEXT_STEP: <next_step>` returned.
       If source_document is absent, state that processing continues directly to outline.
     tools:
       - kb
       - writer_prepare_workspace
+    terminal_tools:
+      - writer_prepare_workspace
     outputs:
+      - material: writer_command
       - material: writing_task
       - material: media_assets
       - material: resource_profiles
@@ -72,37 +90,39 @@ steps:
       - material: target_document
         required: false
     acceptance_criteria: |
-      writing_task, media_assets, resource_profiles, and writing_context are present.
+      writer_command, writing_task, media_assets, resource_profiles, and writing_context are present.
       media_assets is valid even when its assets mapping is empty.
       When a Feishu/Lark source was required, source_document and target_document are also present.
 
   outline:
     label: 大纲
     route: choice
+    tools_only: true
     rerun_when: >
       The user asks to modify, regenerate, or replace the current outline artifact.
     prompt: |
       {{runtime_instruction}}
 
-      Retrieve artifact paths only: writing_task, writing_context, optional source_document,
-      and the latest outline_document and writing_context_after_outline. Use the latter
-      context when present.
+      Authoritative current user request:
+      {{user_input}}
 
-      Select one writer_outline_workspace operation:
-      - use_source: no outline exists and source_document is the supplied outline.
-      - generate: no outline/source exists, or complete regeneration is requested.
-      - revise: an outline exists and a targeted change is requested.
+      All input artifacts are already bound to the workspace. The wrapper resolves them
+      authoritatively; do not search for artifacts and do not construct or pass file paths.
 
-      Call writer_outline_workspace exactly once. Pass writing_task_path for generate,
-      source_document_path for use_source, or user_input plus outline_document_path for
-      revise. Do not call internal tools.
+      The writer_command produced by prepare is immutable and is the sole routing decision.
+      Do not reinterpret the request or create, resolve, or replace that command. Call
+      writer_outline_workspace exactly once without operation or artifact path arguments.
+      Do not call internal tools.
 
-      In one save_artifacts call, save outline_document and
-      writing_context_after_outline, plus every returned revision path under its matching
-      key. Save paths as content_type="file" and do not reread the result for a summary.
+      The workspace saves outline_document, writing_context_after_outline, and any revision
+      artifacts itself. Do not reread the result for a summary.
     tools:
       - writer_outline_workspace
+    terminal_tools:
+      - writer_outline_workspace
     inputs:
+      - material: writer_command
+        required: true
       - material: writing_task
         required: true
       - material: writing_context
@@ -134,30 +154,31 @@ steps:
 
   write_document:
     label: 成稿
+    tools_only: true
     rerun_when: >
       The user asks to modify or rewrite the current draft_document, including changes
       to text, structure, images, tables, references, formatting, or insertion position.
     prompt: |
       {{runtime_instruction}}
 
-      Retrieve available artifact paths: latest draft_document, source_document,
-      target_document, outline_document, writing_task, media_assets, writing_context,
-      writing_context_after_outline, and writing_context_after_draft.
+      Authoritative current user request:
+      {{user_input}}
 
-      Select exactly one operation for writer_draft_workspace:
-      - generate: create/regenerate from outline when no draft exists or regeneration is requested.
-      - rewrite: restructure the complete latest draft/source.
-      - revise: make a targeted text or image change to the latest draft/source.
+      All input artifacts are already bound to the workspace. The wrapper resolves them
+      authoritatively; do not search for artifacts and do not construct or pass file paths.
 
-      Call writer_draft_workspace exactly once with all matching artifact paths. Use context
-      priority: writing_context_after_draft, writing_context_after_outline, writing_context.
-      For revise, pass the complete user_input. Do not call internal tools. The workspace
-      saves every output artifact itself and returns completion metadata. After it reports
-      artifacts_saved=true, do not call save_artifacts, get_artifact, list_artifacts, or
-      reread any output; finish immediately from the returned completion metadata.
+      The writer_command produced by prepare is immutable and is the sole routing decision.
+      Do not reinterpret the request or create, resolve, or replace that command. Call
+      writer_draft_workspace exactly once without operation or artifact path arguments.
+      Do not call internal tools. The workspace saves every output itself; finish immediately
+      from its completion metadata.
     tools:
       - writer_draft_workspace
+    terminal_tools:
+      - writer_draft_workspace
     inputs:
+      - material: writer_command
+        required: true
       - material: outline_document
         required: true
         alternatives:

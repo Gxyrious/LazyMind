@@ -250,6 +250,16 @@ def _markdown_media_is_explicitly_disabled(query: str) -> bool:
     return any(pattern.search(query or '') for pattern in _MARKDOWN_NO_MEDIA_PATTERNS)
 
 
+def _requires_input_image_reuse(writing_task: dict[str, Any]) -> bool:
+    visual_policy = (writing_task.get('constraints') or {}).get('visual_policy') or {}
+    return visual_policy.get('require_input_image_reuse') is True
+
+
+def _ensure_required_visual_plan(visual_plan: dict[str, Any], *, required: bool) -> None:
+    if required and not (visual_plan.get('instructions') or []):
+        raise ValueError('Required input image reuse produced no visual plan instructions.')
+
+
 def _write_document_input(root: Path, name: str, value: str) -> str:
     content = _document_value(value)
     if isinstance(content, str):
@@ -813,8 +823,10 @@ class WriterToolkitBase:
     ) -> str:
         """Plan a complete IR or Markdown rewrite without generating an outline."""
         root = _temp_root()
+        writing_task = _json_loads(writing_task_json, {})
+        require_input_image_reuse = _requires_input_image_reuse(writing_task)
         task_path = _write_input_artifact(
-            root, 'writing_task.json', _json_loads(writing_task_json, {}), writer_schema('task.WritingTask'),
+            root, 'writing_task.json', writing_task, writer_schema('task.WritingTask'),
         )
         source_path = _write_document_input(root, 'source_document', source_document_json)
         context_path = _write_input_artifact(
@@ -887,7 +899,14 @@ class WriterToolkitBase:
             visual_plan = _primary_data(visual_result)
             warnings.extend((visual_result.get('metadata') or {}).get('warnings') or [])
         except Exception as exc:
+            if require_input_image_reuse:
+                raise RuntimeError(
+                    f'Required visual planning failed: {type(exc).__name__}: {exc}'
+                ) from exc
             warnings.append(f'Visual planning failed: {type(exc).__name__}: {exc}')
+        _ensure_required_visual_plan(
+            visual_plan, required=require_input_image_reuse,
+        )
         return _json_dumps({
             'section_instructions': instructions.model_dump(exclude_defaults=True),
             'visual_plan': visual_plan,
@@ -931,8 +950,10 @@ class WriterToolkitBase:
     ) -> str:
         """Generate section instructions from an IR or Markdown outline."""
         root = _temp_root()
+        writing_task = _json_loads(writing_task_json, {})
+        require_input_image_reuse = _requires_input_image_reuse(writing_task)
         task_path = _write_input_artifact(
-            root, 'writing_task.json', _json_loads(writing_task_json, {}), writer_schema('task.WritingTask'),
+            root, 'writing_task.json', writing_task, writer_schema('task.WritingTask'),
         )
         outline_path = _write_document_input(root, 'outline', outline_json)
         context_path = _write_input_artifact(
@@ -959,7 +980,14 @@ class WriterToolkitBase:
                 visual_plan = _primary_data(visual_result)
                 warnings.extend((visual_result.get('metadata') or {}).get('warnings') or [])
             except Exception as exc:
+                if require_input_image_reuse:
+                    raise RuntimeError(
+                        f'Required visual planning failed: {type(exc).__name__}: {exc}'
+                    ) from exc
                 warnings.append(f'Visual planning failed: {type(exc).__name__}: {exc}')
+        _ensure_required_visual_plan(
+            visual_plan, required=require_input_image_reuse,
+        )
         visual_plan_path = _write_input_artifact(
             root,
             'visual_plan.json',

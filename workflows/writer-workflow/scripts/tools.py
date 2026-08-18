@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Callable, Literal, Mapping
 
 from lazyllm import AutoModel
+from pydantic import BaseModel, ConfigDict
 from lazyllm.tools.writer.data_models import (
     ContentRef,
     ModifyInstruction,
@@ -52,6 +53,8 @@ from lazymind.chat.engine.tools.writer import (
     sync_writer_documents,
     writer_schema,
 )
+from lazymind.chat.engine.tools.multimodal import image_generator
+from lazymind.model_config import is_model_role_available
 
 WRITER_IMAGE_ACQUISITION_PROMPT = '''Create one professional visual for a long-form document.
 
@@ -61,11 +64,180 @@ The visual must communicate: {purpose}
 Keep the composition clear and suitable for insertion into a document. Avoid watermarks,
 brand logos, decorative filler, and small unreadable text. Return exactly one image.
 '''
-from lazymind.chat.engine.tools.multimodal import image_generator
-from lazymind.model_config import is_model_role_available
 
 
 LOG = logging.getLogger(__name__)
+
+_KB_EVIDENCE_TOOL_NAMES = {
+    'KBToolkit_kb_search',
+    'KBToolkit_kb_keyword_search',
+    'KBToolkit_kb_get_parent_node',
+    'KBToolkit_kb_get_window_nodes',
+}
+
+
+class WriterCommand(BaseModel):
+    """Workflow-private control decision for one user writing request."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    action: Literal['create', 'use_outline', 'rewrite', 'revise', 'read']
+    source_role: Literal['none', 'outline', 'document']
+    target_stage: Literal['prepared', 'outline', 'document']
+    next_step: Literal['outline', 'write_document', '__end__']
+    user_instruction: str
+    source_ref: str | None = None
+    target_ref: str | None = None
+    request_fingerprint: str
+
+
+WriterCommand.model_rebuild(_types_namespace={'Literal': Literal})
+
+
+def _writer_request_fingerprint(user_input: str) -> str:
+    normalized = ' '.join(str(user_input or '').split())
+    return hashlib.sha256(normalized.encode('utf-8')).hexdigest()
+
+
+def _authoritative_writer_user_input(user_input: str) -> str:
+    """Prefer the immutable workflow request over an agent paraphrase."""
+    ctx = require_context()
+    authoritative = str((ctx.params or {}).get('user_input') or '').strip()
+    return authoritative or str(user_input or '').strip()
+
+
+def _has_verified_kb_evidence() -> bool:
+    """Return whether this prepare task has a successful KB retrieval result."""
+    ctx = require_context()
+    try:
+        steps = ctx.db.load_steps(ctx.task_id)
+    except Exception as exc:  # noqa: BLE001 - missing provenance must fail closed.
+        LOG.warning('[Writer] Cannot verify knowledge_text provenance: %s', exc)
+        return False
+    for step in steps:
+        if step.get('role') != 'tool':
+            continue
+        for result in (step.get('content') or {}).get('tool_results') or []:
+            if result.get('name') not in _KB_EVIDENCE_TOOL_NAMES:
+                continue
+            raw = result.get('result')
+            try:
+                payload = json.loads(raw) if isinstance(raw, str) else raw
+            except (TypeError, ValueError):
+                payload = None
+            if isinstance(payload, dict) and payload.get('success') is True:
+                return True
+            if isinstance(raw, str) and raw.startswith('[Large result offloaded to file'):
+                return True
+    return False
+
+
+def _verified_knowledge_text(knowledge_text: str) -> str:
+    normalized = str(knowledge_text or '').strip()
+    if not normalized:
+        return ''
+    if _has_verified_kb_evidence():
+        return normalized
+    LOG.warning(
+        '[Writer] Ignoring knowledge_text without a preceding successful KB retrieval.',
+    )
+    return ''
+
+
+def _authoritative_writer_input_path(
+    key: str | tuple[str, ...],
+    supplied_path: str = '',
+    *,
+    require_workflow_binding: bool = False,
+) -> str:
+    """Resolve a path from immutable Workflow bindings, never an agent guess."""
+    ctx = require_context()
+    remote_inputs = (ctx.params or {}).get('remote_inputs') or {}
+    keys = (key,) if isinstance(key, str) else key
+    authoritative = next((
+        str(remote_inputs.get(candidate) or '').strip()
+        for candidate in keys
+        if str(remote_inputs.get(candidate) or '').strip()
+    ), '')
+    step_id = str((ctx.params or {}).get('step_id') or '').strip()
+    if step_id in {'outline', 'write_document'}:
+        if require_workflow_binding and not authoritative:
+            raise ValueError(
+                f'{keys[0]} is missing from authoritative workflow inputs.'
+            )
+        # A Workflow step may use only materialized slot bindings. In particular,
+        # never accept a guessed path for an optional input that was not bound.
+        return authoritative
+    return authoritative or str(supplied_path or '').strip()
+
+
+def _load_writer_command(path: str) -> WriterCommand:
+    if not path:
+        raise ValueError('writer_command_path is required.')
+    return WriterCommand.model_validate(_read_json_file(path))
+
+
+def writer_resolve_command(
+    user_input: str,
+    action: Literal['create', 'use_outline', 'rewrite', 'revise', 'read'],
+    source_role: Literal['none', 'outline', 'document'],
+    target_stage: Literal['prepared', 'outline', 'document'] = 'document',
+    source_ref: str = '',
+    target_ref: str = '',
+    existing_writer_command_path: str = '',
+) -> str:
+    """Create or reuse the sole Writer control decision for the current request."""
+    ctx = require_context()
+    step_id = str((ctx.params or {}).get('step_id') or '').strip()
+    if step_id and step_id != 'prepare':
+        raise ValueError('WriterCommand can only be created during the prepare step.')
+    user_input = _authoritative_writer_user_input(user_input)
+    existing_writer_command_path = _authoritative_writer_input_path(
+        'writer_command', existing_writer_command_path,
+    )
+    fingerprint = _writer_request_fingerprint(user_input)
+    if existing_writer_command_path:
+        existing = _load_writer_command(existing_writer_command_path)
+        if existing.request_fingerprint == fingerprint:
+            return existing_writer_command_path
+
+    if action == 'create' and source_role != 'none':
+        raise ValueError('create requires source_role="none".')
+    if action == 'use_outline' and source_role != 'outline':
+        raise ValueError('use_outline requires source_role="outline".')
+    if action == 'rewrite' and source_role != 'document':
+        raise ValueError('rewrite requires source_role="document".')
+    if action == 'revise' and source_role not in {'outline', 'document'}:
+        raise ValueError('revise requires source_role="outline" or "document".')
+    if action == 'read' and target_stage != 'prepared':
+        raise ValueError('read requires target_stage="prepared".')
+    if target_stage == 'prepared' and action != 'read':
+        raise ValueError('target_stage="prepared" requires action="read".')
+
+    if action == 'read':
+        next_step = '__end__'
+    elif action == 'rewrite' or (action == 'revise' and source_role == 'document'):
+        next_step = 'write_document'
+    else:
+        next_step = 'outline'
+
+    command = WriterCommand(
+        action=action,
+        source_role=source_role,
+        target_stage=target_stage,
+        next_step=next_step,
+        user_instruction=user_input,
+        source_ref=source_ref or None,
+        target_ref=target_ref or None,
+        request_fingerprint=fingerprint,
+    )
+    root = _run_root('command')
+    return save_artifact_json(
+        command,
+        str(root / 'writer_command.json'),
+        schema_name='writer-workflow.WriterCommand',
+        created_by='writer-workflow-wrapper',
+    )
 
 
 _REQUIRE_INPUT_IMAGE_REUSE = re.compile(
@@ -85,6 +257,69 @@ _FORBID_IMAGE_GENERATION = re.compile(
     r'(?:image|picture|photo)',
     re.IGNORECASE,
 )
+_EXPLICIT_WRITER_MUTATION = re.compile(
+    r'(?:修改|改写|重写|扩写|续写|润色|新增|添加|插入|删除|替换|调整|合并|重排|增强)'
+    r'|\b(?:modify|revise|rewrite|expand|continue|polish|add|insert|delete|replace|edit)\b',
+    re.IGNORECASE,
+)
+_EXPLICIT_OUTLINE_TARGET = re.compile(
+    r'(?:\b(?:only|just)\b.{0,16}\b(?:outline|plan)\b)'
+    r'|(?:(?:只|仅|只需|仅需|先).{0,12}(?:大纲|提纲))'
+    r'|(?:(?:生成|写|创建|整理|修改|调整|完善|输出).{0,12}'
+    r'(?:大纲|提纲)(?:即可|就行|就可以|[。！!？?]?\s*$))'
+    r'|(?:(?:大纲|提纲)(?:即可|就行|就可以|[。！!？?]?\s*$))',
+    re.IGNORECASE,
+)
+_EXPLICIT_PREPARE_ONLY = re.compile(
+    r'(?:(?:只|仅|只需|仅需).{0,8}(?:准备|解析|读取|加载).{0,8}'
+    r'(?:材料|文档|源文件)?(?:即可|就行|就可以|[。！!？?]?\s*$))'
+    r'|(?:(?:不要|无需).{0,8}(?:生成|撰写|写).{0,8}(?:大纲|正文|文档|文章))'
+    r'|(?:\b(?:prepare|read|load)\s+only\b)',
+    re.IGNORECASE,
+)
+_SUPPLIED_OUTLINE_REQUEST = re.compile(
+    r'(?:(?:根据|基于|使用|采用|用|从|提供|上传).{0,12}(?:大纲|提纲))'
+    r'|(?:\b(?:from|using|supplied|uploaded)\b.{0,16}\b(?:outline|plan)\b)',
+    re.IGNORECASE,
+)
+_EXPLICIT_REWRITE_REQUEST = re.compile(
+    r'(?:重写|整体改写|整篇改写|重新组织|重构全文)'
+    r'|(?:\b(?:rewrite|restructure)\b)',
+    re.IGNORECASE,
+)
+_CLOUD_DOCUMENT_URL = re.compile(
+    r"https?://[^\s<>\"']*(?:feishu\.(?:cn|com)|larksuite\.com)/[^\s<>\"']+",
+    re.IGNORECASE,
+)
+_LOCAL_WRITER_DOCUMENT_SUFFIXES = {'.md', '.markdown', '.txt', '.lmd'}
+
+
+def _resolve_prepare_control(
+    user_input: str,
+    suggested_operation: str,
+    *,
+    has_document_source: bool,
+) -> tuple[str, str]:
+    """Resolve prepare operation and terminal target from authoritative facts."""
+    if _EXPLICIT_PREPARE_ONLY.search(user_input):
+        return 'prepare_only', 'prepared'
+
+    operation = suggested_operation
+    if not has_document_source:
+        operation = 'create'
+    elif operation in {'create', 'prepare_only'}:
+        if _SUPPLIED_OUTLINE_REQUEST.search(user_input):
+            operation = 'use_outline'
+        elif _EXPLICIT_REWRITE_REQUEST.search(user_input):
+            operation = 'rewrite_document'
+        else:
+            operation = 'revise_document'
+
+    if operation in {'rewrite_document', 'revise_document'}:
+        return operation, 'document'
+    if _EXPLICIT_OUTLINE_TARGET.search(user_input):
+        return operation, 'outline'
+    return operation, 'document'
 
 
 def _extract_visual_policy(query: str) -> dict[str, bool]:
@@ -352,7 +587,7 @@ def writer_load_local_document(filename: str = '') -> str:
         Path(path)
         for paths in files_by_turn.values()
         for path in paths
-        if Path(path).suffix.lower() in {'.md', '.markdown', '.txt', '.lmd'}
+        if Path(path).suffix.lower() in _LOCAL_WRITER_DOCUMENT_SUFFIXES
     ]
     if filename:
         candidates = [path for path in candidates if path.name == filename]
@@ -535,7 +770,6 @@ def writer_create_writing_context(
 
 
 def writer_prepare_workspace(
-    user_input: str,
     operation: Literal[
         'create',
         'use_outline',
@@ -546,7 +780,14 @@ def writer_prepare_workspace(
     source_filename: str = '',
     knowledge_text: str = '',
 ) -> dict:
-    """Run the deterministic writer preparation chain through existing tools."""
+    """Prepare one writing request.
+
+    ``source_filename`` is only the basename of an uploaded Markdown, text, or LMD
+    document. Feishu/Lark document URLs belong in ``user_input`` and are resolved as
+    cloud documents.
+    """
+    user_input = _authoritative_writer_user_input('')
+    knowledge_text = _verified_knowledge_text(knowledge_text)
     supported_operations = {
         'create',
         'use_outline',
@@ -559,25 +800,92 @@ def writer_prepare_workspace(
             'operation must be create, use_outline, rewrite_document, '
             'revise_document, or prepare_only.',
         )
+    ctx = require_context()
+    files_by_turn = ctx.params.get('history_files_per_turn') or {}
+    local_candidates = [
+        Path(path)
+        for paths in files_by_turn.values()
+        for path in paths or []
+        if Path(path).suffix.lower() in _LOCAL_WRITER_DOCUMENT_SUFFIXES
+    ]
+    source_filename = str(source_filename or '').strip()
+    cloud_source_match = _CLOUD_DOCUMENT_URL.search(user_input or '')
+    has_cloud_source = cloud_source_match is not None
+
+    # Models occasionally copy a Feishu URL into both user_input and source_filename.
+    # Treat that as one cloud source, never as a local filename override.
+    source_filename_is_cloud = bool(
+        source_filename and _CLOUD_DOCUMENT_URL.fullmatch(source_filename)
+    )
+    if source_filename_is_cloud:
+        if source_filename not in user_input:
+            raise ValueError(
+                'A cloud source URL must appear in the authoritative user_input; '
+                'do not supply it only through source_filename.',
+            )
+        source_filename = ''
+        has_cloud_source = True
+    elif source_filename:
+        source_path = Path(source_filename)
+        if source_path.name != source_filename or source_path.suffix.lower() \
+                not in _LOCAL_WRITER_DOCUMENT_SUFFIXES:
+            raise ValueError(
+                'source_filename must be the basename of an uploaded Markdown, text, '
+                'or .lmd document.',
+            )
+        if has_cloud_source:
+            raise ValueError(
+                'The request contains both a Feishu/Lark document URL and a local source '
+                'document. Specify exactly one document source.',
+            )
+
+    source_kind = 'cloud' if has_cloud_source else (
+        'local' if source_filename or local_candidates else 'cloud'
+    )
+    source_ref = (
+        cloud_source_match.group(0) if cloud_source_match else source_filename
+    )
+
+    # The model may suggest an operation for ambiguous supplied documents, but it
+    # does not own the terminal target. Resolve impossible combinations from the
+    # authoritative request and the actual source bindings before creating the
+    # immutable WriterCommand.
+    operation, target_stage = _resolve_prepare_control(
+        user_input,
+        operation,
+        has_document_source=bool(
+            has_cloud_source or source_filename or local_candidates
+        ),
+    )
+
+    command_action = {
+        'create': 'create',
+        'use_outline': 'use_outline',
+        'rewrite_document': 'rewrite',
+        'revise_document': 'revise',
+        'prepare_only': 'read',
+    }[operation]
+    source_role = {
+        'create': 'none',
+        'use_outline': 'outline',
+        'rewrite_document': 'document',
+        'revise_document': 'document',
+        'prepare_only': 'document',
+    }[operation]
+    writer_command = writer_resolve_command(
+        user_input=user_input,
+        action=command_action,
+        source_role=source_role,
+        target_stage=target_stage,
+        source_ref=source_ref,
+    )
+    command = _load_writer_command(writer_command)
 
     source_document = ''
     target_document = ''
     representation = 'markdown'
     if operation != 'create':
-        ctx = require_context()
-        files_by_turn = ctx.params.get('history_files_per_turn') or {}
-        local_candidates = [
-            Path(path)
-            for paths in files_by_turn.values()
-            for path in paths or []
-            if Path(path).suffix.lower() in {'.md', '.markdown', '.txt', '.lmd'}
-        ]
-        has_cloud_source = bool(re.search(
-            r"https?://[^\s<>\"']*(?:feishu\.(?:cn|com)|larksuite\.com)/",
-            user_input or '',
-            re.IGNORECASE,
-        ))
-        if source_filename or (local_candidates and not has_cloud_source):
+        if source_kind == 'local':
             source_document = writer_load_local_document(source_filename)
             representation = (
                 'ir' if Path(source_document).suffix.lower() == '.lmd' else 'markdown'
@@ -615,24 +923,22 @@ def writer_prepare_workspace(
         source_document_path=source_document,
     )
     result = {
+        'writer_command': writer_command,
         'writing_task': writing_task,
         'media_assets': media_result['media_assets'],
         'resource_profiles': resource_profiles,
         'writing_context': writing_context,
         'representation': representation,
-        'next_step': {
-            'create': 'outline',
-            'use_outline': 'outline',
-            'rewrite_document': 'write_document',
-            'revise_document': 'write_document',
-            'prepare_only': '__end__',
-        }[operation],
+        'next_step': command.next_step,
+        'control': {'next_step': command.next_step},
         'warnings': media_result.get('warnings') or [],
     }
     if source_document:
         result['source_document'] = source_document
     if target_document:
         result['target_document'] = target_document
+    result['saved_artifact_keys'] = _save_draft_workspace_artifacts(result)
+    result['artifacts_saved'] = True
     return result
 
 
@@ -733,15 +1039,37 @@ def _persist_outline_workspace_state(
         _write_outline_workspace_checkpoint(path, state)
 
 
-def writer_outline_workspace(
-    operation: Literal['generate', 'use_source', 'revise'],
-    writing_context_path: str,
-    user_input: str = '',
-    writing_task_path: str = '',
-    source_document_path: str = '',
-    outline_document_path: str = '',
-) -> dict:
+def writer_outline_workspace() -> dict:
     """Run one existing outline workflow branch without changing its semantics."""
+    user_input = _authoritative_writer_user_input('')
+    writer_command_path = _authoritative_writer_input_path(
+        'writer_command', require_workflow_binding=True,
+    )
+    writing_context_path = _authoritative_writer_input_path(
+        ('writing_context_after_outline', 'writing_context'),
+        require_workflow_binding=True,
+    )
+    writing_task_path = _authoritative_writer_input_path('writing_task')
+    source_document_path = _authoritative_writer_input_path('source_document')
+    outline_document_path = _authoritative_writer_input_path('outline_document')
+    command = _load_writer_command(writer_command_path)
+    if user_input and command.request_fingerprint != _writer_request_fingerprint(user_input):
+        raise ValueError(
+            'writer_command belongs to a different user request; restart from prepare.'
+        )
+    command_operation = {
+        'create': 'generate',
+        'use_outline': 'use_source',
+        'revise': 'revise',
+    }.get(command.action)
+    if command_operation is None or (
+        command.action == 'revise' and command.source_role != 'outline'
+    ):
+        raise ValueError(
+            f'WriterCommand action={command.action!r} source_role={command.source_role!r} '
+            'cannot execute the outline step.'
+        )
+    operation = command_operation
     if operation not in {'generate', 'use_source', 'revise'}:
         raise ValueError('operation must be generate, use_source, or revise.')
     if not writing_context_path:
@@ -758,7 +1086,17 @@ def writer_outline_workspace(
     state, checkpoint_path = _outline_workspace_state(fingerprint)
     result: dict[str, Any] = dict(state.get('result') or {})
     result['operation'] = operation
+    result['writer_command'] = writer_command_path
+    result['control'] = {
+        'next_step': 'write_document'
+        if command.target_stage == 'document'
+        else '__end__',
+    }
     if state.get('completed'):
+        if not state.get('artifacts_saved'):
+            state['saved_artifact_keys'] = _save_draft_workspace_artifacts(result)
+            state['artifacts_saved'] = True
+            _persist_outline_workspace_state(state, checkpoint_path, completed=True)
         return result
 
     if operation == 'generate':
@@ -834,6 +1172,8 @@ def writer_outline_workspace(
             writing_context_path=writing_context_path,
         )
     state['result'] = result
+    state['saved_artifact_keys'] = _save_draft_workspace_artifacts(result)
+    state['artifacts_saved'] = True
     _persist_outline_workspace_state(state, checkpoint_path, completed=True)
     return result
 
@@ -2058,25 +2398,59 @@ def _draft_workspace_completion(
         'saved_artifact_keys': saved_keys,
         'warnings': list(result.get('warnings') or []),
         'artifacts_saved': True,
+        'control': {'next_step': '__end__'},
     }
 
 
-def writer_draft_workspace(
-    operation: Literal['generate', 'rewrite', 'revise'],
-    writing_task_path: str,
-    writing_context_path: str,
-    user_input: str = '',
-    media_assets_path: str = '',
-    outline_document_path: str = '',
-    source_document_path: str = '',
-    draft_document_path: str = '',
-    target_document_path: str = '',
-) -> dict:
+def writer_draft_workspace() -> dict:
     """Run one existing draft workflow branch through deterministic top-level tools."""
+    user_input = _authoritative_writer_user_input('')
+    writer_command_path = _authoritative_writer_input_path(
+        'writer_command', require_workflow_binding=True,
+    )
+    writing_task_path = _authoritative_writer_input_path(
+        'writing_task', require_workflow_binding=True,
+    )
+    writing_context_path = _authoritative_writer_input_path(
+        (
+            'writing_context_after_draft',
+            'writing_context_after_outline',
+            'writing_context',
+        ),
+        require_workflow_binding=True,
+    )
+    media_assets_path = _authoritative_writer_input_path('media_assets')
+    outline_document_path = _authoritative_writer_input_path('outline_document')
+    source_document_path = _authoritative_writer_input_path('source_document')
+    draft_document_path = _authoritative_writer_input_path('draft_document')
+    target_document_path = _authoritative_writer_input_path('target_document')
+    command = _load_writer_command(writer_command_path)
+    if command.target_stage != 'document':
+        raise ValueError('write_document requires writer_command.target_stage="document".')
+    command_operation = {
+        'create': 'generate',
+        'use_outline': 'generate',
+        'rewrite': 'rewrite',
+        'revise': 'revise',
+    }.get(command.action)
+    if command_operation is None or (
+        command.action == 'revise' and command.source_role != 'document'
+    ):
+        raise ValueError(
+            f'WriterCommand action={command.action!r} source_role={command.source_role!r} '
+            'cannot execute the document step.'
+        )
+    operation = command_operation
     if operation not in {'generate', 'rewrite', 'revise'}:
         raise ValueError('operation must be generate, rewrite, or revise.')
     if not writing_task_path or not writing_context_path:
         raise ValueError('writing_task_path and writing_context_path are required.')
+    if user_input and command.request_fingerprint != _writer_request_fingerprint(user_input):
+        raise ValueError(
+            'writer_command belongs to a different user request; restart from prepare.'
+        )
+    if operation == 'revise' and not user_input:
+        user_input = command.user_instruction
 
     fingerprint = _draft_workspace_fingerprint(
         operation,
@@ -2092,6 +2466,7 @@ def writer_draft_workspace(
     state, checkpoint_path = _draft_workspace_state(fingerprint)
     result: dict[str, Any] = dict(state.get('result') or {})
     result['operation'] = operation
+    result['writer_command'] = writer_command_path
     if state.get('completed'):
         saved_keys = list(state.get('saved_artifact_keys') or [])
         if not state.get('artifacts_saved'):
