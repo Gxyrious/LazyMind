@@ -93,6 +93,15 @@ func TestWriterDocumentIsUnbound(t *testing.T) {
 	}
 }
 
+func TestWriterDocumentRenderSlotIncludesSource(t *testing.T) {
+	if slot, ok := writerDocumentRenderSlot("source_document"); !ok || slot != "source_document" {
+		t.Fatalf("source_document render slot = %q, %v", slot, ok)
+	}
+	if _, ok := writerDocumentSlot("source_document"); ok {
+		t.Fatal("source_document must remain read-only")
+	}
+}
+
 func TestLoadWriterWriteBackArtifact_InlineMarkdown(t *testing.T) {
 	artifact, err := loadWriterWriteBackArtifact(json.RawMessage(
 		`{"schema":"text/markdown","data":"# Draft\n"}`,

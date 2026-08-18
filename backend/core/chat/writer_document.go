@@ -69,6 +69,13 @@ func writerDocumentSlot(slot string) (string, bool) {
 	return slot, slot == "outline_document" || slot == "draft_document"
 }
 
+func writerDocumentRenderSlot(slot string) (string, bool) {
+	if slot == "source_document" {
+		return slot, true
+	}
+	return writerDocumentSlot(slot)
+}
+
 // SyncWriterDocument writes an edited WriterDocument to Feishu, then commits
 // the provider-confirmed document as a human artifact revision.
 func SyncWriterDocument(w http.ResponseWriter, r *http.Request) {
@@ -219,7 +226,7 @@ func SyncWriterDocument(w http.ResponseWriter, r *http.Request) {
 	writerSyncReply(w, "synced", revision.Revision, true, result)
 }
 
-// RenderWriterDocument renders an outline or draft with automatic numbering.
+// RenderWriterDocument renders a source, outline, or draft with automatic numbering.
 // It returns the original representation and its materialized document.
 func RenderWriterDocument(w http.ResponseWriter, r *http.Request) {
 	sessionID := common.PathVar(r, "session_id")
@@ -232,9 +239,9 @@ func RenderWriterDocument(w http.ResponseWriter, r *http.Request) {
 		common.ReplyErr(w, "invalid body", http.StatusBadRequest)
 		return
 	}
-	slot, ok := writerDocumentSlot(body.Slot)
+	slot, ok := writerDocumentRenderSlot(body.Slot)
 	if !ok {
-		common.ReplyErr(w, "slot must be outline_document or draft_document", http.StatusBadRequest)
+		common.ReplyErr(w, "slot must be source_document, outline_document, or draft_document", http.StatusBadRequest)
 		return
 	}
 	db := store.DB()
