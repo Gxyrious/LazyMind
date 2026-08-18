@@ -88,6 +88,10 @@ steps:
   - id: write_document
 
 slots:
+  - id: writer_command
+    label: Writer Command
+    type: file
+    cardinality: single
   - id: writing_task
     label: Writing Task
     type: file
@@ -232,6 +236,7 @@ i18n:
       result: {label: 成稿}
     slots:
       writing_task: {label: 写作任务}
+      writer_command: {label: 写作控制命令}
       media_assets: {label: 可用图片素材}
       resolved_media_assets: {label: 已解析图片素材}
       visual_plan: {label: 视觉规划}
