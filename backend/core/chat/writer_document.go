@@ -373,6 +373,7 @@ func SaveWriterDocument(w http.ResponseWriter, r *http.Request) {
 		"meta": map[string]any{
 			"created_by": "writer-document-save-api",
 			"created_at": time.Now().UTC().Format(time.RFC3339Nano),
+			"title":      result["title"],
 		},
 	})
 	if err != nil {
@@ -948,13 +949,35 @@ func writerArtifactData(value json.RawMessage, requireLMD bool) (json.RawMessage
 }
 
 func loadWriterWriteBackArtifact(value json.RawMessage) (*writerWriteBackArtifact, error) {
-	var record map[string]json.RawMessage
+	var record struct {
+		Schema   string          `json:"schema"`
+		Data     json.RawMessage `json:"data"`
+		Path     string          `json:"path"`
+		Filename string          `json:"filename"`
+		Meta     struct {
+			Title string `json:"title"`
+		} `json:"meta"`
+	}
 	if err := json.Unmarshal(value, &record); err != nil {
 		return nil, fmt.Errorf("invalid writer artifact")
 	}
-	var path string
-	_ = json.Unmarshal(record["path"], &path)
+	path := record.Path
 	if path == "" {
+		if record.Schema == "text/markdown" {
+			var markdown string
+			if json.Unmarshal(record.Data, &markdown) != nil || strings.TrimSpace(markdown) == "" {
+				return nil, fmt.Errorf("active draft_document Markdown is empty")
+			}
+			title := record.Meta.Title
+			if title == "" {
+				if heading, ok := strings.CutPrefix(strings.TrimSpace(strings.SplitN(markdown, "\n", 2)[0]), "# "); ok {
+					title = strings.TrimSpace(heading)
+				}
+			}
+			return &writerWriteBackArtifact{
+				Format: "markdown", Markdown: markdown, Title: title,
+			}, nil
+		}
 		document, err := writerArtifactData(value, false)
 		if err != nil {
 			return nil, err
@@ -976,8 +999,7 @@ func loadWriterWriteBackArtifact(value json.RawMessage) (*writerWriteBackArtifac
 		if strings.TrimSpace(string(content)) == "" {
 			return nil, fmt.Errorf("active draft_document Markdown is empty")
 		}
-		var filename string
-		_ = json.Unmarshal(record["filename"], &filename)
+		filename := record.Filename
 		if filename == "" {
 			filename = filepath.Base(cleanPath)
 		}

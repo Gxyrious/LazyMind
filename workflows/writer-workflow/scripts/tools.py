@@ -1234,7 +1234,7 @@ def _assemble_draft_document_ir(
 
 
 def _fill_markdown_media_placeholders(markdown: str, resolved_media_assets: Any) -> str:
-    """Replace resolved Markdown media placeholders with local image paths."""
+    """Replace resolved Markdown media placeholders with image paths."""
     wiki_placeholder_pattern = re.compile(
         r'!\[\[([^\]]*)\]\]\(media-placeholder://([A-Za-z0-9_-]+)\)'
     )
@@ -1250,7 +1250,7 @@ def _fill_markdown_media_placeholders(markdown: str, resolved_media_assets: Any)
         asset_ids = need_asset_ids.get(need_id) or []
         if asset_ids:
             asset = assets.get(asset_ids[0]) or {}
-            path = str(asset.get('local_path') or '')
+            path = str(asset.get('uri') or asset.get('local_path') or '')
             if path:
                 return f'![{caption}]({path})'
         dropped.append(need_id)
