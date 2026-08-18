@@ -327,6 +327,11 @@ func SaveWriterDocument(w http.ResponseWriter, r *http.Request) {
 		}, http.StatusConflict)
 		return
 	}
+	editedArtifact, err := json.Marshal(map[string]json.RawMessage{"data": body.Document})
+	if err != nil {
+		common.ReplyErr(w, "invalid document", http.StatusBadRequest)
+		return
+	}
 	response, status, err := algo.InvokeWorkflowAction(ctx, algo.WorkflowActionInvokeRequest{
 		WorkflowID: session.WorkflowID,
 		RevisionID: session.WorkflowRevisionID,
@@ -335,7 +340,7 @@ func SaveWriterDocument(w http.ResponseWriter, r *http.Request) {
 		Action:     "save_document",
 		Phase:      "execute",
 		Slot:       slot,
-		Artifact:   body.Document,
+		Artifact:   editedArtifact,
 		Arguments:  map[string]any{"base_artifact": draft.Value},
 	})
 	if err != nil {

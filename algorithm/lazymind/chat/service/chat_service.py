@@ -423,6 +423,7 @@ def _resolve_task_profile_with_model(
         'session_id': session_id or trace_id,
         'sampled': True,
     })
+
     def classify(prompt: str) -> Any:
         router_llm = AutoModel(model='llm')
         return router_llm(
@@ -517,14 +518,14 @@ async def handle_chat(request: ChatRequest) -> Union[Dict[str, Any], StreamingRe
         profile = provisional
         if request.runtime.context_preview_allow_llm_routing:
             profile = await asyncio.to_thread(
-            _resolve_task_profile_with_model, inputs,
-            trace_id=(
-                request.conversation.conversation_id
-                or request.conversation.session_id
-                or ''
-            ).strip(),
-            session_id=request.conversation.session_id,
-        )
+                _resolve_task_profile_with_model, inputs,
+                trace_id=(
+                    request.conversation.conversation_id
+                    or request.conversation.session_id
+                    or ''
+                ).strip(),
+                session_id=request.conversation.session_id,
+            )
         return await _handle_chat_impl(
             request,
             task_profile_override=profile,
