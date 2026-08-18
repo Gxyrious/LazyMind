@@ -1265,8 +1265,11 @@ export function WorkflowPanel({
     };
   }, []);
 
-  const flushPendingEdits = useCallback(async (): Promise<boolean> => {
-    const flushers = [...flushFns.current.values()];
+  const flushPendingEdits = useCallback(async (flushKey?: string): Promise<boolean> => {
+    const selectedFlusher = flushKey ? flushFns.current.get(flushKey) : undefined;
+    const flushers = flushKey
+      ? (selectedFlusher ? [selectedFlusher] : [])
+      : [...flushFns.current.values()];
     if (flushers.length === 0) return true;
     const results = await Promise.all(flushers.map((flush) => flush()));
     return results.every(Boolean);
@@ -1364,11 +1367,11 @@ export function WorkflowPanel({
   const effectivePast = new Set(session.projection?.past ?? []);
   const continueDisabled = buttonsDisabled || currentStepStatus === 'failed';
 
-  async function runFooterAction(action: () => void) {
+  async function runFooterAction(action: () => void, flushKey?: string) {
     if (sessionBusy || actionPending) return;
     setActionPending(true);
     try {
-      const saved = await flushPendingEdits();
+      const saved = await flushPendingEdits(flushKey);
       if (!saved) return;
       action();
     } finally {
@@ -1670,7 +1673,7 @@ export function WorkflowPanel({
                         aria-disabled={actionPending || action.disabled}
                         onClick={() => {
                           if (action.flushBeforeAction) {
-                            void runFooterAction(action.onClick);
+                            void runFooterAction(action.onClick, action.flushKey);
                             return;
                           }
                           action.onClick();

@@ -1420,6 +1420,17 @@ const zhCN = {
     streamCloseFailedLog: "关闭消息流失败",
     writerIR: {
       documentRegion: "结构化文档",
+      displaySettings: "文档显示设置",
+      outline: "目录",
+      expandOutline: "展开目录",
+      collapseOutline: "收起目录",
+      noHeadings: "文档中暂无标题",
+      jumpToHeading: "跳转到标题：{{title}}",
+      pageWidth: "页面宽度",
+      pageWidths: {
+        default: "默认",
+        wide: "加宽",
+      },
       stage: "阶段：{{stage}}",
       stages: {
         outline: "大纲",
@@ -1451,6 +1462,7 @@ const zhCN = {
       orderedList: "有序列表",
       bold: "加粗",
       italic: "斜体",
+      crossReference: "交叉引用",
       collapseSection: "收起",
       expandSection: "展开",
       dragBlock: "拖动块",

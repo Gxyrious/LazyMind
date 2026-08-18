@@ -8,6 +8,7 @@ import {
   frontmatterPlugin,
   headingsPlugin,
   imagePlugin,
+  jsxPlugin,
   linkDialogPlugin,
   linkPlugin,
   listsPlugin,
@@ -16,18 +17,32 @@ import {
   tablePlugin,
   thematicBreakPlugin,
   toolbarPlugin,
+  GenericJsxEditor,
+  type MDXEditorMethods,
+  type JsxEditorProps,
 } from '@mdxeditor/editor';
+import {
+  DownOutlined,
+  HighlightOutlined,
+  LinkOutlined,
+  MenuFoldOutlined,
+  MenuUnfoldOutlined,
+} from '@ant-design/icons';
+import { Dropdown } from 'antd';
 import '@mdxeditor/editor/style.css';
 import {
   useCallback,
   useContext,
   useEffect,
+  useId,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
 } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ArtifactRewriteInlineDiff } from './ArtifactRewriteDialog';
+import { ArtifactRewriteSelectionHighlight } from './ArtifactRewriteSelectionHighlight';
 import {
   floatingToolbarAnchor,
   selectedMarkdownParagraph,
@@ -36,8 +51,23 @@ import {
 } from './artifactRewriteSelection';
 import { WorkflowPanelTabActiveContext, SlotEditingContext } from './slotEditingContext';
 import type { RewriteSelectionPreview } from '@/modules/chat/utils/request';
-import { resolveMarkdownImageUrlAsync } from '@/modules/knowledge/utils/imageUrl';
+import {
+  applyWriterMarkdownInternalReference,
+  collectWriterMarkdownOutline,
+  writerMarkdownForEditor,
+  writerMarkdownForSave,
+} from './writerMarkdownAnchors';
 import './MarkdownArtifactEditor.scss';
+
+function WriterAnchorEditor(props: JsxEditorProps) {
+  const id = props.mdastNode.attributes.find(
+    (attribute) => attribute.type === 'mdxJsxAttribute' && attribute.name === 'id',
+  )?.value;
+  if (typeof id === 'string' && id.startsWith('block-')) {
+    return <span id={id} className='writer-markdown-editor__system-anchor' aria-hidden='true' />;
+  }
+  return <GenericJsxEditor {...props} />;
+}
 
 function backtickRunLength(value: string, start: number): number {
   let end = start;
@@ -82,7 +112,7 @@ function normalizeMarkdownForMdxEditor(markdown: string): string {
   let fenceCharacter = '';
   let fenceLength = 0;
 
-  return markdown.split('\n').map((line) => {
+  return writerMarkdownForEditor(markdown).split('\n').map((line) => {
     const fence = line.match(/^ {0,3}(`{3,}|~{3,})/);
     if (fence) {
       const marker = fence[1];
@@ -135,6 +165,7 @@ interface MarkdownArtifactEditorProps {
   onContentChange?: (markdown: string) => void;
   onRewriteSelection?: (selection: MarkdownSelection) => void;
   rewriteUnavailableReason?: string;
+  rewriteDialogOpen?: boolean;
   rewritePreview?: MarkdownRewritePreview | null;
   onRewritePreviewApplied?: (revision?: number) => void;
   onRewritePreviewRejected?: () => void;
@@ -151,14 +182,18 @@ function isMarkdownToolbarInteractionTarget(node: Node | null | undefined): bool
   return Boolean(
     node.closest('.mdxeditor-toolbar')
     || node.closest('.mdxeditor-popup-container')
-    || node.closest('.mdxeditor-select-content'),
+    || node.closest('.mdxeditor-select-content')
+    || node.closest('.writer-markdown-editor__reference-dropdown'),
   );
 }
 
 function isMarkdownToolbarDropdownOpen(): boolean {
   return Boolean(
     document.querySelector('.mdxeditor-select-content[data-state="open"]')
-    || document.querySelector('.mdxeditor-toolbar [data-state="open"]'),
+    || document.querySelector('.mdxeditor-toolbar [data-state="open"]')
+    || document.querySelector(
+      '.writer-markdown-editor__reference-dropdown:not(.ant-dropdown-hidden)',
+    ),
   );
 }
 
@@ -173,6 +208,7 @@ export function MarkdownArtifactEditor({
   onContentChange,
   onRewriteSelection,
   rewriteUnavailableReason,
+  rewriteDialogOpen = false,
   rewritePreview,
   onRewritePreviewApplied,
   onRewritePreviewRejected,
@@ -187,10 +223,15 @@ export function MarkdownArtifactEditor({
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string>();
   const [conflict, setConflict] = useState(false);
+  const [outlineOpen, setOutlineOpen] = useState(false);
   const [selection, setSelection] = useState<MarkdownSelection | null>(null);
   const [selectionToolbar, setSelectionToolbar] = useState<FloatingToolbarAnchor | null>(null);
   const [rewriteLayer, setRewriteLayer] = useState<HTMLDivElement | null>(null);
+  const [rewriteSelectionPinned, setRewriteSelectionPinned] = useState(false);
   const rootRef = useRef<HTMLElement>(null);
+  const editorRef = useRef<MDXEditorMethods>(null);
+  const referenceSelectionRef = useRef<MarkdownSelection | null>(null);
+  const pinnedRewriteRangeRef = useRef<Range | null>(null);
   const selectionToolbarDismissedRef = useRef(false);
   const latestSourceRef = useRef({ markdown, revision: sourceRevision });
   const pendingSourceRef = useRef<{ markdown: string; revision: number }>();
@@ -198,14 +239,24 @@ export function MarkdownArtifactEditor({
   const savingRef = useRef(false);
   const conflictRef = useRef(false);
   const saveChangesRef = useRef<() => Promise<boolean>>(async () => true);
+  const outlineId = useId();
 
   const dirty = draftMarkdown !== baseMarkdown;
+  const markdownOutline = useMemo(
+    () => collectWriterMarkdownOutline(draftMarkdown),
+    [draftMarkdown],
+  );
+  const referenceTargets = markdownOutline.items;
+  const outlineBaseLevel = Math.min(
+    ...markdownOutline.items.map((item) => item.level),
+    6,
+  );
   dirtyRef.current = dirty;
   savingRef.current = saving;
   conflictRef.current = conflict;
 
   useEffect(() => {
-    onContentChange?.(draftMarkdown);
+    onContentChange?.(writerMarkdownForSave(draftMarkdown));
   }, [draftMarkdown, onContentChange]);
 
   const dismissSelectionToolbar = useCallback(() => {
@@ -280,7 +331,9 @@ export function MarkdownArtifactEditor({
 
   const recordSelection = useCallback((showToolbar = true) => {
     const root = rootRef.current;
-    setSelection(root ? selectedMarkdownParagraph(root) : null);
+    const nextSelection = root ? selectedMarkdownParagraph(root) : null;
+    if (nextSelection?.supported) referenceSelectionRef.current = nextSelection;
+    setSelection(nextSelection);
     if (!showToolbar) return;
     selectionToolbarDismissedRef.current = false;
     updateSelectionToolbar();
@@ -300,7 +353,11 @@ export function MarkdownArtifactEditor({
       if (
         root
         && target
-        && (root.contains(target) || targetElement?.closest('.mdxeditor-popup-container'))
+        && (
+          root.contains(target)
+          || targetElement?.closest('.mdxeditor-popup-container')
+          || targetElement?.closest('.writer-markdown-editor__reference-dropdown')
+        )
       ) return;
       dismissSelectionToolbar();
     };
@@ -351,20 +408,25 @@ export function MarkdownArtifactEditor({
     setEditorKey((value) => value + 1);
   }, [dirty, markdown, sourceRevision]);
 
-  const saveChanges = useCallback(async (): Promise<boolean> => {
-    if (!dirty || saving || readOnly) return false;
+  const persistMarkdown = useCallback(async (
+    nextDraft: string,
+    revisionBeforeSave: number,
+  ): Promise<boolean> => {
+    if (savingRef.current || readOnly) return false;
+    savingRef.current = true;
     setSaving(true);
     setSaveError(undefined);
 
     try {
-      const revision = await onSave(draftMarkdown, baseRevision);
-      const savedRevision = revision ?? baseRevision;
-      setBaseMarkdown(draftMarkdown);
+      const savedMarkdown = writerMarkdownForSave(nextDraft);
+      const revision = await onSave(savedMarkdown, revisionBeforeSave);
+      const savedRevision = revision ?? revisionBeforeSave;
+      setBaseMarkdown(nextDraft);
+      setDraftMarkdown(nextDraft);
       setBaseRevision(savedRevision);
-      latestSourceRef.current = { markdown: draftMarkdown, revision: savedRevision };
+      latestSourceRef.current = { markdown: savedMarkdown, revision: savedRevision };
       pendingSourceRef.current = undefined;
       setConflict(false);
-      setEditorKey((value) => value + 1);
       return true;
     } catch (error) {
       setConflict(isRevisionConflict(error));
@@ -375,9 +437,15 @@ export function MarkdownArtifactEditor({
       );
       return false;
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
-  }, [baseRevision, dirty, draftMarkdown, onSave, readOnly, saving, t]);
+  }, [onSave, readOnly, t]);
+
+  const saveChanges = useCallback(async (): Promise<boolean> => {
+    if (!dirty || savingRef.current || readOnly) return false;
+    return persistMarkdown(draftMarkdown, baseRevision);
+  }, [baseRevision, dirty, draftMarkdown, persistMarkdown, readOnly]);
 
   saveChangesRef.current = saveChanges;
 
@@ -425,11 +493,107 @@ export function MarkdownArtifactEditor({
     : dirty
       ? t('chat.artifactRewrite.saveFirstHint')
       : rewriteUnavailableReason ?? t('chat.artifactRewrite.action');
+  useEffect(() => {
+    if (!rewriteDialogOpen) {
+      pinnedRewriteRangeRef.current = null;
+      setRewriteSelectionPinned(false);
+    }
+  }, [rewriteDialogOpen]);
+  const getPinnedRewriteRange = useCallback((): Range | null => {
+    const range = pinnedRewriteRangeRef.current;
+    if (!range) return null;
+    try {
+      return range.cloneRange();
+    } catch {
+      return null;
+    }
+  }, []);
   const requestPolish = useCallback(() => {
     if (polishDisabled || !selection || !onRewriteSelection) return;
+    const browserSelection = globalThis.getSelection();
+    if (browserSelection?.rangeCount && !browserSelection.isCollapsed) {
+      pinnedRewriteRangeRef.current = browserSelection.getRangeAt(0).cloneRange();
+      setRewriteSelectionPinned(true);
+    }
     onRewriteSelection(selection);
     dismissSelectionToolbar();
   }, [dismissSelectionToolbar, onRewriteSelection, polishDisabled, selection]);
+  const referenceDisabled = readOnly
+    || !selection?.supported
+    || saving
+    || conflict
+    || referenceTargets.length === 0;
+  const applyCrossReference = useCallback((anchorId: string) => {
+    const editor = editorRef.current;
+    const referenceSelection = referenceSelectionRef.current;
+    if (
+      !editor
+      || !referenceSelection?.supported
+      || !anchorId
+      || savingRef.current
+      || conflictRef.current
+      || readOnly
+    ) return;
+    const currentMarkdown = normalizeMarkdownForMdxEditor(editor.getMarkdown());
+    const paragraphText = referenceSelection.paragraph?.textContent ?? '';
+    const nextDraft = applyWriterMarkdownInternalReference(
+      currentMarkdown,
+      paragraphText,
+      referenceSelection.startOffset ?? -1,
+      referenceSelection.text,
+      anchorId,
+    );
+    if (nextDraft === currentMarkdown) return;
+
+    const surface = rootRef.current?.querySelector<HTMLElement>('.writer-markdown-editor__surface');
+    const scrollTop = surface?.scrollTop;
+    editor.setMarkdown(nextDraft);
+    window.requestAnimationFrame(() => {
+      if (surface && scrollTop !== undefined) surface.scrollTop = scrollTop;
+      setDraftMarkdown(nextDraft);
+      void persistMarkdown(nextDraft, baseRevision);
+    });
+    dismissSelectionToolbar();
+  }, [baseRevision, dismissSelectionToolbar, persistMarkdown, readOnly]);
+
+  const scrollToMarkdownTarget = useCallback((target: HTMLElement | null) => {
+    const surface = rootRef.current?.querySelector<HTMLElement>(
+      '.writer-markdown-editor__surface',
+    );
+    if (!surface || !target) return;
+    const artifactBody = surface.closest<HTMLElement>('.workflow-slot__artifact-body');
+    const scrollContainer = [surface, artifactBody].find(
+      (element): element is HTMLElement => Boolean(
+        element && element.scrollHeight > element.clientHeight + 1,
+      ),
+    ) ?? surface;
+    const containerRect = scrollContainer.getBoundingClientRect();
+    const targetRect = target.getBoundingClientRect();
+    const reduceMotion = globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    scrollContainer.scrollTo({
+      top: Math.max(
+        0,
+        scrollContainer.scrollTop + targetRect.top - containerRect.top - 8,
+      ),
+      behavior: reduceMotion ? 'auto' : 'smooth',
+    });
+  }, []);
+
+  const navigateToOutlineItem = useCallback((anchorId: string) => {
+    const target = Array.from(
+      rootRef.current?.querySelectorAll<HTMLElement>('[id]') ?? [],
+    ).find((element) => element.id === anchorId) ?? null;
+    scrollToMarkdownTarget(target);
+  }, [scrollToMarkdownTarget]);
+
+  const navigateToDocumentTitle = useCallback(() => {
+    const target = rootRef.current?.querySelector<HTMLElement>(
+      '.mdxeditor-root-contenteditable h1, .mdxeditor-root-contenteditable h2, '
+      + '.mdxeditor-root-contenteditable h3, .mdxeditor-root-contenteditable h4, '
+      + '.mdxeditor-root-contenteditable h5, .mdxeditor-root-contenteditable h6',
+    ) ?? null;
+    scrollToMarkdownTarget(target);
+  }, [scrollToMarkdownTarget]);
 
   const selectionToolbarStyle = selectionToolbar
     ? {
@@ -442,6 +606,8 @@ export function MarkdownArtifactEditor({
   return (
     <section
       className={`writer-markdown-editor${
+        outlineOpen ? ' writer-markdown-editor--outline-open' : ''
+      }${
         selectionToolbar ? ' writer-markdown-editor--selection-toolbar-visible' : ''
       }`}
       aria-label={t('chat.writerMarkdown.documentRegion')}
@@ -456,6 +622,15 @@ export function MarkdownArtifactEditor({
       onMouseUp={() => recordSelection()}
       onKeyUp={(event) => {
         if (event.key !== 'Escape') recordSelection();
+      }}
+      onClick={(event) => {
+        const link = event.target instanceof Element
+          ? event.target.closest<HTMLAnchorElement>('a[href^="#block-"]')
+          : null;
+        if (!link) return;
+        event.preventDefault();
+        const anchorId = decodeURIComponent(link.hash.slice(1));
+        navigateToOutlineItem(anchorId);
       }}
     >
       {conflict && (
@@ -490,51 +665,200 @@ export function MarkdownArtifactEditor({
         </div>
       )}
 
-      <MDXEditor
-        key={editorKey}
-        className='writer-markdown-editor__surface'
-        markdown={baseMarkdown}
-        readOnly={readOnly}
-        onChange={setDraftMarkdown}
-        plugins={[
-          headingsPlugin(),
-          listsPlugin(),
-          quotePlugin(),
-          thematicBreakPlugin(),
-          linkPlugin(),
-          linkDialogPlugin(),
-          tablePlugin(),
-          frontmatterPlugin(),
-          imagePlugin({
-            imagePreviewHandler: resolveMarkdownImageUrlAsync,
-          }),
-          codeBlockPlugin({ defaultCodeBlockLanguage: 'text' }),
-          codeMirrorPlugin({ codeBlockLanguages: MARKDOWN_CODE_LANGUAGES }),
-          markdownShortcutPlugin(),
-          toolbarPlugin({
-            toolbarContents: () => (
-              <>
-                <BoldItalicUnderlineToggles />
-                <BlockTypeSelect />
-                {showPolishAction && (
-                  <button
-                    type='button'
-                    className='writer-markdown-editor__polish-action'
-                    disabled={polishDisabled}
-                    title={polishTitle}
-                    onMouseDown={(event) => event.preventDefault()}
-                    onClick={requestPolish}
-                  >
-                    {t('chat.artifactRewrite.action')}
-                  </button>
-                )}
-                <ListsToggle />
-              </>
-            ),
-          }),
-        ]}
-      />
+      <div className='writer-markdown-editor__document-layout'>
+        <aside
+          className='writer-markdown-editor__outline-rail'
+          id={outlineId}
+          onClick={(event) => event.stopPropagation()}
+        >
+          {outlineOpen ? (
+            <nav
+              className='writer-markdown-editor__outline'
+              aria-label={t('chat.writerIR.outline')}
+            >
+              <button
+                type='button'
+                className='writer-markdown-editor__outline-toggle'
+                title={t('chat.writerIR.collapseOutline')}
+                aria-label={t('chat.writerIR.collapseOutline')}
+                aria-controls={outlineId}
+                aria-expanded='true'
+                onClick={() => setOutlineOpen(false)}
+              >
+                <MenuFoldOutlined aria-hidden />
+              </button>
+              {markdownOutline.title && (
+                <button
+                  type='button'
+                  className='writer-markdown-editor__outline-document-link'
+                  title={markdownOutline.title}
+                  aria-label={t('chat.writerIR.jumpToHeading', {
+                    title: markdownOutline.title,
+                  })}
+                  onClick={navigateToDocumentTitle}
+                >
+                  {markdownOutline.title}
+                </button>
+              )}
+              {markdownOutline.items.length > 0 ? (
+                <ol className='writer-markdown-editor__outline-list'>
+                  {markdownOutline.items.map((item) => (
+                    <li key={item.anchorId}>
+                      <button
+                        type='button'
+                        className={
+                          `writer-markdown-editor__outline-link `
+                          + `writer-markdown-editor__outline-link--level-${
+                            Math.max(1, item.level - outlineBaseLevel + 1)
+                          }`
+                        }
+                        title={item.label}
+                        aria-label={t('chat.writerIR.jumpToHeading', { title: item.label })}
+                        onClick={() => navigateToOutlineItem(item.anchorId)}
+                      >
+                        {item.label}
+                      </button>
+                    </li>
+                  ))}
+                </ol>
+              ) : (
+                <div className='writer-markdown-editor__outline-empty' role='status'>
+                  {t('chat.writerIR.noHeadings')}
+                </div>
+              )}
+            </nav>
+          ) : (
+            <button
+              type='button'
+              className={
+                'writer-markdown-editor__outline-toggle '
+                + 'writer-markdown-editor__outline-toggle--collapsed'
+              }
+              title={t('chat.writerIR.expandOutline')}
+              aria-label={t('chat.writerIR.expandOutline')}
+              aria-controls={outlineId}
+              aria-expanded='false'
+              onClick={() => setOutlineOpen(true)}
+            >
+              <MenuUnfoldOutlined aria-hidden />
+            </button>
+          )}
+        </aside>
+        <div className='writer-markdown-editor__main'>
+          <MDXEditor
+            ref={editorRef}
+            key={editorKey}
+            className='writer-markdown-editor__surface'
+            markdown={baseMarkdown}
+            readOnly={readOnly}
+            onChange={setDraftMarkdown}
+            plugins={[
+              headingsPlugin(),
+              listsPlugin(),
+              quotePlugin(),
+              thematicBreakPlugin(),
+              linkPlugin(),
+              linkDialogPlugin(),
+              tablePlugin(),
+              frontmatterPlugin(),
+              jsxPlugin({
+                jsxComponentDescriptors: [{
+                  name: 'a',
+                  kind: 'flow',
+                  props: [{ name: 'id', type: 'string' }],
+                  hasChildren: true,
+                  Editor: WriterAnchorEditor,
+                }],
+              }),
+              imagePlugin(),
+              codeBlockPlugin({ defaultCodeBlockLanguage: 'text' }),
+              codeMirrorPlugin({ codeBlockLanguages: MARKDOWN_CODE_LANGUAGES }),
+              markdownShortcutPlugin(),
+              toolbarPlugin({
+                toolbarContents: () => (
+                  <>
+                    <div className='writer-markdown-editor__toolbar-group writer-markdown-editor__toolbar-group--block'>
+                      <BlockTypeSelect />
+                    </div>
+                    <span className='writer-markdown-editor__toolbar-divider' aria-hidden='true' />
+                    <div
+                      className='writer-markdown-editor__toolbar-group'
+                      role='group'
+                      aria-label={t('chat.writerIR.formatToolbar')}
+                    >
+                      <BoldItalicUnderlineToggles />
+                      <ListsToggle />
+                    </div>
+                    <span className='writer-markdown-editor__toolbar-divider' aria-hidden='true' />
+                    <div className='writer-markdown-editor__toolbar-group writer-markdown-editor__toolbar-group--actions'>
+                      {showPolishAction && (
+                        <button
+                          type='button'
+                          className='writer-markdown-editor__polish-action'
+                          disabled={polishDisabled}
+                          title={polishTitle}
+                          onMouseDown={(event) => event.preventDefault()}
+                          onClick={requestPolish}
+                        >
+                          <HighlightOutlined aria-hidden />
+                          <span>{t('chat.artifactRewrite.action')}</span>
+                        </button>
+                      )}
+                      <Dropdown
+                        trigger={['click']}
+                        placement='bottomLeft'
+                        overlayClassName='writer-markdown-editor__reference-dropdown'
+                        disabled={referenceDisabled}
+                        menu={{
+                          items: referenceTargets.map((target) => ({
+                            key: target.anchorId,
+                            label: (
+                              <span
+                                className='writer-markdown-editor__reference-option'
+                                title={target.label}
+                              >
+                                {target.label}
+                              </span>
+                            ),
+                          })),
+                          onClick: ({ key }) => applyCrossReference(String(key)),
+                        }}
+                      >
+                        <button
+                          type='button'
+                          className='writer-markdown-editor__reference-select'
+                          disabled={referenceDisabled}
+                          aria-label={t('chat.writerIR.crossReference')}
+                          aria-haspopup='menu'
+                          title={t('chat.writerIR.crossReference')}
+                          onMouseDown={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            if (selection?.supported) referenceSelectionRef.current = selection;
+                          }}
+                        >
+                          <LinkOutlined aria-hidden />
+                          <span>{t('chat.writerIR.crossReference')}</span>
+                          <DownOutlined
+                            className='writer-markdown-editor__reference-caret'
+                            aria-hidden
+                          />
+                        </button>
+                      </Dropdown>
+                    </div>
+                  </>
+                ),
+              }),
+            ]}
+          />
+        </div>
+      </div>
       <div className='writer-markdown-editor__rewrite-layer' ref={setRewriteLayer} />
+      <ArtifactRewriteSelectionHighlight
+        layer={rewriteLayer}
+        getRange={getPinnedRewriteRange}
+        active={rewriteSelectionPinned}
+      />
       {rewritePreview && rewriteLayer && onRewritePreviewApplied && onRewritePreviewRejected && (
         <ArtifactRewriteInlineDiff
           target={rewritePreview.paragraph}

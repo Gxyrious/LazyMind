@@ -22,15 +22,19 @@ import {
 } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
+  applyWriterBlockInternalReference,
   applyWriterBlockSpanColor,
+  collectWriterReferenceTargets,
   countWriterBlocks,
   createWriterParagraph,
   findWriterBlock,
   findWriterBlockParent,
+  getWriterInternalReference,
   getWriterSpanColor,
   getWriterSpanStyles,
   convertWriterBlockToParagraph,
   indentWriterBlock,
+  isWriterSystemAnchorBlock,
   insertWriterChildParagraph,
   liftWriterBlockAfterParent,
   normalizeWriterCodeLanguage,
@@ -106,6 +110,7 @@ interface WriterIRDocumentEditorProps {
   document: WriterDocument;
   ariaLabel: string;
   onChange: (document: WriterDocument) => void;
+  onCrossReferenceApplied?: (document: WriterDocument) => void;
   onFocus: () => void;
   onBlur: () => void;
   disabled?: boolean;
@@ -137,8 +142,13 @@ function escapeHtmlAttribute(value: string): string {
     .replace(/'/g, '&#39;');
 }
 
+function writerBlockDomId(nodeId: string): string {
+  return `writer-block-${nodeId}`;
+}
+
 function renderSpan(span: WriterSpan): string {
-  let content = escapeHtml(span.text);
+  const reference = getWriterInternalReference(span);
+  let content = escapeHtml(reference?.displayText ?? span.text);
   const styles = getWriterSpanStyles(span);
   if (styles.includes('code')) content = `<code>${content}</code>`;
   if (styles.includes('strong') || styles.includes('bold')) content = `<strong>${content}</strong>`;
@@ -152,18 +162,24 @@ function renderSpan(span: WriterSpan): string {
   const backgroundColorId = getWriterSpanColor(span, 'background_color');
   const textColor = writerTextColorHex(textColorId);
   const backgroundColor = writerBackgroundColorHex(backgroundColorId);
-  if (!textColor && !backgroundColor) return content;
-
-  const cssParts: string[] = [];
-  if (textColor) cssParts.push(`color:${textColor}`);
-  if (backgroundColor) cssParts.push(`background-color:${backgroundColor}`);
-  const attrs = [
-    'data-writer-colored="true"',
-    textColorId ? `data-writer-text-color="${textColorId}"` : '',
-    backgroundColorId ? `data-writer-background-color="${backgroundColorId}"` : '',
-    `style="${escapeHtmlAttribute(cssParts.join(';'))}"`,
-  ].filter(Boolean).join(' ');
-  return `<span ${attrs}>${content}</span>`;
+  if (textColor || backgroundColor) {
+    const cssParts: string[] = [];
+    if (textColor) cssParts.push(`color:${textColor}`);
+    if (backgroundColor) cssParts.push(`background-color:${backgroundColor}`);
+    const attrs = [
+      'data-writer-colored="true"',
+      textColorId ? `data-writer-text-color="${textColorId}"` : '',
+      backgroundColorId ? `data-writer-background-color="${backgroundColorId}"` : '',
+      `style="${escapeHtmlAttribute(cssParts.join(';'))}"`,
+    ].filter(Boolean).join(' ');
+    content = `<span ${attrs}>${content}</span>`;
+  }
+  if (reference) {
+    const targetNodeId = escapeHtmlAttribute(reference.targetNodeId);
+    const targetId = escapeHtmlAttribute(writerBlockDomId(reference.targetNodeId));
+    content = `<a class="writer-ir__internal-ref" href="#${targetId}" data-writer-internal-ref="${targetNodeId}" contenteditable="false">${content}</a>`;
+  }
+  return content;
 }
 
 function renderBlockText(block: WriterBlock): string {
@@ -433,11 +449,24 @@ function renderBlock(
     ].join('');
   }
 
+  if (isWriterSystemAnchorBlock(block)) {
+    return [
+      `<div data-writer-block="true"`,
+      ` data-node-id="${escapeHtmlAttribute(block.node_id)}"`,
+      ` data-node-type="paragraph"`,
+      ` class="writer-ir__block writer-ir__block--system-anchor"`,
+      ` contenteditable="false" hidden aria-hidden="true">`,
+      `<p data-writer-block-content="true">${renderBlockText(block)}</p>`,
+      '</div>',
+    ].join('');
+  }
+
   const collapsed = Boolean(foldState?.collapsed);
   const foldable = Boolean(foldState?.foldable);
   const draggable = block.editable !== false;
   const attributes = [
     `data-writer-block="true"`,
+    `id="${escapeHtmlAttribute(writerBlockDomId(block.node_id))}"`,
     `data-node-id="${escapeHtmlAttribute(block.node_id)}"`,
     `data-node-type="${escapeHtmlAttribute(block.type)}"`,
     block.type === 'heading' ? `data-heading-level="${headingLevel(block)}"` : '',
@@ -1043,6 +1072,7 @@ export function WriterIRDocumentEditor({
   document,
   ariaLabel,
   onChange,
+  onCrossReferenceApplied,
   onFocus,
   onBlur,
   disabled = false,
@@ -1078,6 +1108,7 @@ export function WriterIRDocumentEditor({
   const lastCollapseVersionRef = useRef(0);
   const draggingNodeIdRef = useRef<string | null>(null);
   const dropHintRef = useRef<WriterBlockRelocateTarget | null>(null);
+  const pendingReferenceTargetRef = useRef<string | null>(null);
   const foldLabels = useMemo<WriterEditorLabels>(() => ({
     collapse: t('chat.writerIR.collapseSection'),
     expand: t('chat.writerIR.expandSection'),
@@ -1206,6 +1237,60 @@ export function WriterIRDocumentEditor({
     editor.addEventListener('mousedown', handleFoldClick);
     return () => editor.removeEventListener('mousedown', handleFoldClick);
   }, []);
+
+  const scrollToReferenceTarget = useCallback((nodeId: string) => {
+    const editor = editorRef.current;
+    const target = editor ? findRenderedBlock(editor, nodeId) : undefined;
+    if (!target) return;
+    const reduceMotion = globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    target.scrollIntoView({
+      behavior: reduceMotion ? 'auto' : 'smooth',
+      block: 'center',
+      inline: 'nearest',
+    });
+    target.classList.add('writer-ir__block--reference-target');
+    window.setTimeout(() => {
+      if (target.isConnected) target.classList.remove('writer-ir__block--reference-target');
+    }, 1_600);
+  }, []);
+
+  const navigateToReferenceTarget = useCallback((nodeId: string) => {
+    const editor = editorRef.current;
+    const target = editor ? findRenderedBlock(editor, nodeId) : undefined;
+    if (!target) return;
+    if (target.closest('[hidden]') && collapsedNodeIdsRef.current.size > 0) {
+      pendingReferenceTargetRef.current = nodeId;
+      collapsedNodeIdsRef.current = new Set();
+      setCollapseVersion((value) => value + 1);
+      return;
+    }
+    scrollToReferenceTarget(nodeId);
+  }, [scrollToReferenceTarget]);
+
+  useLayoutEffect(() => {
+    const nodeId = pendingReferenceTargetRef.current;
+    if (!nodeId) return;
+    pendingReferenceTargetRef.current = null;
+    window.requestAnimationFrame(() => scrollToReferenceTarget(nodeId));
+  }, [collapseVersion, scrollToReferenceTarget]);
+
+  useEffect(() => {
+    const editor = editorRef.current;
+    if (!editor) return undefined;
+    const handleReferenceClick = (event: MouseEvent) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      const reference = target.closest<HTMLElement>('[data-writer-internal-ref]');
+      if (!reference || !editor.contains(reference)) return;
+      const targetNodeId = reference.dataset.writerInternalRef;
+      if (!targetNodeId) return;
+      event.preventDefault();
+      event.stopPropagation();
+      navigateToReferenceTarget(targetNodeId);
+    };
+    editor.addEventListener('click', handleReferenceClick);
+    return () => editor.removeEventListener('click', handleReferenceClick);
+  }, [navigateToReferenceTarget]);
 
   useEffect(() => {
     const editor = editorRef.current;
@@ -1538,6 +1623,11 @@ export function WriterIRDocumentEditor({
     && activeSelection.end > activeSelection.start,
   );
   const canChangeBlockFormat = canFormatBlock && (activeBlock?.children?.length ?? 0) === 0;
+  const referenceTargets = useMemo(
+    () => collectWriterReferenceTargets(document.blocks)
+      .filter((target) => target.nodeId !== activeBlock?.node_id),
+    [activeBlock?.node_id, document.blocks],
+  );
 
   const updateFormatToolbarPosition = useCallback(() => {
     if (!showFormatToolbar || !activeSelection) {
@@ -1740,6 +1830,25 @@ export function WriterIRDocumentEditor({
     pendingSelectionRef.current = selection;
     onChange(nextDocument);
   }, [disabled, document, onChange]);
+
+  const applyCrossReference = useCallback((targetNodeId: string) => {
+    if (disabled || !targetNodeId) return;
+    const selection = savedSelectionRef.current;
+    if (!selection || selection.end <= selection.start) return;
+    const block = findWriterBlock(document.blocks, selection.nodeId);
+    if (!block || block.editable === false || block.node_id === targetNodeId) return;
+    const nextDocument = applyWriterBlockInternalReference(
+      document,
+      selection.nodeId,
+      selection.start,
+      selection.end,
+      targetNodeId,
+    );
+    if (nextDocument === document) return;
+    pendingSelectionRef.current = selection;
+    lastEmittedDocumentRef.current = undefined;
+    (onCrossReferenceApplied ?? onChange)(nextDocument);
+  }, [disabled, document, onChange, onCrossReferenceApplied]);
 
   const applySpanColor = useCallback((
     field: WriterSpanColorField,
@@ -2255,6 +2364,28 @@ export function WriterIRDocumentEditor({
             >
               <ItalicOutlined aria-hidden />
             </button>
+          </div>
+
+          <span className='writer-ir__format-divider' aria-hidden='true' />
+
+          <div className='writer-ir__format-group'>
+            <select
+              className='writer-ir__format-select writer-ir__format-select--reference'
+              value=''
+              onChange={(event) => applyCrossReference(event.target.value)}
+              disabled={disabled || !hasTextSelection || referenceTargets.length === 0}
+              aria-label={t('chat.writerIR.crossReference')}
+              title={t('chat.writerIR.crossReference')}
+            >
+              <option value='' disabled>
+                {t('chat.writerIR.crossReference')}
+              </option>
+              {referenceTargets.map((target) => (
+                <option value={target.nodeId} key={target.nodeId}>
+                  {target.label}
+                </option>
+              ))}
+            </select>
           </div>
 
           <span className='writer-ir__format-divider' aria-hidden='true' />
