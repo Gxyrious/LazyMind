@@ -600,7 +600,7 @@ def writer_prepare_workspace(
     )
     media_result = writer_collect_available_media(
         writing_task_path=writing_task,
-        source_document_path=source_document,
+        source_document_path=source_document if operation != 'use_outline' else '',
     )
     resource_profiles = writer_profile_resources(
         writing_task_path=writing_task,
