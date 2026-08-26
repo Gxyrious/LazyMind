@@ -248,11 +248,37 @@ export interface WriteBackWriterDocumentRequest {
 export type WriterDocumentSlot = 'outline_document' | 'flat_draft_document' | 'draft_document';
 export type WriterDocumentRepresentation = 'markdown' | 'ir';
 export type RenderedWriterDocument = string | Record<string, unknown>;
+export type WriterHeadingNumberingMode = 'ordered' | 'unordered';
+export type WriterOrderedHeadingNumberingStyle = 'hierarchical' | 'chinese' | 'parenthesized';
+
+export interface WriterNumberingEntry {
+  label: string;
+  mode?: WriterHeadingNumberingMode;
+  restart?: boolean;
+}
+
+export interface WriterNumberingState {
+  ordered_style: WriterOrderedHeadingNumberingStyle;
+  entries: Record<string, WriterNumberingEntry>;
+}
+
+export type WriterNumberingUpdate =
+  | {
+    type: 'ordered_style';
+    ordered_style: WriterOrderedHeadingNumberingStyle;
+  }
+  | {
+    type: 'heading';
+    target_id: string;
+    mode?: WriterHeadingNumberingMode;
+    restart?: boolean;
+  };
 
 export interface RenderWriterDocumentResult {
   title: string;
   representation: WriterDocumentRepresentation;
   document: RenderedWriterDocument;
+  numbering: WriterNumberingState;
 }
 
 export interface SaveWriterDocumentResult extends RenderWriterDocumentResult {
@@ -493,11 +519,13 @@ export function WorkflowSessionApi() {
       baseRevision: number,
       document: RenderedWriterDocument,
       slot: WriterDocumentSlot,
+      numberingUpdate?: WriterNumberingUpdate,
       options?: RawAxiosRequestConfig,
     ) {
       const payload: Record<string, unknown> = {
         base_revision: baseRevision,
         document,
+        ...(numberingUpdate ? { numbering_update: numberingUpdate } : {}),
       };
       if (slot !== 'draft_document') payload.slot = slot;
       return axiosInstance.post<{

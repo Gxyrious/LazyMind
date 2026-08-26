@@ -322,6 +322,64 @@
   backdrop-filter: blur(12px);
 }
 
+.writer-ir__numbering-marker {
+  margin-right: 0.35em;
+  color: var(--writer-ir-muted, #64748b);
+  font-weight: 700;
+  cursor: pointer;
+  user-select: none;
+}
+
+.writer-ir__numbering-marker:hover,
+.writer-ir__numbering-marker:focus-visible {
+  color: var(--writer-ir-accent, #245bdb);
+}
+
+.writer-ir__heading[data-writer-heading-mode='unordered'] {
+  position: relative;
+}
+
+.writer-ir__heading[data-writer-heading-mode='unordered']::before {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -14px;
+  width: 14px;
+  content: '';
+  cursor: pointer;
+}
+
+.writer-numbering-menu {
+  position: fixed;
+  z-index: 20;
+  display: grid;
+  gap: 8px;
+  width: 280px;
+  padding: 10px;
+  border: 1px solid #dbe3ef;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.16);
+  font-size: 12px;
+  color: #334155;
+}
+
+.writer-numbering-menu select {
+  min-height: 30px;
+  border: 1px solid #dbe3ef;
+  border-radius: 6px;
+  background: #fff;
+  color: #334155;
+  font: inherit;
+  font-size: 12px;
+}
+
+.writer-numbering-menu label {
+  display: grid;
+  gap: 4px;
+  font-weight: 600;
+}
+
 .writer-ir__format-toolbar--floating {
   position: absolute;
   z-index: 5;

@@ -353,18 +353,6 @@ function getTabStepId(tab: TabDef): string | undefined {
   return tab.step_id ?? tab.id;
 }
 
-/**
- * Lock slot editing only while the plugin session is actively running.
- * When idle (waiting / failed / completed), ui_editable artifacts stay editable
- * so the user can revise and re-run a later step from the updated content.
- */
-function isWorkflowSessionReadOnly(
-  session: WorkflowSession,
-  autoRunning = false,
-): boolean {
-  return autoRunning || session.status === 'active';
-}
-
 function revisionMatchesTabScope(
   session: WorkflowSession,
   tab: TabDef,
@@ -1759,8 +1747,6 @@ export function WorkflowPanel({
     ? Math.min(activeTabIdx, tabs.length - 1)
     : 0;
   const hasIntent = true;
-  const sessionReadOnly = isWorkflowSessionReadOnly(session, autoRunning);
-
   const showActions =
     session.status === 'waiting' ||
     session.status === 'active' ||
@@ -2036,7 +2022,6 @@ export function WorkflowPanel({
                     onRefresh={refresh}
                     onReference={onReference}
                     onFocusSortOrder={handleFocusSortOrder}
-                    readOnly={sessionReadOnly}
                   />
                 </SlotDownloadContext.Provider>
                 </WorkflowPanelTabActiveContext.Provider>
@@ -2047,7 +2032,6 @@ export function WorkflowPanel({
               session={session}
               onRefresh={refresh}
               onReference={onReference}
-              readOnly={sessionReadOnly}
             />
           )}
         </div>

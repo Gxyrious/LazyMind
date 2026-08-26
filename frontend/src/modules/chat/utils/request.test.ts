@@ -48,11 +48,17 @@ describe('WorkflowSessionApi.saveWriterDocument', () => {
       3,
       '# Outline',
       'outline_document',
+      { type: 'heading', target_id: 'section-2', restart: true },
     );
 
     expect(postMock).toHaveBeenCalledWith(
       '/api/core/workflow-sessions/ps-1/writer-document:save',
-      { base_revision: 3, document: '# Outline', slot: 'outline_document' },
+      {
+        base_revision: 3,
+        document: '# Outline',
+        slot: 'outline_document',
+        numbering_update: { type: 'heading', target_id: 'section-2', restart: true },
+      },
       undefined,
     );
   });
