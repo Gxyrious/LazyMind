@@ -42,9 +42,10 @@ type writerDocumentWriteBackBody struct {
 }
 
 type writerDocumentSaveBody struct {
-	BaseRevision int             `json:"base_revision"`
-	Document     json.RawMessage `json:"document"`
-	Slot         string          `json:"slot"`
+	BaseRevision    int             `json:"base_revision"`
+	Document        json.RawMessage `json:"document"`
+	Slot            string          `json:"slot"`
+	NumberingUpdate json.RawMessage `json:"numbering_update"`
 }
 
 type writerDocumentRenderBody struct {
@@ -352,6 +353,10 @@ func SaveWriterDocument(w http.ResponseWriter, r *http.Request) {
 		common.ReplyErr(w, "invalid document", http.StatusBadRequest)
 		return
 	}
+	arguments := map[string]any{"base_artifact": draft.Value}
+	if len(body.NumberingUpdate) > 0 {
+		arguments["numbering_update"] = body.NumberingUpdate
+	}
 	response, status, err := algo.InvokeWorkflowAction(ctx, algo.WorkflowActionInvokeRequest{
 		WorkflowID: session.WorkflowID,
 		RevisionID: session.WorkflowRevisionID,
@@ -361,7 +366,7 @@ func SaveWriterDocument(w http.ResponseWriter, r *http.Request) {
 		Phase:      "execute",
 		Slot:       slot,
 		Artifact:   editedArtifact,
-		Arguments:  map[string]any{"base_artifact": draft.Value},
+		Arguments:  arguments,
 	})
 	if err != nil {
 		if status < 400 || status > 599 {
@@ -378,12 +383,21 @@ func SaveWriterDocument(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sourceValue, ok := result["source_document"]
-	if !ok {
+	representation, representationOK := result["representation"].(string)
+	renderedDocument, documentOK := result["document"]
+	numbering, numberingOK := result["numbering"].(map[string]any)
+	_, markdownSource := sourceValue.(string)
+	_, irSource := sourceValue.(map[string]any)
+	_, markdownDocument := renderedDocument.(string)
+	_, irDocument := renderedDocument.(map[string]any)
+	if !ok || !representationOK || !documentOK || !numberingOK ||
+		(markdownSource && (representation != "markdown" || !markdownDocument)) ||
+		(!markdownSource && (!irSource || representation != "ir" || !irDocument)) {
 		common.ReplyErr(w, "invalid workflow action response", http.StatusBadGateway)
 		return
 	}
 	schema := "lazyllm.tools.writer.data_models.writer_ir.WriterDocument"
-	if _, isMarkdown := sourceValue.(string); isMarkdown {
+	if markdownSource {
 		schema = "text/markdown"
 	}
 	artifact, err := json.Marshal(map[string]any{
@@ -428,14 +442,11 @@ func SaveWriterDocument(w http.ResponseWriter, r *http.Request) {
 		revision.Revision, revision.ListIndex, "human",
 	)
 	reply := map[string]any{
-		"revision": revision.Revision,
-		"title":    result["title"],
-	}
-	if representation, ok := result["representation"]; ok {
-		reply["representation"] = representation
-	}
-	if document, ok := result["document"]; ok {
-		reply["document"] = document
+		"revision":       revision.Revision,
+		"title":          result["title"],
+		"representation": representation,
+		"document":       renderedDocument,
+		"numbering":      numbering,
 	}
 	common.ReplyOK(w, reply)
 }

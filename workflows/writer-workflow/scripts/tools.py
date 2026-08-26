@@ -31,11 +31,17 @@ from lazyllm.tools.writer.data_models import (
     WriterDocument,
 )
 from lazyllm.tools.writer.numbering import (
+    NumberingMap,
+    NumberingView,
+    apply_numbering_update_ir,
+    apply_numbering_update_markdown,
     build_numbering_view_from_ir,
     build_numbering_view_from_markdown,
     compute_numbering,
     dematerialize_markdown,
     dematerialize_ir,
+    ensure_markdown_heading_anchors,
+    format_target_number,
     materialize_ir,
     materialize_markdown,
 )
@@ -2326,55 +2332,83 @@ def writer_render_document(artifact: Any) -> dict:
     """Render a Writer IR or Markdown artifact with automatic numbering."""
     document = _action_artifact_data(artifact)
     if isinstance(document, str):
+        document = ensure_markdown_heading_anchors(document)
+        view = build_numbering_view_from_markdown(document)
+        numbering = compute_numbering(view)
         title_match = re.search(r'^#\s+(.+)$', document, re.MULTILINE)
         return {
             'title': title_match.group(1).strip() if title_match else '',
             'representation': 'markdown',
-            'document': materialize_markdown(document),
+            'document': materialize_markdown(document, view, numbering),
+            'numbering': _numbering_payload(view, numbering),
         }
     source = WriterDocument.model_validate(document)
-    numbering = compute_numbering(build_numbering_view_from_ir(source))
+    view = build_numbering_view_from_ir(source)
+    numbering = compute_numbering(view)
     materialized = materialize_ir(source, numbering)
     return {
         'title': source.title,
         'representation': 'ir',
         'document': materialized.model_dump(exclude_defaults=True),
+        'numbering': _numbering_payload(view, numbering),
     }
 
 
-def writer_save_document(artifact: Any, base_artifact: Any) -> dict:
+def writer_save_document(
+    artifact: Any,
+    base_artifact: Any,
+    numbering_update: Mapping[str, Any] | None = None,
+) -> dict:
     """Normalize a submitted IR edit back to clean source and re-materialize it."""
     current_value = _action_artifact_data(artifact)
     if isinstance(current_value, str):
         base_value = _action_artifact_data(base_artifact)
-        base_numbering = (
-            compute_numbering(build_numbering_view_from_markdown(base_value))
-            if isinstance(base_value, str)
-            else {}
-        )
+        if not isinstance(base_value, str):
+            raise ValueError('base artifact representation does not match Markdown edit')
+        base_numbering = compute_numbering(build_numbering_view_from_markdown(base_value))
         clean = dematerialize_markdown(current_value, base_numbering)
-        rendered = _json_loads(
-            WriterCreateToolkit().render_markdown(writer_document_json=clean),
-            {},
-        )
+        clean = ensure_markdown_heading_anchors(clean)
+        if numbering_update is not None:
+            clean = apply_numbering_update_markdown(clean, numbering_update)
+        view = build_numbering_view_from_markdown(clean)
+        numbering = compute_numbering(view)
+        title_match = re.search(r'^#\s+(.+)$', clean, re.MULTILINE)
         return {
             'source_document': clean,
-            'title': rendered.get('title') or '',
+            'title': title_match.group(1).strip() if title_match else '',
             'representation': 'markdown',
-            'document': rendered.get('markdown') or '',
+            'document': materialize_markdown(clean, view, numbering),
+            'numbering': _numbering_payload(view, numbering),
         }
     current = WriterDocument.model_validate(current_value)
     base = WriterDocument.model_validate(_action_artifact_data(base_artifact))
     base_numbering = compute_numbering(build_numbering_view_from_ir(base))
     clean = dematerialize_ir(current, base_numbering)
-    numbering = compute_numbering(build_numbering_view_from_ir(clean))
+    if numbering_update is not None:
+        clean = apply_numbering_update_ir(clean, numbering_update)
+    view = build_numbering_view_from_ir(clean)
+    numbering = compute_numbering(view)
     materialized = materialize_ir(clean, numbering)
     return {
         'source_document': clean.model_dump(exclude_defaults=True),
         'title': clean.title,
         'representation': 'ir',
         'document': materialized.model_dump(exclude_defaults=True),
+        'numbering': _numbering_payload(view, numbering),
     }
+
+
+def _numbering_payload(
+    view: NumberingView,
+    numbering: NumberingMap,
+) -> dict[str, Any]:
+    entries: dict[str, dict[str, Any]] = {}
+    for node_id, entry in numbering.items():
+        payload: dict[str, Any] = {'label': format_target_number(entry)}
+        if entry.kind == 'section':
+            payload.update(mode=entry.mode, restart=entry.restart)
+        entries[node_id] = payload
+    return {'ordered_style': view.ordered_style, 'entries': entries}
 
 
 def writer_build_revision_task(query: str, base_document_path: str) -> str:

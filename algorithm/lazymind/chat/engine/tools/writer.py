@@ -2335,6 +2335,17 @@ class WriterToolkitBase:
         ))
         published = _set_document_editable(_primary_data(refreshed), stage='final')
         if mode == 'replace':
+            heading_numbering = publish_document.metadata.get('heading_numbering')
+            if heading_numbering is not None:
+                published.metadata['heading_numbering'] = deepcopy(heading_numbering)
+            source_headings = (
+                block for block in publish_document.iter_blocks() if block.type == 'heading'
+            )
+            published_headings = (
+                block for block in published.iter_blocks() if block.type == 'heading'
+            )
+            for source_heading, published_heading in zip(source_headings, published_headings):
+                published_heading.numbering = deepcopy(source_heading.numbering)
             source_images = (
                 block for block in publish_document.iter_blocks() if block.type == 'image'
             )
