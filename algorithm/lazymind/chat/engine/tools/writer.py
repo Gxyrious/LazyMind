@@ -457,6 +457,13 @@ def sync_writer_documents(
             success=True,
             message='No document changes.',
         )
+    heading_numbering = revised.metadata.get('heading_numbering')
+    if heading_numbering is not None:
+        candidate.metadata['heading_numbering'] = deepcopy(heading_numbering)
+    revised_headings = (block for block in revised.iter_blocks() if block.type == 'heading')
+    persisted_headings = (block for block in candidate.iter_blocks() if block.type == 'heading')
+    for revised_heading, persisted_heading in zip(revised_headings, persisted_headings):
+        persisted_heading.numbering = deepcopy(revised_heading.numbering)
     candidate.ui_editable = True
     return {
         'success': result.success,
@@ -1064,6 +1071,28 @@ class WriterToolkitBase:
                         content='\n'.join(lines[1:]),
                         stage='outline',
                     ))
+        if any(block.type == 'heading' for block in document.blocks) and not any(
+            child.type == 'heading'
+            for block in document.blocks
+            for child in block.iter_blocks()
+            if child is not block
+        ):
+            roots: list[WriterBlock] = []
+            headings: list[tuple[int, WriterBlock]] = []
+            for block in document.blocks:
+                if block.type != 'heading':
+                    (headings[-1][1].children if headings else roots).append(block)
+                    continue
+                level = block.numbering.get('level')
+                if not isinstance(level, int) or isinstance(level, bool) \
+                        or not 1 <= level <= 9:
+                    level = 1
+                while headings and headings[-1][0] >= level:
+                    headings.pop()
+                block.numbering['level'] = len(headings) + 1
+                (headings[-1][1].children if headings else roots).append(block)
+                headings.append((level, block))
+            document.blocks = roots
         return _set_document_editable(
             document, stage='outline',
         ).model_dump_json(exclude_defaults=True)
