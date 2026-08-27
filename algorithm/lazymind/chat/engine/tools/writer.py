@@ -44,6 +44,7 @@ from lazyllm.tools.writer.tools import (
     WriterResourceTools,
     WriterRevisionTools,
 )
+from lazyllm.tools.writer.tools.revision_tools import apply_patch_to_ir
 from lazyllm.tools.writer.numbering import materialize_markdown
 from lazyllm.tools.writer.utils import (
     render_block_markdown,
@@ -409,13 +410,37 @@ def _result_data(result: dict, key: str) -> Any:
     return _read_artifact_data(path)
 
 
+def _merge_provider_state(
+    document: WriterDocument,
+    persisted: WriterDocument,
+) -> WriterDocument:
+    merged = document.model_copy(deep=True)
+    local_blocks = list(merged.iter_blocks())
+    persisted_blocks = list(persisted.iter_blocks())
+    if len(local_blocks) != len(persisted_blocks):
+        raise ToolExecutionError(
+            'Provider document block count does not match the written WriterDocument.'
+        )
+    for local, remote in zip(local_blocks, persisted_blocks):
+        if local.type != remote.type:
+            raise ToolExecutionError(
+                'Provider document block order does not match the written WriterDocument.'
+            )
+        local.provider_binding = deepcopy(remote.provider_binding)
+        local.provider_payload = deepcopy(remote.provider_payload)
+        local.editable = remote.editable
+    merged.revision = persisted.revision
+    merged.provider_binding = deepcopy(persisted.provider_binding)
+    return merged
+
+
 def sync_writer_documents(
     source_value: Any,
     revised_value: Any,
     media_assets: Any = None,
     artifact_store: str = '',
 ) -> dict[str, Any]:
-    """Persist one WriterDocument delta and return its provider-confirmed IR."""
+    """Persist one WriterDocument delta and bind its semantic IR to the provider."""
     source = WriterDocument.model_validate(source_value)
     revised = WriterDocument.model_validate(revised_value)
     if source.document_id != revised.document_id:
@@ -448,22 +473,16 @@ def sync_writer_documents(
         output = WriterResourceTools(
             llm=None, artifact_store=str(root),
         ).apply_patch_to_document(patch, source, media_assets=library)
-        candidate = WriterDocument.model_validate(_result_data(output, 'persisted_document'))
+        persisted = WriterDocument.model_validate(_result_data(output, 'persisted_document'))
         result = PatchResult.model_validate(_result_data(output, 'patch_result'))
     else:
-        candidate = source.model_copy(deep=True)
+        persisted = source
         result = PatchResult(
             patch_id=patch.patch_id,
             success=True,
             message='No document changes.',
         )
-    heading_numbering = revised.metadata.get('heading_numbering')
-    if heading_numbering is not None:
-        candidate.metadata['heading_numbering'] = deepcopy(heading_numbering)
-    revised_headings = (block for block in revised.iter_blocks() if block.type == 'heading')
-    persisted_headings = (block for block in candidate.iter_blocks() if block.type == 'heading')
-    for revised_heading, persisted_heading in zip(revised_headings, persisted_headings):
-        persisted_heading.numbering = deepcopy(revised_heading.numbering)
+    candidate = _merge_provider_state(revised, persisted)
     candidate.ui_editable = True
     return {
         'success': result.success,
@@ -528,6 +547,14 @@ def _set_document_editable(value: Any, *, stage: str | None = None) -> WriterDoc
 
 def _target_from_document(value: Any) -> TargetDocument | None:
     document = WriterDocument.model_validate(value)
+    binding = document.provider_binding
+    target = TargetDocument(
+        doc_id=binding.get('document_id'),
+        uri=binding.get('uri'),
+        adapter=binding.get('provider'),
+    )
+    if target.uri or target.doc_id:
+        return target
     source = document.metadata.get('source')
     if not isinstance(source, dict):
         return None
@@ -2265,6 +2292,12 @@ class WriterToolkitBase:
         source = WriterDocument.model_validate(
             _json_loads(source_document_json, {}),
         )
+        patch = PatchSet.model_validate(_json_loads(patch_set_json, {}))
+        media_assets = (
+            MediaAssetLibrary.model_validate(_json_loads(media_assets_json, {}))
+            if media_assets_json.strip() else None
+        )
+        revised, _ = apply_patch_to_ir(source, patch, media_assets=media_assets)
         target = _target_from_document(source)
         if target is None:
             raise ToolExecutionError(
@@ -2273,17 +2306,17 @@ class WriterToolkitBase:
         result = WriterResourceTools(
             llm=None, artifact_store=str(root),
         ).apply_patch_to_document(
-            patch_set=_json_loads(patch_set_json, {}),
+            patch_set=patch,
             source_document=source,
-            media_assets=_json_loads(media_assets_json, {}) if media_assets_json.strip() else None,
+            media_assets=media_assets,
         )
-        persisted = _set_document_editable(
-            _result_data(result, 'persisted_document'),
-            stage=source.stage,
+        persisted = WriterDocument.model_validate(_result_data(result, 'persisted_document'))
+        published = _set_document_editable(
+            _merge_provider_state(revised, persisted), stage=source.stage,
         )
         return _json_dumps({
             'publish_result': _primary_data(result),
-            'draft_document': persisted.model_dump(exclude_defaults=True),
+            'draft_document': published.model_dump(exclude_defaults=True),
             'published_link': _published_link(target),
         })
 
@@ -2362,27 +2395,10 @@ class WriterToolkitBase:
             **target.model_dump(exclude={'meta'}),
             meta={**target.meta, 'stage': 'final'},
         ))
-        published = _set_document_editable(_primary_data(refreshed), stage='final')
+        published = WriterDocument.model_validate(_primary_data(refreshed))
         if mode == 'replace':
-            heading_numbering = publish_document.metadata.get('heading_numbering')
-            if heading_numbering is not None:
-                published.metadata['heading_numbering'] = deepcopy(heading_numbering)
-            source_headings = (
-                block for block in publish_document.iter_blocks() if block.type == 'heading'
-            )
-            published_headings = (
-                block for block in published.iter_blocks() if block.type == 'heading'
-            )
-            for source_heading, published_heading in zip(source_headings, published_headings):
-                published_heading.numbering = deepcopy(source_heading.numbering)
-            source_images = (
-                block for block in publish_document.iter_blocks() if block.type == 'image'
-            )
-            published_images = (
-                block for block in published.iter_blocks() if block.type == 'image'
-            )
-            for source_image, published_image in zip(source_images, published_images):
-                published_image.references = deepcopy(source_image.references)
+            published = _merge_provider_state(publish_document, published)
+        published = _set_document_editable(published, stage='final')
         return _json_dumps({
             'publish_result': _primary_data(write_result),
             'draft_document': published.model_dump(exclude_defaults=True),
