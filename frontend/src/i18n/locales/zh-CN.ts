@@ -2038,7 +2038,7 @@ const zhCN = {
       adding: "添加中…",
       ai: "AI",
       aiGenerated: "AI 生成",
-      feishuSynced: "飞书同步",
+      providerSynced: "知识源同步",
       applyVersion: "应用 {{version}}",
       applyVersionAria: "应用版本 {{version}}",
       cancelDelete: "取消删除",

@@ -164,12 +164,12 @@ func SyncWriterDocument(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		common.ReplyErrWithData(w, "writer document sync failed", map[string]any{
-			"status": "sync_failed", "feishu_synced": false, "artifact_saved": false,
+			"status": "sync_failed", "provider_synced": false, "artifact_saved": false,
 			"detail": err.Error(),
 		}, writerSyncStatus(status))
 		return
 	}
-	if !result.Success || !result.FeishuSynced || len(result.PersistedDocument) == 0 {
+	if !result.Success || !result.ProviderSynced || len(result.PersistedDocument) == 0 {
 		common.ReplyErr(w, "writer document sync failed", http.StatusBadGateway)
 		return
 	}
@@ -200,7 +200,7 @@ func SyncWriterDocument(w http.ResponseWriter, r *http.Request) {
 		)
 		if updateErr != nil {
 			common.ReplyErrWithData(w, "artifact save failed", map[string]any{
-				"status": "artifact_save_failed", "feishu_synced": true, "artifact_saved": false,
+				"status": "artifact_save_failed", "provider_synced": true, "artifact_saved": false,
 				"patch_result": result.PatchResult, "document": result.PersistedDocument,
 			}, http.StatusInternalServerError)
 			return
@@ -220,7 +220,7 @@ func SyncWriterDocument(w http.ResponseWriter, r *http.Request) {
 		)
 		if createErr != nil {
 			common.ReplyErrWithData(w, "artifact save failed", map[string]any{
-				"status": "artifact_save_failed", "feishu_synced": true, "artifact_saved": false,
+				"status": "artifact_save_failed", "provider_synced": true, "artifact_saved": false,
 				"patch_result": result.PatchResult, "document": result.PersistedDocument,
 			}, http.StatusInternalServerError)
 			return
@@ -633,12 +633,12 @@ func WriteBackWriterDocument(w http.ResponseWriter, r *http.Request) {
 	result, status, err := algo.SyncWriterDocument(ctx, syncRequest)
 	if err != nil {
 		common.ReplyErrWithData(w, "writer document write-back failed", map[string]any{
-			"status": "write_back_failed", "feishu_synced": false,
+			"status": "write_back_failed", "provider_synced": false,
 			"detail": err.Error(),
 		}, writerSyncStatus(status))
 		return
 	}
-	if !result.Success || !result.FeishuSynced || len(result.PersistedDocument) == 0 {
+	if !result.Success || !result.ProviderSynced || len(result.PersistedDocument) == 0 {
 		common.ReplyErr(w, "writer document write-back failed", http.StatusBadGateway)
 		return
 	}
@@ -668,7 +668,7 @@ func WriteBackWriterDocument(w http.ResponseWriter, r *http.Request) {
 	)
 	if err != nil {
 		common.ReplyErrWithData(w, "artifact save failed", map[string]any{
-			"status": "artifact_save_failed", "feishu_synced": true,
+			"status": "artifact_save_failed", "provider_synced": true,
 			"artifact_saved": false,
 		}, http.StatusInternalServerError)
 		return
@@ -677,7 +677,7 @@ func WriteBackWriterDocument(w http.ResponseWriter, r *http.Request) {
 		Where("id = ?", revision.ID).
 		Update("change_source", "provider_sync").Error; err != nil {
 		common.ReplyErrWithData(w, "artifact sync state save failed", map[string]any{
-			"status": "artifact_state_save_failed", "feishu_synced": true,
+			"status": "artifact_state_save_failed", "provider_synced": true,
 			"artifact_saved": true,
 		}, http.StatusInternalServerError)
 		return
@@ -689,7 +689,7 @@ func WriteBackWriterDocument(w http.ResponseWriter, r *http.Request) {
 	)
 	common.ReplyOK(w, map[string]any{
 		"status": "synced", "revision": revision.Revision,
-		"feishu_synced": true, "artifact_saved": true,
+		"provider_synced": true, "artifact_saved": true,
 		"patch_result": result.PatchResult,
 		"document":     result.PersistedDocument,
 	})
@@ -1104,7 +1104,7 @@ func writerSyncReply(
 	result *algo.WriterDocumentSyncResponse,
 ) {
 	common.ReplyOK(w, map[string]any{
-		"status": status, "revision": revision, "feishu_synced": true,
+		"status": status, "revision": revision, "provider_synced": true,
 		"artifact_saved": artifactSaved, "patch_result": result.PatchResult,
 		"document": result.PersistedDocument,
 	})
