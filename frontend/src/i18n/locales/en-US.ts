@@ -1990,7 +1990,7 @@ const enUS = {
       adding: "Adding…",
       ai: "AI",
       aiGenerated: "AI generated",
-      feishuSynced: "Feishu synced",
+      providerSynced: "Provider synced",
       applyVersion: "Apply {{version}}",
       applyVersionAria: "Apply version {{version}}",
       cancelDelete: "Cancel deletion",

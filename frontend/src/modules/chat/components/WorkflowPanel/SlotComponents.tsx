@@ -918,7 +918,7 @@ export function SlotVersionPopover({
     ? tr('chat.writerIR.localHistory')
     : tr('chat.slots.versionHistory');
   const changeSourceLabel = (version: SlotVersionEntry) => {
-    if (version.provider_synced) return tr('chat.slots.feishuSynced');
+    if (version.provider_synced) return tr('chat.slots.providerSynced');
     return version.change_source === 'human' ? tr('chat.slots.manual') : tr('chat.slots.ai');
   };
 
@@ -2203,7 +2203,7 @@ async function syncWriterDocumentSlot(
     || (result.status !== 'synced' && result.status !== 'no_change')
     || typeof result.revision !== 'number'
     || result.revision <= 0
-    || result.feishu_synced !== true
+    || result.provider_synced !== true
     || (result.status === 'synced' && result.artifact_saved !== true)
     || (result.status === 'no_change' && result.artifact_saved !== false)
     || result.patch_result?.success !== true
@@ -2384,7 +2384,7 @@ function useRegisterWriterWriteBack({
       if (
         response?.data?.code !== 0
         || result?.status !== 'synced'
-        || result.feishu_synced !== true
+        || result.provider_synced !== true
         || result.artifact_saved !== true
         || typeof result.revision !== 'number'
         || result.patch_result?.success !== true

@@ -223,7 +223,7 @@ export interface SyncWriterDocumentPatchResult {
 export interface SyncWriterDocumentResult {
   status: "synced" | "no_change";
   revision: number;
-  feishu_synced: boolean;
+  provider_synced: boolean;
   artifact_saved: boolean;
   patch_result: SyncWriterDocumentPatchResult;
   document: Record<string, unknown>;
@@ -232,7 +232,7 @@ export interface SyncWriterDocumentResult {
 export interface WriteBackWriterDocumentResult {
   status: "synced";
   revision: number;
-  feishu_synced: boolean;
+  provider_synced: boolean;
   artifact_saved: boolean;
   patch_result: SyncWriterDocumentPatchResult;
   document: Record<string, unknown>;
