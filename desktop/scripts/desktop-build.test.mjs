@@ -191,6 +191,8 @@ test("Windows installer accepts development and release package versions", () =>
 test("Windows installer force-stops LazyMind before invoking an old uninstaller", () => {
   const source = readFileSync(installerScript, "utf8");
   const check = nsisMacro(source, "customCheckAppRunning");
+  const install = nsisMacro(source, "customInstall");
+  const uninstall = nsisMacro(source, "customUnInstall");
 
   assert.match(
     check,
@@ -200,6 +202,8 @@ test("Windows installer force-stops LazyMind before invoking an old uninstaller"
   assert.match(check, /\$0 == 10[\s\S]*force-stop --install-dir "\$INSTDIR"[\s\S]*Goto LMCheckStopped/);
   assert.doesNotMatch(check, /MB_RETRYCANCEL|LMCloseApp/);
   assert.match(source, /LangString LMProcessScanFailed[\s\S]*LangString LMForceStopFailed/);
+  assert.match(install, /purge-local-data --install-dir "\$INSTDIR"/);
+  assert.match(uninstall, /purge-local-data --install-dir "\$INSTDIR"/);
 });
 
 test("Windows installer replaces legacy uninstallers with the fixed embedded uninstaller", () => {
@@ -237,9 +241,9 @@ test("Windows installer diagnoses paths and does not roll back when warmup fails
   );
   assert.match(
     install,
-    /\$InstallTypeChoice == "full"[\s\S]*ExecWait[^\n]+--installer-warmup --timeout-seconds 360[^\n]+\$3[\s\S]*LMWarmupCheckStopped:[\s\S]*check-stopped --install-dir "\$INSTDIR"/,
+    /\$InstallTypeChoice == "full"[\s\S]*ExecWait[^\n]+--installer-warmup --timeout-seconds 1800[^\n]+\$3[\s\S]*LMWarmupCheckStopped:[\s\S]*check-stopped --install-dir "\$INSTDIR"/,
   );
-  assert.match(install, /Starting Electron installer warmup \(timeout=360s\)/);
+  assert.match(install, /Starting Electron installer warmup \(timeout=1800s\)/);
   assert.match(install, /installer-nsis\.log[\s\S]*Starting Electron installer warmup/);
   assert.match(install, /Electron installer warmup returned exit code \$3/);
   assert.match(
@@ -486,6 +490,60 @@ test("macOS first-launch warmup shows preparation UI instead of only a Dock icon
   );
 });
 
+test("Desktop startup shows real bundled Python progress and transient Windows lock retries", () => {
+  const source = readFileSync(electronMainScript, "utf8");
+  assert.match(
+    source,
+    /event\?\.event === "phase\.progress" && event\?\.phase === "python-payload"[\s\S]*completedFiles[\s\S]*totalBytes/,
+  );
+  assert.match(source, /role="progressbar"[\s\S]*aria-label="Startup progress"/);
+  assert.match(source, /function renderProgress\(progress\)[\s\S]*Extracting bundled Python/);
+  assert.match(source, /Waiting for Windows to release Python files/);
+  assert.match(source, /Reading bundled Python archive/);
+  assert.match(source, /percent \+ "% · " \+ \(progress\.totalRoots/);
+  assert.match(source, /const ratio = totalFiles > 0 \? completedFiles \/ totalFiles : 0/);
+  assert.match(source, /const complete = totalFiles > 0 && completedFiles >= totalFiles/);
+  assert.match(source, /Math\.min\(99, Math\.floor\(ratio \* 100\)\)/);
+  assert.match(source, /style\.transform = "scaleX\("/);
+  assert.doesNotMatch(source, /transition:\s*width/);
+});
+
+test("selected Desktop folders become dynamic allowed roots without confirmation or restart", () => {
+  const source = readFileSync(electronMainScript, "utf8");
+  const start = source.indexOf('ipcMain.handle("lazymind:authorizeLocalFolders"');
+  const end = source.indexOf('ipcMain.handle("lazymind:selectFolder"', start);
+  const handler = source.slice(start, end);
+  assert.ok(start >= 0 && end > start);
+  assert.match(handler, /replaceFileWatcherAllowedRoots\([\s\S]*saveAccessState\([\s\S]*allowedRoots/);
+  assert.doesNotMatch(handler, /showMessageBox/);
+  assert.doesNotMatch(handler, /restartRuntimeAfterFolderAccessChange/);
+});
+
+test("Desktop discovery asks for consent before choosing roots and skips protected content folders", () => {
+  const source = readFileSync(electronMainScript, "utf8");
+  const start = source.indexOf('ipcMain.handle("lazymind:chooseLocalDiscoveryRoots"');
+  const end = source.indexOf('ipcMain.handle("lazymind:discoverLocalFolders"', start);
+  const handler = source.slice(start, end);
+  assert.ok(start >= 0 && end > start);
+  assert.ok(
+    handler.indexOf("showMessageBox") < handler.indexOf("showOpenDialog"),
+    "discovery consent must be shown before the native directory picker",
+  );
+  assert.match(handler, /discoveryConsentGranted:\s*false/);
+  assert.match(
+    handler,
+    /localFolderDiscoveryExcludedRoots\(\)[\s\S]*resolveExistingDirectories\(\s*collapseRoots\([\s\S]*containsPath\(excludedRoot, candidate\)/,
+    "protected selections must be filtered before filesystem validation",
+  );
+
+  const excludedStart = source.indexOf("function localFolderDiscoveryExcludedRoots()");
+  const excludedEnd = source.indexOf("function runtimeAllowedRoots", excludedStart);
+  const excluded = source.slice(excludedStart, excludedEnd);
+  for (const name of ["desktop", "documents", "downloads", "music", "pictures", "videos"]) {
+    assert.match(excluded, new RegExp(`"${name}"`));
+  }
+});
+
 test("Desktop does not create the Chat window after quitting or moving to background", () => {
   const source = readFileSync(electronMainScript, "utf8");
   const start = source.indexOf("async function createWindow()");
@@ -526,6 +584,20 @@ test("Desktop opens the home page from the sidecar readiness event with status p
   assert.match(
     source,
     /function waitForDesktopHomeReady\(\) \{[\s\S]*Promise\.race\(\[[\s\S]*waitForHomeReadySignal\(\),[\s\S]*waitForRuntimeReady\(\{ capability: "home" \}\)/,
+  );
+});
+
+test("Desktop always starts its local runtime with automatic port allocation", () => {
+  const source = readFileSync(electronMainScript, "utf8");
+  assert.match(
+    source,
+    /LAZYMIND_LOCAL_PORTS_PINNED:\s*"false"/,
+    "packaged Desktop must treat configured ports as preferences",
+  );
+  assert.match(
+    source,
+    /status\.config\?\.portResolutions[\s\S]*loggedPortResolutions\.has\(key\)[\s\S]*port moved:/,
+    "resolved ports must be reported once in startup diagnostics",
   );
 });
 

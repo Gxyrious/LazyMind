@@ -11,9 +11,30 @@ import (
 
 	"github.com/gorilla/mux"
 
+	"lazymind/core/algo"
 	"lazymind/core/common/orm"
 	"lazymind/core/store"
 )
+
+func TestWriterSyncReplyUsesProviderSynced(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	writerSyncReply(recorder, "synced", 2, true, &algo.WriterDocumentSyncResponse{
+		Success:        true,
+		ProviderSynced: true,
+		PatchResult:    json.RawMessage(`{"success":true}`),
+		PersistedDocument: json.RawMessage(
+			`{"document_id":"doc-1","blocks":[]}`,
+		),
+	})
+
+	body := recorder.Body.String()
+	if !strings.Contains(body, `"provider_synced":true`) {
+		t.Fatalf("provider_synced missing from response: %s", body)
+	}
+	if strings.Contains(body, "feishu_synced") {
+		t.Fatalf("legacy sync field leaked into response: %s", body)
+	}
+}
 
 func TestWriterSyncStatus(t *testing.T) {
 	for input, want := range map[int]int{

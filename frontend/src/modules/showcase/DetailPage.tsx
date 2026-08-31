@@ -11,38 +11,44 @@ import { useTranslation } from "react-i18next";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   getShowcaseCase,
+  listShowcaseCases,
   type ShowcaseCase,
   type ShowcaseCaseResult,
   type ShowcaseCaseTask,
 } from "./api";
+import { buildShowcaseLaunchPath } from "./classification";
 import "./index.scss";
 
 const REPLAY_INITIAL_DELAY_MS = 480;
 const REPLAY_STEP_DELAY_MS = 420;
+const WHEEL_DELTA_LINE = 1;
+const WHEEL_DELTA_PAGE = 2;
 
 function prefersReducedMotion() {
   return typeof window !== "undefined"
     && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
 }
 
-function ResultSkeleton({ label }: { label: string }) {
-  return (
-    <div className="showcase-result-document showcase-result-skeleton" role="status" aria-live="polite">
-      <span className="sr-only">{label}</span>
-      <div className="showcase-result-skeleton-content" aria-hidden="true">
-        <span className="showcase-skeleton-line is-short" />
-        <span className="showcase-skeleton-line is-title" />
-        <span className="showcase-skeleton-line is-subtitle" />
-        <div className="showcase-skeleton-metrics">
-          <span /><span /><span />
-        </div>
-        <div className="showcase-skeleton-columns">
-          <span /><span />
-        </div>
-        <span className="showcase-skeleton-line is-footer" />
-      </div>
-    </div>
-  );
+function scrollTaskListHorizontally(taskList: HTMLDivElement, event: WheelEvent) {
+  const maxScrollLeft = taskList.scrollWidth - taskList.clientWidth;
+  if (maxScrollLeft <= 0) {
+    return;
+  }
+
+  let delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
+  if (event.deltaMode === WHEEL_DELTA_LINE) {
+    delta *= 16;
+  } else if (event.deltaMode === WHEEL_DELTA_PAGE) {
+    delta *= taskList.clientWidth;
+  }
+
+  const nextScrollLeft = Math.min(maxScrollLeft, Math.max(0, taskList.scrollLeft + delta));
+  if (nextScrollLeft === taskList.scrollLeft) {
+    return;
+  }
+
+  event.preventDefault();
+  taskList.scrollLeft = nextScrollLeft;
 }
 
 function ProductReportResult({ result }: { result: ShowcaseCaseResult }) {
@@ -132,20 +138,58 @@ function GenericResult({ result, steps }: {
   );
 }
 
+function HTMLPreviewResult({ url, title }: {
+  url: string;
+  title: string;
+}) {
+  return (
+    <iframe
+      className="showcase-html-preview"
+      src={url}
+      sandbox="allow-scripts"
+      loading="lazy"
+      referrerPolicy="no-referrer"
+      title={title}
+    />
+  );
+}
+
+function ResultContent({ result, steps }: {
+  result: ShowcaseCaseResult;
+  steps: NonNullable<ShowcaseCaseTask["steps"]>;
+}) {
+  if (result.template === "html_preview_v1" && result.html_url) {
+    return (
+      <HTMLPreviewResult
+        url={result.html_url}
+        title={result.title}
+      />
+    );
+  }
+  if (result.template === "product_report_v1" && result.product_report) {
+    return <ProductReportResult result={result} />;
+  }
+  return <GenericResult result={result} steps={steps} />;
+}
+
 export default function DetailPage() {
   const { i18n, t } = useTranslation();
   const locale = i18n.resolvedLanguage || i18n.language;
   const { caseId = "" } = useParams();
   const navigate = useNavigate();
-  const resultPanelRef = useRef<HTMLElement>(null);
+  const taskSectionRef = useRef<HTMLElement>(null);
+  const taskListRef = useRef<HTMLDivElement>(null);
   const [item, setItem] = useState<ShowcaseCase | null>(null);
+  const [galleryCases, setGalleryCases] = useState<ShowcaseCase[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [hasError, setHasError] = useState(false);
   const [visibleSteps, setVisibleSteps] = useState(0);
   const [isAnimationSkipped, setIsAnimationSkipped] = useState(false);
   const [isResultExpanded, setIsResultExpanded] = useState(false);
   const [selectedTaskId, setSelectedTaskId] = useState("");
-  const selectedTask = item?.tasks?.find((task) => task.id === selectedTaskId) || item?.tasks?.[0];
+  const selectedTask = item
+    ? item.tasks.find((task) => task.id === selectedTaskId) ?? item.tasks[0]
+    : undefined;
   const replaySteps = selectedTask?.steps || [];
 
   useEffect(() => {
@@ -153,7 +197,11 @@ export default function DetailPage() {
     setIsLoading(true);
     setHasError(false);
     getShowcaseCase(caseId, { signal: controller.signal })
-      .then(setItem)
+      .then((nextItem) => {
+        setItem(nextItem);
+        setIsResultExpanded(false);
+        setSelectedTaskId(nextItem.tasks?.[0]?.id ?? "");
+      })
       .catch(() => {
         if (!controller.signal.aborted) {
           setHasError(true);
@@ -168,9 +216,30 @@ export default function DetailPage() {
   }, [caseId, locale]);
 
   useEffect(() => {
-    setIsResultExpanded(false);
-    setSelectedTaskId(item?.tasks?.[0]?.id ?? "");
-  }, [item]);
+    const controller = new AbortController();
+    listShowcaseCases({}, { signal: controller.signal })
+      .then((response) => {
+        setGalleryCases((response.cases || []).filter((entry) => entry.gallery));
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) {
+          setGalleryCases([]);
+        }
+      });
+    return () => controller.abort();
+  }, [locale]);
+
+  useEffect(() => {
+    const taskSection = taskSectionRef.current;
+    const taskList = taskListRef.current;
+    if (!taskSection || !taskList) {
+      return;
+    }
+
+    const handleWheel = (event: WheelEvent) => scrollTaskListHorizontally(taskList, event);
+    taskSection.addEventListener("wheel", handleWheel, { passive: false });
+    return () => taskSection.removeEventListener("wheel", handleWheel);
+  }, [isLoading, item?.id]);
 
   useEffect(() => {
     const shouldReduceMotion = prefersReducedMotion();
@@ -204,29 +273,18 @@ export default function DetailPage() {
   }
 
   const startCase = () => {
-    const params = new URLSearchParams({ showcase_case: item.id });
-    if (selectedTaskId) {
-      params.set("showcase_task", selectedTaskId);
-    }
-    navigate(`/agent/chat/home?${params.toString()}`);
-  };
-  const showFullResult = () => {
-    setVisibleSteps(replaySteps.length);
-    setIsAnimationSkipped(true);
-    resultPanelRef.current?.scrollIntoView?.({
-      behavior: prefersReducedMotion() ? "auto" : "smooth",
-      block: "nearest",
-    });
+    navigate(buildShowcaseLaunchPath(item.id, item.type, selectedTaskId));
   };
   const toggleResultExpanded = () => {
-    if (visibleSteps < replaySteps.length) {
-      setVisibleSteps(replaySteps.length);
-      setIsAnimationSkipped(true);
-    }
     setIsResultExpanded((current) => !current);
   };
   const isReplayComplete = visibleSteps >= replaySteps.length;
   const activeResult = selectedTask.result;
+  const currentCaseIndex = galleryCases.findIndex((entry) => entry.id === item.id);
+  const previousCase = currentCaseIndex > 0 ? galleryCases[currentCaseIndex - 1] : undefined;
+  const nextCase = currentCaseIndex >= 0 && currentCaseIndex < galleryCases.length - 1
+    ? galleryCases[currentCaseIndex + 1]
+    : undefined;
   const sourceURL = item.source_url.trim();
   const hasExternalSource = /^https?:\/\//i.test(sourceURL);
 
@@ -258,9 +316,19 @@ export default function DetailPage() {
       </header>
 
       {(item.tasks?.length || 0) > 1 ? (
-        <section className="showcase-detail-tasks" aria-labelledby="showcase-task-title">
+        <section
+          ref={taskSectionRef}
+          className="showcase-detail-tasks"
+          aria-labelledby="showcase-task-title"
+        >
           <h2 id="showcase-task-title">{t("showcase.chooseTask")}</h2>
-          <div className="showcase-task-grid">
+          <div
+            ref={taskListRef}
+            className="showcase-task-grid"
+            role="group"
+            aria-labelledby="showcase-task-title"
+            tabIndex={0}
+          >
             {item.tasks.map((task, index) => (
               <button
                 type="button"
@@ -294,10 +362,26 @@ export default function DetailPage() {
               <h2>{t("showcase.detail.taskReplay")}</h2>
               <span>{t("showcase.detail.demo")}</span>
             </div>
-            <button type="button" onClick={showFullResult}>
-              {t("showcase.detail.viewResult")}
-              <ArrowRightOutlined aria-hidden="true" />
-            </button>
+            <nav className="showcase-case-navigation" aria-label={t("showcase.detail.caseNavigation")}>
+              <button
+                type="button"
+                disabled={!previousCase}
+                title={previousCase?.title}
+                onClick={() => previousCase && navigate(`/agent/chat/cases/${encodeURIComponent(previousCase.id)}`)}
+              >
+                <ArrowLeftOutlined aria-hidden="true" />
+                {t("showcase.detail.previousCase")}
+              </button>
+              <button
+                type="button"
+                disabled={!nextCase}
+                title={nextCase?.title}
+                onClick={() => nextCase && navigate(`/agent/chat/cases/${encodeURIComponent(nextCase.id)}`)}
+              >
+                {t("showcase.detail.nextCase")}
+                <ArrowRightOutlined aria-hidden="true" />
+              </button>
+            </nav>
           </header>
           <div className="showcase-replay-body">
             <div className="showcase-user-task">
@@ -324,11 +408,7 @@ export default function DetailPage() {
           </div>
         </article>
 
-        <article
-          className="showcase-workbench-panel showcase-result-panel"
-          ref={resultPanelRef}
-          aria-busy={!isReplayComplete}
-        >
+        <article className="showcase-workbench-panel showcase-result-panel">
           <header className="showcase-panel-header">
             <div>
               <h2>{t("showcase.detail.finalOutput")}</h2>
@@ -339,21 +419,10 @@ export default function DetailPage() {
               {isResultExpanded ? <CompressOutlined aria-hidden="true" /> : <ExpandOutlined aria-hidden="true" />}
             </button>
           </header>
-          <div className="showcase-result-body">
-            {isReplayComplete ? (
-              <div className="showcase-result-document showcase-result-document-enter">
-                {activeResult.template === "product_report_v1" && activeResult.product_report ? (
-                  <ProductReportResult result={activeResult} />
-                ) : (
-                  <GenericResult
-                    result={activeResult}
-                    steps={replaySteps}
-                  />
-                )}
-              </div>
-            ) : (
-              <ResultSkeleton label={t("showcase.detail.generatingResult")} />
-            )}
+          <div className={`showcase-result-body${activeResult.template === "html_preview_v1" ? " is-html-preview" : ""}`}>
+            <div className={`showcase-result-document showcase-result-document-enter${activeResult.template === "html_preview_v1" ? " is-html-preview" : ""}`}>
+              <ResultContent result={activeResult} steps={replaySteps} />
+            </div>
           </div>
         </article>
       </section>

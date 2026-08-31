@@ -23,7 +23,7 @@ type WriterDocumentSyncRequest struct {
 type WriterDocumentSyncResponse struct {
 	Success           bool            `json:"success"`
 	Changed           bool            `json:"changed"`
-	FeishuSynced      bool            `json:"feishu_synced"`
+	ProviderSynced    bool            `json:"provider_synced"`
 	PatchResult       json.RawMessage `json:"patch_result"`
 	PersistedDocument json.RawMessage `json:"persisted_document"`
 }

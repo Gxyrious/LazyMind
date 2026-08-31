@@ -223,7 +223,7 @@ export interface SyncWriterDocumentPatchResult {
 export interface SyncWriterDocumentResult {
   status: "synced" | "no_change";
   revision: number;
-  feishu_synced: boolean;
+  provider_synced: boolean;
   artifact_saved: boolean;
   patch_result: SyncWriterDocumentPatchResult;
   document: Record<string, unknown>;
@@ -232,7 +232,7 @@ export interface SyncWriterDocumentResult {
 export interface WriteBackWriterDocumentResult {
   status: "synced";
   revision: number;
-  feishu_synced: boolean;
+  provider_synced: boolean;
   artifact_saved: boolean;
   patch_result: SyncWriterDocumentPatchResult;
   document: Record<string, unknown>;
@@ -916,10 +916,16 @@ export function PromptServiceApi() {
         content: string;
         user_instruct: string;
         allow_empty: true;
+        full_content?: string;
+        selection_start?: number;
+        selection_end?: number;
       },
       options?: RawAxiosRequestConfig,
     ) {
-      return axiosInstance.post<PromptPolishOpenAPIResponse>(
+      return axiosInstance.post<PromptPolishOpenAPIResponse & {
+        target_start?: number;
+        target_end?: number;
+      }>(
         `${coreApiBaseUrl}/prompts:polish`,
         payload,
         withJsonOptions(options),

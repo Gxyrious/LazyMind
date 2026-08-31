@@ -88,6 +88,7 @@ func LoadCloudProviderTokens(ctx context.Context, provider, userID string) ([]st
 type SelectedRuntimeModel struct {
 	ModelType          string
 	TechnicalModelType string
+	IsDefault          bool
 	ProviderName       string
 	ModelName          string
 	BaseURL            string
@@ -133,6 +134,7 @@ func LoadLLMConfig(ctx context.Context, db *gorm.DB, userID string) (map[string]
 		Select(
 			"usm.model_type, "+
 				"m.model_type AS technical_model_type, "+
+				"m.is_default, "+
 				"m.provider_name, "+
 				"m.name AS model_name, "+
 				"g.base_url, "+
@@ -175,6 +177,7 @@ func LoadLLMConfig(ctx context.Context, db *gorm.DB, userID string) (map[string]
 		Select(
 			"usm.model_type, "+
 				"m.model_type AS technical_model_type, "+
+				"m.is_default, "+
 				"m.provider_name, "+
 				"m.name AS model_name, "+
 				"g.base_url, "+
@@ -551,9 +554,9 @@ func LoadAdminEmbedConfig(ctx context.Context, db *gorm.DB) (map[string]any, err
 		return nil, err
 	}
 	cfg := map[string]any{
-		"source":   strings.ToLower(strings.TrimSpace(row.ProviderName)),
+		"source":   modelprovider.LazyLLMSource(row.ProviderName),
 		"model":    row.ModelName,
-		"base_url": row.BaseURL,
+		"base_url": modelprovider.LazyLLMBaseURL(row.ProviderName, row.BaseURL),
 		"api_key":  row.APIKey,
 	}
 	return cfg, nil
@@ -588,9 +591,9 @@ func BuildLLMConfig(rows []SelectedRuntimeModel) map[string]any {
 	for _, row := range rows {
 		role := strings.ToLower(strings.TrimSpace(row.ModelType))
 		cfg := map[string]any{
-			"source":   strings.ToLower(strings.TrimSpace(row.ProviderName)),
+			"source":   modelprovider.LazyLLMSource(row.ProviderName),
 			"model":    row.ModelName,
-			"base_url": row.BaseURL,
+			"base_url": modelprovider.LazyLLMBaseURL(row.ProviderName, row.BaseURL),
 			"api_key":  row.APIKey,
 		}
 		if row.MaxInputTokens != nil {
@@ -613,7 +616,7 @@ func BuildLLMConfig(rows []SelectedRuntimeModel) map[string]any {
 
 func openCodeDescriptor(row SelectedRuntimeModel) (modelprovider.OpenCodeModelDescriptor, bool) {
 	return modelprovider.ResolveOpenCodeModel(
-		row.ProviderName, row.ModelName, row.BaseURL, row.TechnicalModelType,
+		row.ProviderName, row.ModelName, row.BaseURL, row.TechnicalModelType, row.IsDefault,
 	)
 }
 

@@ -512,3 +512,98 @@ def test_load_local_lmd_removes_cloud_binding(monkeypatch, tmp_path):
     assert not loaded.get('provider_binding')
     assert 'source' not in loaded.get('metadata', {})
     assert not loaded['blocks'][0].get('provider_binding')
+
+
+@pytest.mark.parametrize(
+    ('representation', 'expected_writer'),
+    [('ir', 'publish_revision'), ('markdown', 'replace_document')],
+)
+def test_draft_workspace_revise_uses_writing_task_representation(
+    monkeypatch,
+    tmp_path,
+    representation,
+    expected_writer,
+):
+    tools = _load_tools_module()
+    instruction = '修改文档'
+
+    def write_json(name, payload):
+        path = tmp_path / name
+        path.write_text(json.dumps(payload), encoding='utf-8')
+        return str(path)
+
+    writer_command = write_json('writer_command.json', {
+        'action': 'revise',
+        'source_role': 'document',
+        'target_stage': 'document',
+        'next_step': 'write_document',
+        'user_instruction': instruction,
+        'request_fingerprint': tools._writer_request_fingerprint(instruction),
+    })
+    writing_task = write_json(
+        'writing_task.json',
+        {'output': {'representation': representation}},
+    )
+    writing_context = write_json('writing_context.json', {})
+    source_document = write_json('source_document.json', {})
+    target_document = write_json('target_document.json', {})
+    modify_plan = write_json('modify_plan.json', {'instructions': []})
+    revision_set = write_json('revision_set.json', {})
+    draft_document = write_json('draft_document.json', {})
+    context_after_draft = write_json('context_after_draft.json', {})
+    remote_inputs = {
+        'writer_command': writer_command,
+        'writing_task': writing_task,
+        'writing_context': writing_context,
+        'source_document': source_document,
+        'target_document': target_document,
+    }
+    context = SimpleNamespace(
+        workspace_path=str(tmp_path),
+        params={
+            'step_id': 'write_document',
+            'user_input': instruction,
+            'remote_inputs': remote_inputs,
+        },
+        emit=lambda _event: None,
+    )
+    state = {
+        'result': {
+            'document_revision_task': str(tmp_path / 'revision_task.json'),
+            'document_locate_result': str(tmp_path / 'locate_result.json'),
+            'document_modify_plan': modify_plan,
+            'document_revision_set': revision_set,
+            'draft_document': draft_document,
+        },
+        'completed': False,
+    }
+    calls = []
+
+    def publish_revision(**_kwargs):
+        calls.append('publish_revision')
+        return {'publish_result': {'success': True}, 'draft_document': draft_document}
+
+    def replace_document(**_kwargs):
+        calls.append('replace_document')
+        return {'publish_result': {'success': True}, 'draft_document': draft_document}
+
+    monkeypatch.setattr(tools, 'require_context', lambda: context)
+    monkeypatch.setattr(
+        tools,
+        '_draft_workspace_state',
+        lambda _fingerprint: (state, tmp_path / 'checkpoint.json'),
+    )
+    monkeypatch.setattr(tools, '_persist_draft_workspace_state', lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(tools, '_save_draft_workspace_artifacts', lambda _result: ['draft_document'])
+    monkeypatch.setattr(
+        tools,
+        'writer_update_writing_context',
+        lambda **_kwargs: context_after_draft,
+    )
+    monkeypatch.setattr(tools, 'writer_publish_revision', publish_revision)
+    monkeypatch.setattr(tools, 'writer_replace_document', replace_document)
+
+    result = tools.writer_draft_workspace()
+
+    assert result['status'] == 'completed'
+    assert calls == [expected_writer]

@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"path"
@@ -86,6 +87,9 @@ func (s *SkillService) CreateSkill(ctx context.Context, req CreateSkillRequest) 
 	}
 
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := ensureSkillIdentityAvailable(tx, req.OwnerUserID, req.Category, req.Name, ""); err != nil {
+			return err
+		}
 		if err := tx.Create(&skillRow{
 			ID:                    skillID,
 			OwnerUserID:           req.OwnerUserID,
@@ -141,9 +145,43 @@ func (s *SkillService) CreateSkill(ctx context.Context, req CreateSkillRequest) 
 		return skillsearch.RebuildSkillTx(ctx, tx, skillID, now)
 	})
 	if err != nil {
-		return CreateSkillResponse{}, err
+		return CreateSkillResponse{}, mapCreateSkillIdentityConflict(err)
 	}
 	return CreateSkillResponse{SkillID: skillID, HeadRevisionID: revisionID}, nil
+}
+
+var errSkillAlreadyExists = fmt.Errorf("skill already exists")
+
+func ensureSkillIdentityAvailable(tx *gorm.DB, ownerUserID, category, name, excludeID string) error {
+	relativeRoot := path.Join(category, name)
+	query := tx.Model(&skillRow{}).Where(
+		"owner_user_id = ? AND deleted_at IS NULL AND ((category = ? AND skill_name = ?) OR relative_root = ?)",
+		ownerUserID, category, name, relativeRoot,
+	)
+	if strings.TrimSpace(excludeID) != "" {
+		query = query.Where("id <> ?", excludeID)
+	}
+	var count int64
+	if err := query.Count(&count).Error; err != nil {
+		return err
+	}
+	if count > 0 {
+		return errSkillAlreadyExists
+	}
+	return nil
+}
+
+func mapCreateSkillIdentityConflict(err error) error {
+	if err == nil || errors.Is(err, errSkillAlreadyExists) {
+		return err
+	}
+	msg := strings.ToLower(err.Error())
+	if strings.Contains(msg, "uk_skills_owner_identity") ||
+		strings.Contains(msg, "uk_skills_owner_relative_root") ||
+		(strings.Contains(msg, "unique constraint failed") && strings.Contains(msg, "skills.")) {
+		return errSkillAlreadyExists
+	}
+	return err
 }
 
 func isExternalImportSource(sourceType string) bool {
@@ -478,14 +516,8 @@ func (s *SkillService) RestoreSkill(ctx context.Context, req RestoreSkillRequest
 		if err := tx.Where("id = ? AND owner_user_id = ? AND deleted_at IS NOT NULL", req.SkillID, req.UserID).Take(&skill).Error; err != nil {
 			return err
 		}
-		var conflicts int64
-		if err := tx.Model(&skillRow{}).
-			Where("owner_user_id = ? AND relative_root = ? AND deleted_at IS NULL AND id <> ?", req.UserID, skill.RelativeRoot, req.SkillID).
-			Count(&conflicts).Error; err != nil {
+		if err := ensureSkillIdentityAvailable(tx, req.UserID, skill.Category, skill.SkillName, skill.ID); err != nil {
 			return err
-		}
-		if conflicts > 0 {
-			return fmt.Errorf("skill package already exists")
 		}
 		if err := tx.Model(&skillRow{}).Where("id = ? AND deleted_at IS NOT NULL", req.SkillID).Updates(map[string]any{
 			"deleted_at":       nil,
@@ -1331,13 +1363,15 @@ func mergedDraftEntriesForSkill(ctx context.Context, tx *gorm.DB, skill skillRow
 	if baseRevisionID == "" {
 		baseRevisionID = valueOrEmpty(skill.HeadRevisionID)
 	}
-	if baseRevisionID == "" {
-		return nil, "", fmt.Errorf("skill has no base revision")
-	}
 
 	var baseEntries []skillRevisionEntryRow
-	if err := tx.WithContext(ctx).Where("revision_id = ?", baseRevisionID).Order("path ASC").Find(&baseEntries).Error; err != nil {
-		return nil, "", err
+	// A package created through RemoteFS starts as a draft without a published
+	// revision. Enabling it is its initial commit, so an empty base is valid and
+	// the draft overlays themselves form the complete revision tree.
+	if baseRevisionID != "" {
+		if err := tx.WithContext(ctx).Where("revision_id = ?", baseRevisionID).Order("path ASC").Find(&baseEntries).Error; err != nil {
+			return nil, "", err
+		}
 	}
 	entriesByPath := make(map[string]skillRevisionEntryRow, len(baseEntries))
 	for _, entry := range baseEntries {

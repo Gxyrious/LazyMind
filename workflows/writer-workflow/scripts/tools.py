@@ -45,6 +45,7 @@ from lazyllm.tools.writer.numbering import (
     materialize_ir,
     materialize_markdown,
 )
+from lazyllm.tools.writer.provider import match_writer_provider
 from lazyllm.tools.writer.tools import (
     WriterDraftingTools,
     WriterPlanningTools,
@@ -388,8 +389,8 @@ _EXPLICIT_REWRITE_REQUEST = re.compile(
     r'|(?:\b(?:rewrite|restructure)\b)',
     re.IGNORECASE,
 )
-_CLOUD_DOCUMENT_URL = re.compile(
-    r"https?://[^\s<>\"']*(?:feishu\.(?:cn|com)|larksuite\.com)/[^\s<>\"']+",
+_PROVIDER_DOCUMENT_LOCATOR = re.compile(
+    r"(?:https?://|[a-z][a-z0-9+.-]*:(?://)?)[^\s<>\"'，。；！？、（）【】《》「」『』]+",
     re.IGNORECASE,
 )
 _LOCAL_WRITER_DOCUMENT_SUFFIXES = {'.md', '.markdown', '.txt', '.lmd'}
@@ -412,6 +413,19 @@ _NO_VISUALS = (
         re.IGNORECASE,
     ),
 )
+
+
+def _provider_document_locator(value: str) -> str:
+    for match in _PROVIDER_DOCUMENT_LOCATOR.finditer(value or ''):
+        locator = match.group(0).rstrip(').,;!?]}，。；！？】》」』')
+        try:
+            match_writer_provider(locator)
+        except ValueError:
+            continue
+        return locator
+    return ''
+
+
 _REQUIRE_INPUT_IMAGE_REUSE = re.compile(
     r'(?:必须|务必|只能|仅限|只).{0,12}复用.{0,16}(?:我)?(?:上传(?:的)?(?:原图|图片|图像)|原图)'
     r'|(?:必须|务必|只能|仅限|只).{0,12}(?:使用|采用).{0,16}'
@@ -737,7 +751,7 @@ def _save_publish_payload(payload: dict, root: Path) -> dict:
             extra_meta={
                 'lazymind_provider_sync': {
                     'confirmed': True,
-                    'provider': 'feishu',
+                    'provider': str(payload.get('provider') or ''),
                     'source': 'initial_auto',
                 },
             },
@@ -797,7 +811,7 @@ def writer_load_local_document(filename: str = '') -> str:
 
 
 def writer_load_document(user_input: str, stage: str = 'final') -> dict:
-    """Load a Feishu/Lark document as source IR and preserve its target binding."""
+    """Load a provider document and preserve its representation and target binding."""
     root = _run_root('load-document')
     payload = _json_loads(
         WriterResourceToolkit().load_document(user_input=user_input, stage=stage),
@@ -816,6 +830,7 @@ def writer_load_document(user_input: str, stage: str = 'final') -> dict:
             writer_schema('task.TargetDocument'),
             directory=root,
         ),
+        'representation': str(payload.get('representation') or ''),
     }
 
 
@@ -965,8 +980,8 @@ def writer_prepare_workspace(
     """Prepare one writing request.
 
     ``source_filename`` is only the basename of an uploaded Markdown, text, or LMD
-    document. Feishu/Lark document URLs belong in ``user_input`` and are resolved as
-    cloud documents.
+    document. Provider document locators belong in ``user_input`` and are resolved
+    as cloud documents.
     """
     user_input = _authoritative_writer_user_input('')
     knowledge_text = _verified_knowledge_text(knowledge_text)
@@ -991,13 +1006,13 @@ def writer_prepare_workspace(
         if Path(path).suffix.lower() in _LOCAL_WRITER_DOCUMENT_SUFFIXES
     ]
     source_filename = str(source_filename or '').strip()
-    cloud_source_match = _CLOUD_DOCUMENT_URL.search(user_input or '')
-    has_cloud_source = cloud_source_match is not None
+    cloud_source_locator = _provider_document_locator(user_input or '')
+    has_cloud_source = bool(cloud_source_locator)
 
-    # Models occasionally copy a Feishu URL into both user_input and source_filename.
+    # Models occasionally copy a provider locator into both fields.
     # Treat that as one cloud source, never as a local filename override.
     source_filename_is_cloud = bool(
-        source_filename and _CLOUD_DOCUMENT_URL.fullmatch(source_filename)
+        source_filename and _provider_document_locator(source_filename) == source_filename
     )
     if source_filename_is_cloud:
         if source_filename not in user_input:
@@ -1017,7 +1032,7 @@ def writer_prepare_workspace(
             )
         if has_cloud_source:
             raise ValueError(
-                'The request contains both a Feishu/Lark document URL and a local source '
+                'The request contains both a provider document locator and a local source '
                 'document. Specify exactly one document source.',
             )
 
@@ -1025,7 +1040,7 @@ def writer_prepare_workspace(
         'local' if source_filename or local_candidates else 'cloud'
     )
     source_ref = (
-        cloud_source_match.group(0) if cloud_source_match else source_filename
+        cloud_source_locator if cloud_source_locator else source_filename
     )
 
     # The model may suggest an operation for ambiguous supplied documents, but it
@@ -1082,7 +1097,7 @@ def writer_prepare_workspace(
             loaded = writer_load_document(user_input=user_input, stage=source_stage)
             source_document = loaded['source_document']
             target_document = loaded['target_document']
-            representation = 'ir'
+            representation = loaded['representation']
 
     writing_task = writer_build_writing_task(
         query=user_input,
@@ -2526,12 +2541,13 @@ def writer_sync_document(
     target_document: Mapping[str, Any] | None = None,
     title: str = '',
     artifact_store: str = '',
+    adapter: str = 'feishu',
 ) -> dict:
     """Persist the selected IR or Markdown draft through its provider adapter."""
     if markdown_content:
         return _sync_markdown_document(
             markdown_content, target_document=target_document, title=title,
-            media_assets=media_assets, artifact_store=artifact_store,
+            media_assets=media_assets, artifact_store=artifact_store, adapter=adapter,
         )
     if revised_document is None:
         raise ValueError('revised_document is required for IR sync.')
@@ -2543,6 +2559,7 @@ def writer_sync_document(
             media_assets=media_assets,
             artifact_store=artifact_store,
             source_format='lmd',
+            adapter=adapter,
         )
     return sync_writer_documents(
         source_document,
@@ -2559,8 +2576,9 @@ def _sync_markdown_document(
     title: str,
     media_assets: Mapping[str, Any] | None,
     artifact_store: str,
+    adapter: str,
 ) -> dict:
-    """Convert Markdown against a provider target, replace it, then read back IR."""
+    """Replace Markdown through a provider and read it back in its native representation."""
     markdown = markdown_content.strip()
     if not markdown:
         raise ValueError('Markdown draft is empty.')
@@ -2573,6 +2591,7 @@ def _sync_markdown_document(
         media_assets=media_assets,
         artifact_store=artifact_store,
         source_format='markdown',
+        adapter=adapter,
     )
 
 
@@ -2584,44 +2603,34 @@ def _replace_document_and_read_back(
     source_format: str,
     target_document: Mapping[str, Any] | None = None,
     media_assets: Mapping[str, Any] | None = None,
+    adapter: str = 'feishu',
 ) -> dict:
-    """Replace a Feishu document through the existing reference-preserving writer path."""
-    root = _action_root(artifact_store, 'sync-document')
+    """Replace a provider document and return its confirmed representation."""
     if target_document:
         target = TargetDocument.model_validate(target_document)
     else:
         created = _json_loads(
-            WriterResourceToolkit().create_document(title=title.strip() or '未命名文档'), {},
+            WriterResourceToolkit().create_document(
+                title=title.strip() or '未命名文档',
+                adapter=adapter,
+            ), {},
         )
         target = TargetDocument.model_validate(created)
 
     media_library = (
         MediaAssetLibrary.model_validate(media_assets) if media_assets else None
     )
-    if isinstance(content, WriterDocument):
-        publish_document = content.model_copy(deep=True)
-    else:
-        publish_document = parse_document_markdown(
-            content,
-            document_id=f'writer-document-{uuid.uuid4()}',
-            stage='final',
-            media_assets=media_library,
-        )
-        # Drafting and revision tools already retain the local path beside the
-        # media asset id. Preserve the same established reference shape when
-        # Markdown is converted for provider delivery.
-        if media_library is not None:
-            for block in publish_document.iter_blocks():
-                if block.type != 'image':
-                    continue
-                for reference in block.references:
-                    asset = media_library.assets.get(reference.get('id'))
-                    if asset is not None and asset.uri:
-                        reference.setdefault('path', asset.uri)
+    publish_content = content.model_copy(deep=True) \
+        if isinstance(content, WriterDocument) else content
+    serialized_content = (
+        json.dumps(publish_content.model_dump(), ensure_ascii=False)
+        if isinstance(publish_content, WriterDocument)
+        else publish_content
+    )
 
     payload = _json_loads(WriterResourceToolkit().replace_document(
-        content_json=json.dumps(publish_document.model_dump(), ensure_ascii=False),
-        source_document_json=json.dumps(publish_document.model_dump(), ensure_ascii=False),
+        content_json=serialized_content,
+        source_document_json=serialized_content,
         target_document_json=json.dumps(target.model_dump(), ensure_ascii=False),
         media_assets_json=(
             json.dumps(media_library.model_dump(), ensure_ascii=False)
@@ -2629,15 +2638,14 @@ def _replace_document_and_read_back(
         ),
     ), {})
     write_result = payload.get('publish_result') or {}
-    persisted = WriterDocument.model_validate(payload.get('draft_document') or {})
-    persisted.ui_editable = True
+    persisted = payload.get('draft_document')
+    if isinstance(persisted, dict):
+        persisted_document = WriterDocument.model_validate(persisted)
+        persisted_document.ui_editable = True
+        persisted = persisted_document.model_dump()
     result = PatchResult(
         success=True,
-        message=(
-            'Markdown converted to IR and document replaced.'
-            if source_format == 'markdown'
-            else 'Document written to Feishu and read back as Writer IR.'
-        ),
+        message='Document written to provider and read back successfully.',
         meta={
             'mode': 'replace',
             'source_format': source_format,
@@ -2647,9 +2655,11 @@ def _replace_document_and_read_back(
     return {
         'success': True,
         'changed': True,
-        'feishu_synced': True,
+        'provider_synced': True,
         'patch_result': result.model_dump(),
-        'persisted_document': persisted.model_dump(),
+        'persisted_document': persisted,
+        'representation': payload.get('representation'),
+        'provider': payload.get('provider'),
     }
 
 
@@ -2863,7 +2873,7 @@ def writer_append_document(
     publish_outline: bool = False,
     media_assets_path: str = '',
 ) -> dict:
-    """Append a local WriterDocument to a Feishu target and return its confirmed IR."""
+    """Append local Writer content to a provider target and return confirmed content."""
     root = _run_root('append-document')
     payload = _json_loads(WriterResourceToolkit().append_document(
         content_json=_read_json_string(content_path),
@@ -2882,12 +2892,14 @@ def writer_append_document(
 def writer_create_document(
     title: str,
     parent_uri: str = '',
+    adapter: str = 'feishu',
 ) -> str:
-    """Create an empty Feishu document and return its target artifact."""
+    """Create an empty provider document and return its target artifact."""
     root = _run_root('create-document')
     content = WriterResourceToolkit().create_document(
         title=title,
         parent_uri=parent_uri,
+        adapter=adapter,
     )
     return _save_json_artifact(
         'target_document',
@@ -2953,13 +2965,6 @@ def _persist_draft_workspace_state(
         encoding='utf-8',
     )
     temporary.replace(path)
-
-
-def _cloud_bound_ir(path: str) -> bool:
-    if not path or Path(path).suffix.lower() != '.lmd':
-        return False
-    document = _read_json_file(path)
-    return isinstance(document, dict) and bool(document.get('provider_binding'))
 
 
 def _modify_plan_needs_media(path: str) -> bool:
@@ -3071,6 +3076,8 @@ def writer_draft_workspace() -> dict:
         raise ValueError('operation must be generate, rewrite, or revise.')
     if not writing_task_path or not writing_context_path:
         raise ValueError('writing_task_path and writing_context_path are required.')
+    task = _read_json_file(writing_task_path)
+    representation = str(((task.get('output') or {}).get('representation') or '')).strip()
     if continuing_completed_outline:
         # The immutable command still describes the original outline request.
         # A package-declared completed continuation reuses that request and the
@@ -3186,8 +3193,6 @@ def writer_draft_workspace() -> dict:
             document_title = str(result.get('document_title') or '')
             outline_path = ''
 
-        task = _read_json_file(writing_task_path)
-        representation = str(((task.get('output') or {}).get('representation') or '')).strip()
         needs_media = representation == 'ir' or int(result.get('visual_need_count') or 0) > 0
         if needs_media and not resolved_media:
             if not media_assets_path:
@@ -3229,9 +3234,8 @@ def writer_draft_workspace() -> dict:
             state['result'] = result
             _persist_draft_workspace_state(state, checkpoint_path)
 
-        should_write_back = (
-            _cloud_bound_ir(source_document_path)
-            and (operation == 'rewrite' or not draft_document_path)
+        should_write_back = bool(target_document_path) and (
+            operation == 'rewrite' or not draft_document_path
         )
         if should_write_back and not result.get('document_write_result'):
             _emit_writer_progress('成稿已组装，正在写回目标文档')
@@ -3305,13 +3309,21 @@ def writer_draft_workspace() -> dict:
             result['draft_document'] = applied['draft_document']
             state['result'] = result
             _persist_draft_workspace_state(state, checkpoint_path)
-        if not draft_document_path and _cloud_bound_ir(source_document_path) \
+        if not draft_document_path and target_document_path \
                 and not result.get('document_write_result'):
-            published = writer_publish_revision(
-                source_document_path=source_document_path,
-                revision_set_path=result['document_revision_set'],
-                media_assets_path=resolved_media,
-            )
+            if representation == 'ir':
+                published = writer_publish_revision(
+                    source_document_path=source_document_path,
+                    revision_set_path=result['document_revision_set'],
+                    media_assets_path=resolved_media,
+                )
+            else:
+                published = writer_replace_document(
+                    content_path=result['draft_document'],
+                    source_document_path=source_document_path,
+                    target_document_path=target_document_path,
+                    media_assets_path=resolved_media,
+                )
             result['document_write_result'] = published['publish_result']
             result['draft_document'] = published['draft_document']
             state['result'] = result
