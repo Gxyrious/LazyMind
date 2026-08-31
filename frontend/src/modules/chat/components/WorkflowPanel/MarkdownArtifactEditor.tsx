@@ -56,8 +56,14 @@ import {
   type MarkdownSelection,
 } from './artifactRewriteSelection';
 import { WorkflowPanelTabActiveContext, SlotEditingContext } from './slotEditingContext';
-import type { RewriteSelectionPreview } from '@/modules/chat/utils/request';
+import type {
+  RewriteSelectionPreview,
+  WriterHeadingNumberingMode,
+  WriterNumberingState,
+  WriterNumberingUpdate,
+} from '@/modules/chat/utils/request';
 import { resolveMarkdownImageUrlAsync } from '@/modules/knowledge/utils/imageUrl';
+import { WriterHeadingNumberingMenu } from './WriterHeadingNumberingMenu';
 import {
   applyWriterMarkdownInternalReference,
   collectWriterMarkdownDomAnchors,
@@ -73,6 +79,7 @@ import './MarkdownArtifactEditor.scss';
 
 /** Idle debounce after the latest edit before a silent draft save. */
 const MARKDOWN_AUTOSAVE_IDLE_MS = 1_000;
+const MARKDOWN_NUMBERING_HIGHLIGHT = 'writer-markdown-numbering';
 const CHAT_PARAGRAPH_HOVER_MS = 1_000;
 
 function WriterAnchorEditor(props: JsxEditorProps) {
@@ -168,6 +175,18 @@ function markdownTextBoundary(
   return { node: paragraph, offset: paragraph.childNodes.length };
 }
 
+function replaceMarkdownNumberingHighlights(previous: Range[], next: Range[]): Range[] {
+  const registry = globalThis.CSS?.highlights;
+  const HighlightConstructor = globalThis.Highlight;
+  if (!registry || !HighlightConstructor) return [];
+  const highlight = registry.get(MARKDOWN_NUMBERING_HIGHLIGHT) ?? new HighlightConstructor();
+  previous.forEach((range) => highlight.delete(range));
+  next.forEach((range) => highlight.add(range));
+  if (highlight.size) registry.set(MARKDOWN_NUMBERING_HIGHLIGHT, highlight);
+  else registry.delete(MARKDOWN_NUMBERING_HIGHLIGHT);
+  return next;
+}
+
 function restoreMarkdownSelection(
   root: HTMLElement,
   restorePoint: MarkdownSelectionRestorePoint,
@@ -252,7 +271,14 @@ function isEscaped(value: string, index: number): boolean {
   return backslashes % 2 === 1;
 }
 
-function escapeMdxLessThanInLine(line: string): string {
+function mdxMarkupLength(line: string, start: number): number {
+  const markup = line.slice(start).match(
+    /^(?:<!--.*?-->|<\/?[A-Za-z][A-Za-z0-9:._-]*(?=[\s/>])[^<>]*>|<(?:https?:\/\/|mailto:)[^<>\s]+>|<[^<>\s@]+@[^<>\s@]+>)/i,
+  );
+  return markup?.[0].length ?? 0;
+}
+
+function escapeMdxSyntaxInLine(line: string): string {
   let result = '';
   let inlineCodeFence = 0;
 
@@ -266,10 +292,18 @@ function escapeMdxLessThanInLine(line: string): string {
       continue;
     }
 
-    if (line[index] === '<' && inlineCodeFence === 0 && !isEscaped(line, index)) {
-      const next = line[index + 1] ?? '';
-      // MDX treats "<" as a JSX opener. Escape comparison/plain-text uses.
-      if (!/[A-Za-z_$/>!?]/.test(next)) result += '\\';
+    if (inlineCodeFence === 0 && line[index] === '<' && !isEscaped(line, index)) {
+      const markupLength = mdxMarkupLength(line, index);
+      if (markupLength > 0) {
+        result += line.slice(index, index + markupLength);
+        index += markupLength;
+        continue;
+      }
+      result += '\\';
+    } else if (inlineCodeFence === 0 && line[index] === '{' && !isEscaped(line, index)) {
+      // Writer documents are Markdown, not MDX. In particular, TeX such as
+      // \mathcal{D} and y_{<t} must remain text instead of MDX expressions.
+      result += '\\';
     }
     result += line[index];
     index += 1;
@@ -294,7 +328,7 @@ function normalizeMarkdownForMdxEditor(markdown: string): string {
       }
       return line;
     }
-    return fenceCharacter ? line : escapeMdxLessThanInLine(line);
+    return fenceCharacter ? line : escapeMdxSyntaxInLine(line);
   }).join('\n');
 }
 
@@ -341,6 +375,7 @@ export type MarkdownSaveMode = 'draft' | 'checkpoint';
 
 interface MarkdownArtifactEditorProps {
   markdown: string;
+  numbering?: WriterNumberingState;
   sourceRevision: number;
   /** Compact chat presentation hides Workflow-only document chrome. */
   presentation?: 'workflow' | 'chat';
@@ -351,6 +386,7 @@ interface MarkdownArtifactEditorProps {
     markdown: string,
     baseRevision: number,
     mode?: MarkdownSaveMode,
+    numberingUpdate?: WriterNumberingUpdate,
   ) => Promise<number | { markdown: string; revision?: number } | undefined>;
   onRefresh?: () => void;
   onDownload?: () => void;
@@ -386,6 +422,29 @@ function isMarkdownToolbarInteractionTarget(node: Node | null | undefined): bool
   );
 }
 
+function markdownClickPrefixLength(
+  heading: HTMLElement,
+  browserSelection: Selection,
+  expectedLabel?: string,
+): number {
+  const text = heading.textContent ?? '';
+  const expected = expectedLabel ? `${expectedLabel} ` : '';
+  if (!expected || !text.startsWith(expected)) return -1;
+  const anchorNode = browserSelection.anchorNode;
+  if (!browserSelection.rangeCount || !anchorNode || !heading.contains(anchorNode)) return -1;
+  const offsetRange = document.createRange();
+  offsetRange.selectNodeContents(heading);
+  try {
+    offsetRange.setEnd(
+      anchorNode,
+      browserSelection.anchorOffset,
+    );
+  } catch {
+    return -1;
+  }
+  return offsetRange.toString().length <= expected.length ? expected.length : -1;
+}
+
 function isMarkdownToolbarDropdownOpen(): boolean {
   return Boolean(
     document.querySelector('.mdxeditor-select-content[data-state="open"]')
@@ -398,6 +457,7 @@ function isMarkdownToolbarDropdownOpen(): boolean {
 
 export function MarkdownArtifactEditor({
   markdown,
+  numbering,
   sourceRevision,
   presentation = 'workflow',
   readOnly = false,
@@ -431,6 +491,11 @@ export function MarkdownArtifactEditor({
   const [pageWidth, setPageWidth] = useState<'default' | 'wide'>('default');
   const [selection, setSelection] = useState<MarkdownSelection | null>(null);
   const [selectionToolbar, setSelectionToolbar] = useState<FloatingToolbarAnchor | null>(null);
+  const [numberingMenu, setNumberingMenu] = useState<{
+    anchorId: string;
+    x: number;
+    y: number;
+  } | null>(null);
   const [referenceDropdownOpen, setReferenceDropdownOpen] = useState(false);
   const [rewriteLayer, setRewriteLayer] = useState<HTMLDivElement | null>(null);
   const [rewriteSelectionPinned, setRewriteSelectionPinned] = useState(false);
@@ -494,20 +559,27 @@ export function MarkdownArtifactEditor({
   conflictRef.current = conflict;
 
   useEffect(() => {
-    onContentChange?.(writerMarkdownForSave(materializedDraftMarkdown));
-  }, [materializedDraftMarkdown, onContentChange]);
+    onContentChange?.(
+      dirty
+        ? writerMarkdownForSave(materializedDraftMarkdown)
+        : anchorSourceMarkdown,
+    );
+  }, [anchorSourceMarkdown, dirty, materializedDraftMarkdown, onContentChange]);
 
   useLayoutEffect(() => {
     const root = rootRef.current;
     if (!root) return undefined;
     let frame: number | undefined;
+    let numberingRanges: Range[] = [];
     const applyDomAnchors = () => {
       const editable = root.querySelector<HTMLElement>('.mdxeditor-root-contenteditable');
       if (!editable) return;
+      const nextNumberingRanges: Range[] = [];
       editable.querySelectorAll<HTMLElement>('[data-writer-system-anchor="true"]')
         .forEach((element) => {
           element.removeAttribute('id');
           delete element.dataset.writerSystemAnchor;
+          delete element.dataset.writerHeadingMode;
         });
       const headings = editable.querySelectorAll<HTMLElement>('h1, h2, h3, h4, h5, h6');
       const images = editable.querySelectorAll<HTMLElement>('img');
@@ -518,7 +590,25 @@ export function MarkdownArtifactEditor({
         if (!target) return;
         target.id = anchor.anchorId;
         target.dataset.writerSystemAnchor = 'true';
+        if (anchor.type === 'heading') {
+          const nodeId = anchor.anchorId.slice('block-'.length);
+          target.dataset.writerHeadingMode = numbering?.entries[nodeId]?.mode ?? 'ordered';
+          const label = numbering?.entries[nodeId]?.label;
+          const prefix = label ? `${label} ` : '';
+          if (prefix && (target.textContent ?? '').startsWith(prefix)) {
+            const start = markdownTextBoundary(target, 0);
+            const end = markdownTextBoundary(target, prefix.length);
+            const range = globalThis.document.createRange();
+            range.setStart(start.node, start.offset);
+            range.setEnd(end.node, end.offset);
+            nextNumberingRanges.push(range);
+          }
+        }
       });
+      numberingRanges = replaceMarkdownNumberingHighlights(
+        numberingRanges,
+        nextNumberingRanges,
+      );
       if (chatPresentation) {
         editable.querySelectorAll<HTMLAnchorElement>(
           'a[href^="#source-"], a[href^="#user-content-source-"]',
@@ -571,8 +661,9 @@ export function MarkdownArtifactEditor({
     return () => {
       observer.disconnect();
       if (frame !== undefined) window.cancelAnimationFrame(frame);
+      replaceMarkdownNumberingHighlights(numberingRanges, []);
     };
-  }, [chatPresentation, materializedDraftMarkdown, sourceReferenceMap, t]);
+  }, [chatPresentation, materializedDraftMarkdown, numbering, sourceReferenceMap, t]);
 
   const replaceMarkdownSilently = useCallback((nextMarkdown: string) => {
     const root = rootRef.current;
@@ -895,6 +986,7 @@ export function MarkdownArtifactEditor({
     nextDraft: string,
     revisionBeforeSave: number,
     mode: MarkdownSaveMode = 'draft',
+    numberingUpdate?: WriterNumberingUpdate,
   ): Promise<boolean> => {
     if (savingRef.current || readOnly) return false;
     savingRef.current = true;
@@ -906,12 +998,11 @@ export function MarkdownArtifactEditor({
       // Keep typing entirely under MDXEditor's control. Anchor repair belongs
       // at the persistence boundary so pressing Enter never reloads the whole
       // editor merely to restore hidden system metadata.
-      const protectedDraft = protectWriterMarkdownAnchors(
-        sourceBeforeSave.markdown,
-        nextDraft,
-      );
+      const protectedDraft = numberingUpdate && !dirtyRef.current
+        ? sourceBeforeSave.markdown
+        : protectWriterMarkdownAnchors(sourceBeforeSave.markdown, nextDraft);
       const savedMarkdown = writerMarkdownForSave(protectedDraft);
-      const result = await onSave(savedMarkdown, revisionBeforeSave, mode);
+      const result = await onSave(savedMarkdown, revisionBeforeSave, mode, numberingUpdate);
       const savedRevision = typeof result === 'number'
         ? result
         : result?.revision ?? revisionBeforeSave;
@@ -1093,6 +1184,17 @@ export function MarkdownArtifactEditor({
     globalThis.getSelection()?.removeAllRanges();
     dismissSelectionToolbar();
   }, [dismissSelectionToolbar, onCiteSelection, selection]);
+  const numberingNodeId = numberingMenu?.anchorId.slice('block-'.length);
+  const currentMarkdownNumbering = numberingNodeId
+    ? numbering?.entries[numberingNodeId]
+    : undefined;
+  const markdownNumberingMode: WriterHeadingNumberingMode =
+    currentMarkdownNumbering?.mode ?? 'ordered';
+  const orderedMarkdownNumberingStyle = numbering?.ordered_style ?? 'hierarchical';
+  const applyMarkdownNumbering = (update: WriterNumberingUpdate) => {
+    if (!numberingMenu || readOnly || savingRef.current || conflictRef.current) return;
+    void persistMarkdown(draftMarkdownRef.current, baseRevision, 'draft', update);
+  };
   const removableReferenceMarkdown = useMemo(() => {
     if (!selection?.supported) return null;
     const nextMarkdown = removeWriterMarkdownInternalReference(
@@ -1307,6 +1409,36 @@ export function MarkdownArtifactEditor({
           return;
         }
         const link = internalWriterReferenceLink(event.target);
+        const heading = target?.closest<HTMLElement>('h1, h2, h3, h4, h5, h6');
+        if (heading && /^h[2-6]$/i.test(heading.tagName)) {
+          const rawAnchorId = heading.dataset.writerSystemAnchor === 'true'
+            ? heading.id
+            : heading.id || heading.dataset.writerSystemAnchor || '';
+          const anchorId = rawAnchorId.startsWith('block-')
+            ? rawAnchorId
+            : rawAnchorId ? `block-${rawAnchorId}` : '';
+          const nodeId = anchorId.slice('block-'.length);
+          const browserSelection = globalThis.getSelection();
+          const prefixLength = anchorId && browserSelection
+            ? markdownClickPrefixLength(
+              heading,
+              browserSelection,
+              numbering?.entries[nodeId]?.label,
+            )
+            : -1;
+          const unorderedControl = heading.dataset.writerHeadingMode === 'unordered'
+            && event.clientX < heading.getBoundingClientRect().left;
+          if (anchorId && (prefixLength >= 0 || unorderedControl)) {
+            event.preventDefault();
+            event.stopPropagation();
+            setNumberingMenu({
+              anchorId,
+              x: event.clientX,
+              y: event.clientY,
+            });
+            return;
+          }
+        }
         if (!link) return;
         event.preventDefault();
         event.stopPropagation();
@@ -1354,6 +1486,19 @@ export function MarkdownArtifactEditor({
         if (citationId) onOpenSourceReference(citationId);
       }}
     >
+      {numberingMenu && (
+        <WriterHeadingNumberingMenu
+          x={numberingMenu.x}
+          y={numberingMenu.y}
+          targetId={numberingNodeId ?? ''}
+          mode={markdownNumberingMode}
+          orderedStyle={orderedMarkdownNumberingStyle}
+          restart={Boolean(currentMarkdownNumbering?.restart)}
+          disabled={readOnly || saving || conflict}
+          onApply={applyMarkdownNumbering}
+          onClose={() => setNumberingMenu(null)}
+        />
+      )}
       {sourceReferencePopover && (
         <div
           id={sourceReferencePopoverId}
@@ -1409,7 +1554,7 @@ export function MarkdownArtifactEditor({
             <button
               type='button'
               className='workflow-slot__file-action-btn'
-              onClick={saveChanges}
+              onClick={() => void saveChanges()}
               disabled={saving || !dirty}
             >
               {t('common.retry')}

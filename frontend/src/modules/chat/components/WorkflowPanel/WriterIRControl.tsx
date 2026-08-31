@@ -39,6 +39,7 @@ import {
 } from './artifactRewriteSelection';
 import { highlightCode } from '../MarkdownViewer/syntaxHighlight';
 import { SlotEditingContext } from './slotEditingContext';
+import type { WriterNumberingState, WriterNumberingUpdate } from '@/modules/chat/utils/request';
 import './WriterIRControl.scss';
 
 /** Idle debounce after the latest edit before draft autosave. */
@@ -54,6 +55,7 @@ type WriterIRPageWidth = 'default' | 'wide';
 
 export interface WriterIRControlProps {
   document: WriterDocument;
+  numbering?: WriterNumberingState;
   sourceRevision?: string | number;
   readOnly?: boolean;
   /** Stable key used to register flush-before-retry with WorkflowPanel. */
@@ -68,6 +70,7 @@ export interface WriterIRControlProps {
     revisedDocument: WriterDocument,
     sourceRevision?: string | number,
     mode?: WriterIRSaveMode,
+    numberingUpdate?: WriterNumberingUpdate,
   ) => Promise<WriterIRSaveResult | void>;
   onEditingChange?: (editing: boolean) => void;
   /** Reports the current draft so the write-back action can compare it with its Feishu baseline. */
@@ -261,6 +264,7 @@ function BlockSequence({ blocks }: { blocks: WriterBlock[] }) {
 
 export function WriterIRControl({
   document,
+  numbering,
   sourceRevision,
   readOnly = false,
   editingKey,
@@ -313,6 +317,7 @@ export function WriterIRControl({
   const saveQueuedRef = useRef(false);
   /** Highest pending save mode; checkpoint wins over draft until consumed. */
   const pendingSaveModeRef = useRef<WriterIRSaveMode>('draft');
+  const pendingNumberingUpdateRef = useRef<WriterNumberingUpdate>();
   const saveRunnerRef = useRef<() => Promise<WriterIRSaveRunResult>>(async () => 'noop');
   const onSaveRef = useRef(onSave);
   const historyRef = useRef(history);
@@ -567,6 +572,7 @@ export function WriterIRControl({
 
     const snapshot = draftRef.current;
     const saveMode = pendingSaveModeRef.current;
+    const numberingUpdate = pendingNumberingUpdateRef.current;
     const sameAsBase = snapshot === baseDocumentRef.current
       || sameWriterDocumentForSync(snapshot, baseDocumentRef.current);
     const sameAsCheckpoint = sameWriterDocumentForSync(
@@ -575,11 +581,12 @@ export function WriterIRControl({
     );
     // Draft only when dirty. Checkpoint (Save / conversation flush) may still
     // run after draft autosave when content is not yet versioned.
-    if (sameAsCheckpoint || (sameAsBase && saveMode !== 'checkpoint')) {
+    if (!numberingUpdate && (sameAsCheckpoint || (sameAsBase && saveMode !== 'checkpoint'))) {
       pendingSaveModeRef.current = 'draft';
       return 'noop';
     }
     pendingSaveModeRef.current = 'draft';
+    pendingNumberingUpdateRef.current = undefined;
     clearAutoSaveTimers();
     saveInFlightRef.current = true;
     saveQueuedRef.current = false;
@@ -600,6 +607,7 @@ export function WriterIRControl({
         snapshot,
         baseSourceRevisionRef.current,
         saveMode,
+        numberingUpdate,
       );
       if (!mountedRef.current) return 'saved';
       saved = true;
@@ -802,6 +810,13 @@ export function WriterIRControl({
     handleDocumentChange(nextDocument);
     requestDraftSave();
   }, [handleDocumentChange, requestDraftSave]);
+
+  const handleNumberingUpdate = useCallback((update: WriterNumberingUpdate) => {
+    pendingNumberingUpdateRef.current = update;
+    escalateSaveMode('draft');
+    clearAutoSaveTimers();
+    void saveRunnerRef.current();
+  }, [clearAutoSaveTimers, escalateSaveMode]);
 
   const discardChanges = () => {
     const pending = pendingExternalDocumentRef.current;
@@ -1052,9 +1067,11 @@ export function WriterIRControl({
         ) : (
           <WriterIRDocumentEditor
             document={draft}
+            numbering={numbering}
             ariaLabel={t('chat.writerIR.documentRegion')}
             onChange={handleDocumentChange}
             onCrossReferenceApplied={handleCrossReferenceApplied}
+            onNumberingUpdate={handleNumberingUpdate}
             onFocus={beginTextEdit}
             onBlur={handleTextBlur}
             rewriteDialogOpen={rewriteDialogOpen}

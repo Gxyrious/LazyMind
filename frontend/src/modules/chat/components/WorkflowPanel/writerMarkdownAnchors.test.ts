@@ -29,6 +29,37 @@ describe('Writer Markdown system anchors', () => {
     expect(writerMarkdownForSave(source)).toBe(source);
   });
 
+  it('preserves opaque backend numbering metadata through editor round trips', () => {
+    const source = '<!-- heading-numbering: {"ordered_style":"chinese"} -->\n# 标题\n\n<a id="block-sec-1" numbering="restart"></a>\n## 章节';
+    const editorValue = writerMarkdownForEditor(source);
+    const editableValue = writerMarkdownForEditing(source);
+    const savedValue = writerMarkdownForSave(editorValue);
+    expect(editorValue).toContain('numbering="restart"');
+    expect(editableValue).not.toContain('heading-numbering');
+    expect(writerMarkdownForSave(
+      protectWriterMarkdownHeadingAnchors(source, editableValue),
+    )).toBe(source);
+    expect(savedValue).toBe(source);
+  });
+
+  it('keeps materialized roman-numbered headings visible in the editor', () => {
+    const source = [
+      '<!-- heading-numbering: {"ordered_style":"parenthesized"} -->',
+      '# Title',
+      '<a id="block-a"></a>',
+      '## (1) A',
+      '<a id="block-b"></a>',
+      '### (a) B',
+      '<a id="block-c"></a>',
+      '#### (i) C',
+    ].join('\n');
+
+    const editable = writerMarkdownForEditing(source);
+    expect(editable).toContain('#### (i) C');
+    expect(editable).not.toContain('heading-numbering');
+    expect(editable).not.toContain('<a id=');
+  });
+
   it('keeps heading anchors out of the editable document without leaving blank blocks', () => {
     const source = [
       '# 标题',

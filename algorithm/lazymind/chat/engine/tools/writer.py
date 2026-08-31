@@ -44,7 +44,12 @@ from lazyllm.tools.writer.tools import (
     WriterResourceTools,
     WriterRevisionTools,
 )
-from lazyllm.tools.writer.numbering import materialize_markdown
+from lazyllm.tools.writer.tools.revision_tools import apply_patch_to_ir
+from lazyllm.tools.writer.numbering import (
+    build_numbering_view_from_markdown,
+    compute_numbering,
+    materialize_markdown,
+)
 from lazyllm.tools.writer.provider import match_writer_provider
 from lazyllm.tools.writer.utils import (
     render_block_markdown,
@@ -409,13 +414,37 @@ def _result_data(result: dict, key: str) -> Any:
     return _read_artifact_data(path)
 
 
+def _merge_provider_state(
+    document: WriterDocument,
+    persisted: WriterDocument,
+) -> WriterDocument:
+    merged = document.model_copy(deep=True)
+    local_blocks = list(merged.iter_blocks())
+    persisted_blocks = list(persisted.iter_blocks())
+    if len(local_blocks) != len(persisted_blocks):
+        raise ToolExecutionError(
+            'Provider document block count does not match the written WriterDocument.'
+        )
+    for local, remote in zip(local_blocks, persisted_blocks):
+        if local.type != remote.type:
+            raise ToolExecutionError(
+                'Provider document block order does not match the written WriterDocument.'
+            )
+        local.provider_binding = deepcopy(remote.provider_binding)
+        local.provider_payload = deepcopy(remote.provider_payload)
+        local.editable = remote.editable
+    merged.revision = persisted.revision
+    merged.provider_binding = deepcopy(persisted.provider_binding)
+    return merged
+
+
 def sync_writer_documents(
     source_value: Any,
     revised_value: Any,
     media_assets: Any = None,
     artifact_store: str = '',
 ) -> dict[str, Any]:
-    """Persist one WriterDocument delta and return its provider-confirmed IR."""
+    """Persist one WriterDocument delta and bind its semantic IR to the provider."""
     source = WriterDocument.model_validate(source_value)
     revised = WriterDocument.model_validate(revised_value)
     if source.document_id != revised.document_id:
@@ -448,15 +477,16 @@ def sync_writer_documents(
         output = WriterResourceTools(
             llm=None, artifact_store=str(root),
         ).apply_patch_to_document(patch, source, media_assets=library)
-        candidate = WriterDocument.model_validate(_result_data(output, 'persisted_document'))
+        persisted = WriterDocument.model_validate(_result_data(output, 'persisted_document'))
         result = PatchResult.model_validate(_result_data(output, 'patch_result'))
     else:
-        candidate = source.model_copy(deep=True)
+        persisted = source
         result = PatchResult(
             patch_id=patch.patch_id,
             success=True,
             message='No document changes.',
         )
+    candidate = _merge_provider_state(revised, persisted)
     candidate.ui_editable = True
     return {
         'success': result.success,
@@ -537,6 +567,14 @@ def _set_document_editable(value: Any, *, stage: str | None = None) -> WriterDoc
 
 def _target_from_document(value: Any) -> TargetDocument | None:
     document = WriterDocument.model_validate(value)
+    binding = document.provider_binding
+    target = TargetDocument(
+        doc_id=binding.get('document_id'),
+        uri=binding.get('uri'),
+        adapter=binding.get('provider'),
+    )
+    if target.uri or target.doc_id:
+        return target
     source = document.metadata.get('source')
     if not isinstance(source, dict):
         return None
@@ -1083,6 +1121,28 @@ class WriterToolkitBase:
                         content='\n'.join(lines[1:]),
                         stage='outline',
                     ))
+        if any(block.type == 'heading' for block in document.blocks) and not any(
+            child.type == 'heading'
+            for block in document.blocks
+            for child in block.iter_blocks()
+            if child is not block
+        ):
+            roots: list[WriterBlock] = []
+            headings: list[tuple[int, WriterBlock]] = []
+            for block in document.blocks:
+                if block.type != 'heading':
+                    (headings[-1][1].children if headings else roots).append(block)
+                    continue
+                level = block.numbering.get('level')
+                if not isinstance(level, int) or isinstance(level, bool) \
+                        or not 1 <= level <= 9:
+                    level = 1
+                while headings and headings[-1][0] >= level:
+                    headings.pop()
+                block.numbering['level'] = len(headings) + 1
+                (headings[-1][1].children if headings else roots).append(block)
+                headings.append((level, block))
+            document.blocks = roots
         return _set_document_editable(
             document, stage='outline',
         ).model_dump_json(exclude_defaults=True)
@@ -1903,9 +1963,10 @@ class WriterToolkitBase:
         value = _document_value(writer_document_json)
         if isinstance(value, str):
             title_match = re.search(r'^#\s+(.+)$', value, re.MULTILINE)
+            view = build_numbering_view_from_markdown(value)
             return _json_dumps({
                 'title': title_match.group(1).strip() if title_match else '',
-                'markdown': materialize_markdown(value),
+                'markdown': materialize_markdown(value, view, compute_numbering(view)),
             })
         document = WriterDocument.model_validate(value)
         return _json_dumps({
@@ -2257,6 +2318,12 @@ class WriterToolkitBase:
         source = WriterDocument.model_validate(
             _json_loads(source_document_json, {}),
         )
+        patch = PatchSet.model_validate(_json_loads(patch_set_json, {}))
+        media_assets = (
+            MediaAssetLibrary.model_validate(_json_loads(media_assets_json, {}))
+            if media_assets_json.strip() else None
+        )
+        revised, _ = apply_patch_to_ir(source, patch, media_assets=media_assets)
         target = _target_from_document(source)
         if target is None:
             raise ToolExecutionError(
@@ -2265,17 +2332,17 @@ class WriterToolkitBase:
         result = WriterResourceTools(
             llm=None, artifact_store=str(root),
         ).apply_patch_to_document(
-            patch_set=_json_loads(patch_set_json, {}),
+            patch_set=patch,
             source_document=source,
-            media_assets=_json_loads(media_assets_json, {}) if media_assets_json.strip() else None,
+            media_assets=media_assets,
         )
-        persisted = _set_document_editable(
-            _result_data(result, 'persisted_document'),
-            stage=source.stage,
+        persisted = WriterDocument.model_validate(_result_data(result, 'persisted_document'))
+        published = _set_document_editable(
+            _merge_provider_state(revised, persisted), stage=source.stage,
         )
         return _json_dumps({
             'publish_result': _primary_data(result),
-            'draft_document': persisted.model_dump(exclude_defaults=True),
+            'draft_document': published.model_dump(exclude_defaults=True),
             'provider': str(target.adapter or ''),
             'representation': 'ir',
             'published_link': _published_link(target),
@@ -2363,20 +2430,16 @@ class WriterToolkitBase:
             meta={**target.meta, 'stage': 'final'},
         ))
         published_value = _primary_data(refreshed)
-        published = (
-            _set_document_editable(published_value, stage='final')
-            if refreshed.get('representation') == 'ir'
-            else published_value
-        )
-        if mode == 'replace' and isinstance(publish_document, WriterDocument):
-            source_images = (
-                block for block in publish_document.iter_blocks() if block.type == 'image'
+        if refreshed.get('representation') == 'ir':
+            persisted = WriterDocument.model_validate(published_value)
+            published = (
+                _merge_provider_state(publish_document, persisted)
+                if mode == 'replace' and isinstance(publish_document, WriterDocument)
+                else persisted
             )
-            published_images = (
-                block for block in published.iter_blocks() if block.type == 'image'
-            )
-            for source_image, published_image in zip(source_images, published_images):
-                published_image.references = deepcopy(source_image.references)
+            published = _set_document_editable(published, stage='final')
+        else:
+            published = published_value
         return _json_dumps({
             'publish_result': _primary_data(write_result),
             'draft_document': (

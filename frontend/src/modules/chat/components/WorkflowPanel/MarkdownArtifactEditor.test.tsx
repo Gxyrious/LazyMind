@@ -280,6 +280,18 @@ afterEach(() => {
 });
 
 describe('MarkdownArtifactEditor rewrite selection highlight', () => {
+  it('keeps TeX expressions as Markdown text instead of parsing them as MDX', () => {
+    const { container } = render(
+      <MarkdownArtifactEditor
+        markdown={'$\\mathcal{D}=\\{(x_i,y_i)\\}_{i=1}^{N}$ and $y_{<t}$'}
+        sourceRevision={1}
+        onSave={async () => 1}
+      />,
+    );
+    expect(container.querySelector<HTMLElement>('.writer-markdown-editor__surface')?.dataset.markdown)
+      .toBe('$\\mathcal\\{D}=\\{(x_i,y_i)\\}_\\{i=1}^\\{N}$ and $y_\\{\\<t}$');
+  });
+
   it('navigates internal references without opening the link editor', () => {
     const { container } = render(<Harness />);
     const surface = container.querySelector<HTMLElement>('.writer-markdown-editor__surface');
