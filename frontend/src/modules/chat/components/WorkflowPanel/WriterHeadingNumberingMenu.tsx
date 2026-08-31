@@ -1,3 +1,4 @@
+import { Segmented } from 'antd';
 import { useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import type {
@@ -17,6 +18,16 @@ interface WriterHeadingNumberingMenuProps {
   onApply: (update: WriterNumberingUpdate) => void;
   onClose: () => void;
 }
+
+const ORDERED_STYLE_OPTIONS: Array<{
+  value: WriterOrderedHeadingNumberingStyle;
+  labelKey: string;
+  preview: string;
+}> = [
+  { value: 'hierarchical', labelKey: 'chat.writerIR.hierarchicalStyle', preview: '1.1' },
+  { value: 'chinese', labelKey: 'chat.writerIR.chineseStyle', preview: '（一）' },
+  { value: 'parenthesized', labelKey: 'chat.writerIR.parenthesizedStyle', preview: '(a)' },
+];
 
 export function WriterHeadingNumberingMenu({
   x,
@@ -60,58 +71,72 @@ export function WriterHeadingNumberingMenu({
       role='dialog'
       aria-label={t('chat.writerIR.numberingSettings')}
       style={{
-        left: Math.min(x, globalThis.innerWidth - 300),
-        top: Math.min(y, globalThis.innerHeight - 210),
+        left: Math.max(8, Math.min(x + 8, globalThis.innerWidth - 304)),
+        top: Math.max(8, Math.min(y + 8, globalThis.innerHeight - 240)),
       }}
     >
-      <label>
-        <span>{t('chat.writerIR.headingOrder')}</span>
-        <select
+      <div className='writer-numbering-menu__field'>
+        <span className='writer-numbering-menu__label'>{t('chat.writerIR.headingOrder')}</span>
+        <Segmented
+          block
+          aria-label={t('chat.writerIR.headingOrder')}
           value={mode}
           disabled={disabled}
-          onChange={(event) => onApply({
+          options={[
+            { value: 'ordered', label: t('chat.writerIR.orderedHeading') },
+            { value: 'unordered', label: t('chat.writerIR.unorderedHeading') },
+          ]}
+          onChange={(value) => onApply({
             type: 'heading',
             target_id: targetId,
-            mode: event.target.value as WriterHeadingNumberingMode,
+            mode: value as WriterHeadingNumberingMode,
           })}
-        >
-          <option value='ordered'>{t('chat.writerIR.orderedHeading')}</option>
-          <option value='unordered'>{t('chat.writerIR.unorderedHeading')}</option>
-        </select>
-      </label>
+        />
+      </div>
       {mode === 'ordered' && (
-        <label>
-          <span>{t('chat.writerIR.numberingStyle')}</span>
-          <select
-            value={orderedStyle}
-            disabled={disabled}
-            onChange={(event) => onApply({
-              type: 'ordered_style',
-              ordered_style: event.target.value as WriterOrderedHeadingNumberingStyle,
-            })}
-          >
-            <option value='hierarchical'>1. / 1.1 / 1.1.1</option>
-            <option value='chinese'>一、 / （一） / 1.</option>
-            <option value='parenthesized'>(1) / (a) / (i)</option>
-          </select>
-        </label>
-      )}
-      {mode === 'ordered' && (
-        <label>
-          <span>{t('chat.writerIR.numberingContinuation')}</span>
-          <select
-            value={restart ? 'restart' : 'continue'}
-            disabled={disabled}
-            onChange={(event) => onApply({
-              type: 'heading',
-              target_id: targetId,
-              restart: event.target.value === 'restart',
-            })}
-          >
-            <option value='continue'>{t('chat.writerIR.continueNumbering')}</option>
-            <option value='restart'>{t('chat.writerIR.restartNumbering')}</option>
-          </select>
-        </label>
+        <>
+          <div className='writer-numbering-menu__field'>
+            <span className='writer-numbering-menu__label'>{t('chat.writerIR.numberingStyle')}</span>
+            <Segmented
+              block
+              aria-label={t('chat.writerIR.numberingStyle')}
+              value={orderedStyle}
+              disabled={disabled}
+              options={ORDERED_STYLE_OPTIONS.map((option) => ({
+                value: option.value,
+                label: (
+                  <span className='writer-numbering-menu__style-preview'>
+                    {t(option.labelKey)} <span>{option.preview}</span>
+                  </span>
+                ),
+              }))}
+              onChange={(value) => onApply({
+                type: 'ordered_style',
+                ordered_style: value as WriterOrderedHeadingNumberingStyle,
+              })}
+            />
+          </div>
+          <div className='writer-numbering-menu__field'>
+            <span className='writer-numbering-menu__label'>
+              {t('chat.writerIR.numberingContinuation')}
+            </span>
+            <Segmented
+              block
+              aria-label={t('chat.writerIR.numberingContinuation')}
+              value={restart ? 'restart' : 'continue'}
+              disabled={disabled}
+              options={[
+                { value: 'continue', label: t('chat.writerIR.continueNumbering') },
+                { value: 'restart', label: t('chat.writerIR.restartNumbering') },
+              ]}
+              onChange={(value) => onApply({
+                type: 'heading',
+                target_id: targetId,
+                restart: value === 'restart',
+              })}
+            />
+          </div>
+        </>
       )}
     </div>
   );

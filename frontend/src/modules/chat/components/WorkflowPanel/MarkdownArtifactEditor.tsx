@@ -79,6 +79,7 @@ import './MarkdownArtifactEditor.scss';
 
 /** Idle debounce after the latest edit before a silent draft save. */
 const MARKDOWN_AUTOSAVE_IDLE_MS = 1_000;
+const MARKDOWN_NUMBERING_HIGHLIGHT = 'writer-markdown-numbering';
 const CHAT_PARAGRAPH_HOVER_MS = 1_000;
 
 function WriterAnchorEditor(props: JsxEditorProps) {
@@ -172,6 +173,18 @@ function markdownTextBoundary(
     textNode = walker.nextNode();
   }
   return { node: paragraph, offset: paragraph.childNodes.length };
+}
+
+function replaceMarkdownNumberingHighlights(previous: Range[], next: Range[]): Range[] {
+  const registry = globalThis.CSS?.highlights;
+  const HighlightConstructor = globalThis.Highlight;
+  if (!registry || !HighlightConstructor) return [];
+  const highlight = registry.get(MARKDOWN_NUMBERING_HIGHLIGHT) ?? new HighlightConstructor();
+  previous.forEach((range) => highlight.delete(range));
+  next.forEach((range) => highlight.add(range));
+  if (highlight.size) registry.set(MARKDOWN_NUMBERING_HIGHLIGHT, highlight);
+  else registry.delete(MARKDOWN_NUMBERING_HIGHLIGHT);
+  return next;
 }
 
 function restoreMarkdownSelection(
@@ -554,9 +567,11 @@ export function MarkdownArtifactEditor({
     const root = rootRef.current;
     if (!root) return undefined;
     let frame: number | undefined;
+    let numberingRanges: Range[] = [];
     const applyDomAnchors = () => {
       const editable = root.querySelector<HTMLElement>('.mdxeditor-root-contenteditable');
       if (!editable) return;
+      const nextNumberingRanges: Range[] = [];
       editable.querySelectorAll<HTMLElement>('[data-writer-system-anchor="true"]')
         .forEach((element) => {
           element.removeAttribute('id');
@@ -575,8 +590,22 @@ export function MarkdownArtifactEditor({
         if (anchor.type === 'heading') {
           const nodeId = anchor.anchorId.slice('block-'.length);
           target.dataset.writerHeadingMode = numbering?.entries[nodeId]?.mode ?? 'ordered';
+          const label = numbering?.entries[nodeId]?.label;
+          const prefix = label ? `${label} ` : '';
+          if (prefix && (target.textContent ?? '').startsWith(prefix)) {
+            const start = markdownTextBoundary(target, 0);
+            const end = markdownTextBoundary(target, prefix.length);
+            const range = globalThis.document.createRange();
+            range.setStart(start.node, start.offset);
+            range.setEnd(end.node, end.offset);
+            nextNumberingRanges.push(range);
+          }
         }
       });
+      numberingRanges = replaceMarkdownNumberingHighlights(
+        numberingRanges,
+        nextNumberingRanges,
+      );
       if (chatPresentation) {
         editable.querySelectorAll<HTMLAnchorElement>(
           'a[href^="#source-"], a[href^="#user-content-source-"]',
@@ -629,6 +658,7 @@ export function MarkdownArtifactEditor({
     return () => {
       observer.disconnect();
       if (frame !== undefined) window.cancelAnimationFrame(frame);
+      replaceMarkdownNumberingHighlights(numberingRanges, []);
     };
   }, [chatPresentation, materializedDraftMarkdown, numbering, sourceReferenceMap, t]);
 
@@ -1154,7 +1184,6 @@ export function MarkdownArtifactEditor({
   const orderedMarkdownNumberingStyle = numbering?.ordered_style ?? 'hierarchical';
   const applyMarkdownNumbering = (update: WriterNumberingUpdate) => {
     if (!numberingMenu || readOnly || savingRef.current || conflictRef.current) return;
-    setNumberingMenu(null);
     void persistMarkdown(draftMarkdownRef.current, baseRevision, update);
   };
   const removableReferenceMarkdown = useMemo(() => {

@@ -260,6 +260,10 @@
   cursor: pointer;
 }
 
+::highlight(writer-markdown-numbering) {
+  color: #64748b;
+}
+
 @container writer-markdown-editor (max-width: 680px) {
   .writer-markdown-editor__document-layout,
   .writer-markdown-editor--outline-open .writer-markdown-editor__document-layout {

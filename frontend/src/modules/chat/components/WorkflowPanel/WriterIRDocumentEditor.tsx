@@ -1901,7 +1901,6 @@ export function WriterIRDocumentEditor({
 
   const applyHeadingNumbering = (update: WriterNumberingUpdate) => {
     if (!numberingMenu || !onNumberingUpdate || disabled || numberingBlock?.editable === false) return;
-    setNumberingMenu(null);
     onNumberingUpdate(update);
   };
 
