@@ -8,7 +8,7 @@ import {
   UserOutlined,
 } from "@ant-design/icons";
 import { useTranslation } from "react-i18next";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import {
   getShowcaseCase,
   listShowcaseCases,
@@ -23,6 +23,13 @@ const REPLAY_INITIAL_DELAY_MS = 480;
 const REPLAY_STEP_DELAY_MS = 420;
 const WHEEL_DELTA_LINE = 1;
 const WHEEL_DELTA_PAGE = 2;
+const SHOWCASE_RETURN_PATH = /^\/agent\/chat\/(?:home(?:\/[^?#]*)?|cases)(?:[?#].*)?$/;
+
+function safeShowcaseReturnPath(value: unknown): string | undefined {
+  return typeof value === "string" && SHOWCASE_RETURN_PATH.test(value)
+    ? value
+    : undefined;
+}
 
 function prefersReducedMotion() {
   return typeof window !== "undefined"
@@ -177,6 +184,7 @@ export default function DetailPage() {
   const locale = i18n.resolvedLanguage || i18n.language;
   const { caseId = "" } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const taskSectionRef = useRef<HTMLElement>(null);
   const taskListRef = useRef<HTMLDivElement>(null);
   const [item, setItem] = useState<ShowcaseCase | null>(null);
@@ -275,6 +283,12 @@ export default function DetailPage() {
   const startCase = () => {
     navigate(buildShowcaseLaunchPath(item.id, item.type, selectedTaskId));
   };
+  const returnTo = safeShowcaseReturnPath(
+    (location.state as { showcaseReturnTo?: unknown } | null)?.showcaseReturnTo,
+  );
+  const returnToEntry = () => {
+    navigate(returnTo || "/agent/chat/cases");
+  };
   const toggleResultExpanded = () => {
     setIsResultExpanded((current) => !current);
   };
@@ -291,10 +305,14 @@ export default function DetailPage() {
   return (
     <main className={`showcase-page showcase-detail-page${isResultExpanded ? " is-result-expanded" : ""}${isAnimationSkipped ? " is-animation-skipped" : ""}${isReplayComplete ? " is-animation-complete" : ""}`}>
       <header className="showcase-detail-header">
-        <Link to="/agent/chat/cases" className="showcase-detail-back-link">
+        <button
+          type="button"
+          className="showcase-detail-back-link"
+          onClick={returnToEntry}
+        >
           <ArrowLeftOutlined aria-hidden="true" />
           {t("showcase.detail.back")}
-        </Link>
+        </button>
         <div className="showcase-detail-heading">
           <h1>
             {hasExternalSource ? (
@@ -362,26 +380,6 @@ export default function DetailPage() {
               <h2>{t("showcase.detail.taskReplay")}</h2>
               <span>{t("showcase.detail.demo")}</span>
             </div>
-            <nav className="showcase-case-navigation" aria-label={t("showcase.detail.caseNavigation")}>
-              <button
-                type="button"
-                disabled={!previousCase}
-                title={previousCase?.title}
-                onClick={() => previousCase && navigate(`/agent/chat/cases/${encodeURIComponent(previousCase.id)}`)}
-              >
-                <ArrowLeftOutlined aria-hidden="true" />
-                {t("showcase.detail.previousCase")}
-              </button>
-              <button
-                type="button"
-                disabled={!nextCase}
-                title={nextCase?.title}
-                onClick={() => nextCase && navigate(`/agent/chat/cases/${encodeURIComponent(nextCase.id)}`)}
-              >
-                {t("showcase.detail.nextCase")}
-                <ArrowRightOutlined aria-hidden="true" />
-              </button>
-            </nav>
           </header>
           <div className="showcase-replay-body">
             <div className="showcase-user-task">
@@ -426,6 +424,27 @@ export default function DetailPage() {
           </div>
         </article>
       </section>
+
+      <nav className="showcase-case-navigation" aria-label={t("showcase.detail.caseNavigation")}>
+        <button
+          type="button"
+          disabled={!previousCase}
+          title={previousCase?.title}
+          onClick={() => previousCase && navigate(`/agent/chat/cases/${encodeURIComponent(previousCase.id)}`)}
+        >
+          <ArrowLeftOutlined aria-hidden="true" />
+          {t("showcase.detail.previousCase")}
+        </button>
+        <button
+          type="button"
+          disabled={!nextCase}
+          title={nextCase?.title}
+          onClick={() => nextCase && navigate(`/agent/chat/cases/${encodeURIComponent(nextCase.id)}`)}
+        >
+          {t("showcase.detail.nextCase")}
+          <ArrowRightOutlined aria-hidden="true" />
+        </button>
+      </nav>
     </main>
   );
 }

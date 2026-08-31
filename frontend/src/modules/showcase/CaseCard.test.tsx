@@ -1,5 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
 
 import CaseCard from "./CaseCard";
@@ -10,11 +10,13 @@ vi.mock("react-i18next", () => ({
     const labels: Record<string, string> = {
       "showcase.viewDetail": "查看详情",
       "showcase.try": "试一试",
+      "showcase.experienceNow": "立即体验",
       "showcase.cardTagsLabel": "能力标签",
       "showcase.filters.capability.chat": "聊天",
       "showcase.filters.capability.work": "任务",
       "showcase.filters.technology.skill": "技能",
       "showcase.filters.technology.workflow": "工作流",
+      "showcase.workflowHotBadge": "HOT",
     };
     return {
       t: (key: string, values?: { title?: string }) =>
@@ -60,6 +62,12 @@ const item: ShowcaseCase = {
   type: "chat",
 };
 
+function LocationStateProbe() {
+  const location = useLocation();
+  const state = location.state as { showcaseReturnTo?: string } | null;
+  return <output>{state?.showcaseReturnTo || "no-return-route"}</output>;
+}
+
 describe("CaseCard", () => {
   it("uses the card body for try and keeps the corner action for details", () => {
     const onTry = vi.fn();
@@ -98,5 +106,69 @@ describe("CaseCard", () => {
       "href",
       "/agent/chat/home?showcase_case=ppt-workflow&showcase_entry=work",
     );
+  });
+
+  it("uses details as the primary action in the capability center", () => {
+    render(
+      <MemoryRouter>
+        <CaseCard item={item} primaryAction="details" />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByRole("link", { name: "查看详情" })).toHaveAttribute(
+      "href",
+      "/agent/chat/cases/aiProduct",
+    );
+    expect(screen.getByRole("link", { name: /产品设计与 PRD 生成/ })).toHaveAttribute(
+      "href",
+      "/agent/chat/cases/aiProduct",
+    );
+    expect(screen.getByRole("link", { name: /立即体验/ })).toHaveAttribute(
+      "href",
+      "/agent/chat/home?showcase_case=aiProduct&showcase_entry=chat",
+    );
+  });
+
+  it("passes the current capability entry route to the detail page", () => {
+    render(
+      <MemoryRouter initialEntries={["/agent/chat/home?section=featured"]}>
+        <CaseCard item={item} />
+        <LocationStateProbe />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByRole("link", { name: /查看详情/ }));
+
+    expect(screen.getByText("/agent/chat/home?section=featured")).toBeInTheDocument();
+  });
+
+  it("shows HOT only for Workflow cards in the Featured section", () => {
+    const { rerender } = render(
+      <MemoryRouter>
+        <CaseCard item={{ ...item, type: "workflow" }} showWorkflowHot />
+      </MemoryRouter>,
+    );
+
+    const hotBadge = screen.getByRole("img", { name: "HOT" });
+    expect(hotBadge).toBeInTheDocument();
+    expect(hotBadge).toHaveClass("showcase-workflow-hot");
+    expect(hotBadge.parentElement).toHaveClass("showcase-card-image-stage");
+    expect(screen.getByRole("link", { name: /产品设计与 PRD 生成/ })).not.toContainElement(
+      hotBadge,
+    );
+
+    rerender(
+      <MemoryRouter>
+        <CaseCard item={{ ...item, type: "work" }} showWorkflowHot />
+      </MemoryRouter>,
+    );
+    expect(screen.queryByRole("img", { name: "HOT" })).not.toBeInTheDocument();
+
+    rerender(
+      <MemoryRouter>
+        <CaseCard item={{ ...item, type: "workflow" }} />
+      </MemoryRouter>,
+    );
+    expect(screen.queryByRole("img", { name: "HOT" })).not.toBeInTheDocument();
   });
 });

@@ -235,16 +235,26 @@ function Copy-RuntimeApp {
     $appRoot = Join-Path $runtimeRoot 'app'
     New-Item -ItemType Directory -Force -Path $appRoot | Out-Null
     $excludedDirs = @(
+        'node_modules',
+        'test',
+        'tests',
+        'testdata',
+        '__snapshots__',
         (Join-Path $repoRoot '.git'),
+        (Join-Path $repoRoot '.github'),
+        (Join-Path $repoRoot 'docs'),
+        (Join-Path $repoRoot 'tests'),
         (Join-Path $repoRoot 'local\build'),
         (Join-Path $repoRoot 'local\runtime'),
         (Join-Path $repoRoot 'desktop\build'),
         (Join-Path $repoRoot 'desktop\cache'),
         (Join-Path $repoRoot 'desktop\dist'),
+        (Join-Path $repoRoot 'history-injection'),
         (Join-Path $repoRoot 'skills\.runtime'),
         (Join-Path $repoRoot 'skills\research'),
         (Join-Path $repoRoot 'skills\review'),
         (Join-Path $repoRoot 'skills\search'),
+        (Join-Path $repoRoot 'skills\featured'),
         (Join-Path $repoRoot 'desktop\electron\node_modules'),
         (Join-Path $repoRoot 'frontend\node_modules'),
         (Join-Path $repoRoot 'frontend\src'),
@@ -256,7 +266,7 @@ function Copy-RuntimeApp {
     )
     $releaseBuild = $env:LAZYMIND_RELEASE_BUILD -eq 'true'
     if ($releaseBuild) { $excludedDirs += (Join-Path $repoRoot 'algorithm\lazyllm') }
-    & robocopy.exe $repoRoot $appRoot /MIR /R:2 /W:1 /NFL /NDL /NJH /NJS /NP /XD @excludedDirs /XF '*.pyc' '*.pyo' '.DS_Store' '.env' 'config.env' 'config.win.env'
+    & robocopy.exe $repoRoot $appRoot /MIR /R:2 /W:1 /NFL /NDL /NJH /NJS /NP /XD @excludedDirs /XF '*.pyc' '*.pyo' '*_test.go' 'test_*.py' '*.test.js' '*.test.mjs' '*.test.ts' '*.test.tsx' '.DS_Store' '.env' '.coverage' 'config.env' 'config.win.env' 'lazymind-history-injection*.zip' 'README.md' 'README.CN.md'
     if ($LASTEXITCODE -gt 7) { throw "robocopy runtime app staging failed with code $LASTEXITCODE" }
     foreach ($relativePath in @('skills\research', 'skills\review', 'skills\search')) {
         Remove-GeneratedPath (Join-Path $appRoot $relativePath)
@@ -340,6 +350,11 @@ function Finalize-Desktop([ValidateSet('zip', 'installer')][string]$PackageKind 
     Copy-RuntimeApp
     Write-Host '==> Materializing offline Skill packages and featured catalog'
     Materialize-OfflineSkills
+    Write-Host '==> Downloading verified history injection package'
+    Invoke-Native 'node.exe' @(
+        (Join-Path $repoRoot 'desktop\scripts\stage-history-injection-package.mjs'),
+        $runtimeRoot
+    )
     $trustedLocalMode = if ($env:LAZYMIND_TRUSTED_LOCAL_MODE -eq 'true') { 'true' } else { 'false' }
     if ($trustedLocalMode -eq 'true') {
         Write-Host '==> Trusted local mode enabled for this desktop package'
@@ -458,7 +473,7 @@ function Build-Desktop([ValidateSet('zip', 'installer')][string]$PackageKind = '
     Invoke-NativeWithRetry 'Channel gateway Python dependencies' 'uv.exe' @('pip', 'install', '--python', $channelGatewayPython, '--link-mode', 'copy', '--strict', '-r', (Join-Path $repoRoot 'backend\channel-gateway\requirements.txt'))
     Invoke-Native 'uv.exe' @('venv', '--managed-python', '--no-python-downloads', '--relocatable', '--seed', '--link-mode', 'copy', '--python', $python, $algorithmVenv)
     $algorithmPython = Join-Path $algorithmVenv 'Scripts\python.exe'
-    $lazyLLMVersion = if ($env:LAZYMIND_LAZYLLM_VERSION) { $env:LAZYMIND_LAZYLLM_VERSION } else { '1.3.0a1' }
+    $lazyLLMVersion = if ($env:LAZYMIND_LAZYLLM_VERSION) { $env:LAZYMIND_LAZYLLM_VERSION } else { (Get-Content -LiteralPath (Join-Path $repoRoot 'LAZYLLM_VERSION') -Raw).Trim() }
     Invoke-NativeWithRetry 'LazyLLM package install' 'uv.exe' @('pip', 'install', '--python', $algorithmPython, '--link-mode', 'copy', '--strict', 'setuptools<81', "lazyllm==$lazyLLMVersion")
     Invoke-Native $algorithmPython @('-c', "import importlib.metadata as m; assert m.version('lazyllm') == '$lazyLLMVersion'")
     Invoke-NativeWithRetry 'LazyLLM RAG dependencies' (Join-Path $algorithmVenv 'Scripts\lazyllm.exe') @('install', 'rag')

@@ -33,11 +33,12 @@ describe('WorkflowSessionApi.saveWriterDocument', () => {
       12,
       '# Draft',
       'draft_document',
+      'draft',
     );
 
     expect(postMock).toHaveBeenCalledWith(
       '/api/core/workflow-sessions/ps-1/writer-document:save',
-      { base_revision: 12, document: '# Draft' },
+      { base_revision: 12, document: '# Draft', mode: 'draft' },
       undefined,
     );
   });
@@ -48,6 +49,7 @@ describe('WorkflowSessionApi.saveWriterDocument', () => {
       3,
       '# Outline',
       'outline_document',
+      'checkpoint',
       { type: 'heading', target_id: 'section-2', restart: true },
     );
 
@@ -56,6 +58,7 @@ describe('WorkflowSessionApi.saveWriterDocument', () => {
       {
         base_revision: 3,
         document: '# Outline',
+        mode: 'checkpoint',
         slot: 'outline_document',
         numbering_update: { type: 'heading', target_id: 'section-2', restart: true },
       },
