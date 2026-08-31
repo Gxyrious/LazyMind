@@ -45,7 +45,11 @@ from lazyllm.tools.writer.tools import (
     WriterRevisionTools,
 )
 from lazyllm.tools.writer.tools.revision_tools import apply_patch_to_ir
-from lazyllm.tools.writer.numbering import materialize_markdown
+from lazyllm.tools.writer.numbering import (
+    build_numbering_view_from_markdown,
+    compute_numbering,
+    materialize_markdown,
+)
 from lazyllm.tools.writer.provider import match_writer_provider
 from lazyllm.tools.writer.utils import (
     render_block_markdown,
@@ -1959,9 +1963,10 @@ class WriterToolkitBase:
         value = _document_value(writer_document_json)
         if isinstance(value, str):
             title_match = re.search(r'^#\s+(.+)$', value, re.MULTILINE)
+            view = build_numbering_view_from_markdown(value)
             return _json_dumps({
                 'title': title_match.group(1).strip() if title_match else '',
-                'markdown': materialize_markdown(value),
+                'markdown': materialize_markdown(value, view, compute_numbering(view)),
             })
         document = WriterDocument.model_validate(value)
         return _json_dumps({
