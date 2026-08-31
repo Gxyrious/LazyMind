@@ -337,6 +337,8 @@ interface MarkdownSourceReferencePopover {
   placement: 'top' | 'bottom';
 }
 
+export type MarkdownSaveMode = 'draft' | 'checkpoint';
+
 interface MarkdownArtifactEditorProps {
   markdown: string;
   sourceRevision: number;
@@ -348,6 +350,7 @@ interface MarkdownArtifactEditorProps {
   onSave: (
     markdown: string,
     baseRevision: number,
+    mode?: MarkdownSaveMode,
   ) => Promise<number | { markdown: string; revision?: number } | undefined>;
   onRefresh?: () => void;
   onDownload?: () => void;
@@ -452,7 +455,7 @@ export function MarkdownArtifactEditor({
   const dirtyRef = useRef(false);
   const savingRef = useRef(false);
   const conflictRef = useRef(false);
-  const saveChangesRef = useRef<() => Promise<boolean>>(async () => true);
+  const saveChangesRef = useRef<(mode?: MarkdownSaveMode) => Promise<boolean>>(async () => true);
   const outlineId = useId();
   const sourceReferenceMap = useMemo(
     () => new Map(sourceReferences.map((source) => [source.citationId, source])),
@@ -652,7 +655,8 @@ export function MarkdownArtifactEditor({
       && editable?.contains(browserSelection.focusNode),
     );
     if (
-      !surface
+      !root
+      || !surface
       || !editable
       || !toolbar
       || !hasValidSelection
@@ -678,7 +682,7 @@ export function MarkdownArtifactEditor({
     }
 
     const toolbarRect = toolbar.getBoundingClientRect();
-    const nextAnchor = floatingToolbarAnchor({
+    const viewportAnchor = floatingToolbarAnchor({
       selectionRect,
       containerRect: surfaceRect,
       // The page may be zoomed or scaled. Rect dimensions match the fixed
@@ -687,6 +691,14 @@ export function MarkdownArtifactEditor({
       toolbarWidth: toolbarRect.width || toolbar.offsetWidth,
       toolbarHeight: toolbarRect.height || toolbar.offsetHeight,
     });
+    // Keep the toolbar in the scrolling surface's coordinate system. Desktop
+    // Chromium otherwise resolves fixed descendants differently around named
+    // containers and can shift most actions outside the clipped editor.
+    const nextAnchor = {
+      ...viewportAnchor,
+      top: viewportAnchor.top - surfaceRect.top - surface.clientTop + surface.scrollTop,
+      left: viewportAnchor.left - surfaceRect.left - surface.clientLeft + surface.scrollLeft,
+    };
     setSelectionToolbar((current) => (
       current
       && current.top === nextAnchor.top
@@ -882,6 +894,7 @@ export function MarkdownArtifactEditor({
   const persistMarkdown = useCallback(async (
     nextDraft: string,
     revisionBeforeSave: number,
+    mode: MarkdownSaveMode = 'draft',
   ): Promise<boolean> => {
     if (savingRef.current || readOnly) return false;
     savingRef.current = true;
@@ -898,7 +911,7 @@ export function MarkdownArtifactEditor({
         nextDraft,
       );
       const savedMarkdown = writerMarkdownForSave(protectedDraft);
-      const result = await onSave(savedMarkdown, revisionBeforeSave);
+      const result = await onSave(savedMarkdown, revisionBeforeSave, mode);
       const savedRevision = typeof result === 'number'
         ? result
         : result?.revision ?? revisionBeforeSave;
@@ -939,9 +952,9 @@ export function MarkdownArtifactEditor({
     }
   }, [onSave, readOnly, replaceMarkdownSilently, t]);
 
-  const saveChanges = useCallback(async (): Promise<boolean> => {
+  const saveChanges = useCallback(async (mode: MarkdownSaveMode = 'draft'): Promise<boolean> => {
     if (!dirty || savingRef.current || readOnly) return false;
-    return persistMarkdown(draftMarkdown, baseRevision);
+    return persistMarkdown(draftMarkdown, baseRevision, mode);
   }, [baseRevision, dirty, draftMarkdown, persistMarkdown, readOnly]);
 
   saveChangesRef.current = saveChanges;
@@ -1014,7 +1027,7 @@ export function MarkdownArtifactEditor({
       }
       if (!dirtyRef.current) return true;
       if (conflictRef.current) return false;
-      return saveChangesRef.current();
+      return saveChangesRef.current('checkpoint');
     });
   }, [editingKey, readOnly, registerFlush]);
 

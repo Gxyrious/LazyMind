@@ -8,7 +8,7 @@ DIST_ROOT="${ROOT}/desktop/dist"
 APP_ICON="${ROOT}/desktop/electron/assets/LazyMind.icns"
 PACKAGE_KIND="${LAZYMIND_DESKTOP_PACKAGE_KIND:-zip}"
 SIGNING_MODE="${LAZYMIND_DESKTOP_SIGNING_MODE:-adhoc}"
-LAZYLLM_VERSION="${LAZYMIND_LAZYLLM_VERSION:-1.3.0a1}"
+LAZYLLM_VERSION="${LAZYMIND_LAZYLLM_VERSION:-$(tr -d '[:space:]' < "${ROOT}/LAZYLLM_VERSION")}"
 RELEASE_BUILD="${LAZYMIND_RELEASE_BUILD:-false}"
 
 GO_BIN="${GO:-go}"
@@ -204,9 +204,15 @@ rsync -a --delete \
   --exclude "/.claude" \
   --exclude "/.cursor" \
   --exclude "/.vscode" \
+  --exclude "/.github" \
+  --exclude "/.coverage" \
+  --exclude "/docs" \
+  --exclude "/tests" \
   --exclude "/data" \
   --exclude "/volumes" \
   --exclude "/local/config.env" \
+  --exclude "/history-injection" \
+  --exclude "lazymind-history-injection*.zip" \
   --exclude "local/build" \
   --exclude "local/runtime" \
   --exclude "desktop/build" \
@@ -215,7 +221,18 @@ rsync -a --delete \
   --exclude "skills/research" \
   --exclude "skills/review" \
   --exclude "skills/search" \
+  --exclude "skills/featured" \
   --exclude "node_modules" \
+  --exclude "test" \
+  --exclude "tests" \
+  --exclude "testdata" \
+  --exclude "__snapshots__" \
+  --exclude "*_test.go" \
+  --exclude "test_*.py" \
+  --exclude "*.test.js" \
+  --exclude "*.test.mjs" \
+  --exclude "*.test.ts" \
+  --exclude "*.test.tsx" \
   --exclude "__pycache__" \
   --exclude ".pytest_cache" \
   --exclude ".ruff_cache" \
@@ -228,6 +245,8 @@ rsync -a --delete \
   --exclude "/frontend/public" \
   --exclude "/frontend/scripts" \
   --exclude "/backend/core/core" \
+  --exclude "/README.md" \
+  --exclude "/README.CN.md" \
   "${ROOT}/" "${RUNTIME_ROOT}/app/"
 
 prune_runtime_app "${RUNTIME_ROOT}/app"
@@ -247,6 +266,9 @@ if [[ "${RELEASE_BUILD}" == "true" ]]; then
   BUILTIN_SKILL_BUNDLE_ARGS+=(--frozen-lockfile)
 fi
 (cd "${ROOT}/backend/core" && "${GO_BIN}" "${BUILTIN_SKILL_BUNDLE_ARGS[@]}")
+
+echo "==> Downloading verified history injection package"
+node "${ROOT}/desktop/scripts/stage-history-injection-package.mjs" "${RUNTIME_ROOT}"
 
 TRUSTED_LOCAL_MODE=false
 if [[ "${LAZYMIND_TRUSTED_LOCAL_MODE:-}" == "true" ]]; then

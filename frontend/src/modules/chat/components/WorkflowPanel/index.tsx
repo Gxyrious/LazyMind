@@ -15,6 +15,7 @@ import {
   workflowTabAllowsDownload,
   useWorkflowStore,
 } from '@/modules/chat/store/workflowPanel';
+import { isWorkflowReadyToStart } from '@/modules/chat/store/workflowStatus';
 import { useTaskCenterStore, type SubAgentTask, type TaskArtifactStream } from '@/modules/chat/store/taskCenter';
 import { uploadFileInChunks } from '@/modules/chat/utils/chunkUpload';
 import { WorkflowSessionApi } from '@/modules/chat/utils/request';
@@ -1249,10 +1250,30 @@ function SortableImageList({
   }
 
   const canDrag = isDraggable && !readOnly;
+  const useGridLayout = slotDef.widget?.itemLayout === 'grid' && !canDrag;
+  const itemWidth = slotDef.widget?.itemWidth;
+  const itemHeight = slotDef.widget?.itemHeight;
+  const gridMaxCols = slotDef.widget?.gridMaxCols;
+  const imageListStyle = {
+    ...(typeof itemWidth === 'number'
+      ? { '--workflow-image-item-width': `${itemWidth}px` }
+      : {}),
+    ...(typeof itemHeight === 'number'
+      ? { '--workflow-image-item-height': `${itemHeight}px` }
+      : {}),
+    ...(typeof itemWidth === 'number' && typeof gridMaxCols === 'number'
+      ? {
+        '--workflow-image-list-max-width': `${
+          itemWidth * gridMaxCols + Math.max(0, gridMaxCols - 1) * 12
+        }px`,
+      }
+      : {}),
+  } as React.CSSProperties;
 
   return (
     <div
-      className={`workflow-panel__image-list${canDrag ? ' workflow-panel__image-list--sortable' : ''}`}
+      className={`workflow-panel__image-list${canDrag ? ' workflow-panel__image-list--sortable' : ''}${useGridLayout ? ' workflow-panel__image-list--grid' : ''}`}
+      style={imageListStyle}
       onDragLeave={canDrag ? handleContainerDragLeave : undefined}
       onDragEnter={canDrag ? handleDragEnter : undefined}
       onDragOver={canDrag ? handleContainerDragOver : undefined}
@@ -1343,66 +1364,83 @@ function NamedTabSlot({
   const slotLabel = slotDef.label ?? slotDef.id;
   const isImageList = slotDef.type === 'image' && slotDef.cardinality === 'list';
   const isDraggable = Boolean(slotDef.ordered) && !readOnly;
+  const [contentCollapsed, setContentCollapsed] = useState(slotDef.widget?.collapsed === true);
+  const prefersFullGridRow = slotDef.widget?.itemLayout === 'grid'
+    || (slotDef.widget?.itemWidth ?? 0) >= 600
+    || slotDef.widget?.collapsed === true;
   const showStream = Boolean(artifactStream && (
     revisions.length === 0 || artifactStream.state === 'streaming'
   ));
 
+  const content = showStream && artifactStream ? (
+    <SlotMarkdownStream stream={artifactStream} />
+  ) : revisions.length === 0 ? (
+    <div
+      className='workflow-panel__slot-placeholder'
+      aria-label={`${slotLabel} pending`}
+    >
+      <span>—</span>
+    </div>
+  ) : isImageList ? (
+    <SortableImageList
+      revisions={revisions}
+      session={session}
+      slotDef={slotDef}
+      isDraggable={isDraggable}
+      onRefresh={onRefresh}
+      onReference={onReference}
+      onFocusSortOrder={onFocusSortOrder}
+      onAddItem={readOnly ? undefined : onAddItem}
+      readOnly={readOnly}
+    />
+  ) : (
+    revisions.map((rev) => (
+      <div
+        key={`${rev.slot_id}-${rev.list_index ?? -1}`}
+        onClick={() => onFocusSortOrder?.(rev.sort_order)}
+        role='button'
+        tabIndex={0}
+        aria-label={t('chat.workflowContentItemAria', { index: rev.sort_order ?? '' })}
+      >
+        <SlotRenderer
+          slot={rev}
+          widget={slotDef.widget}
+          originalFileSlot={
+            slotDef.id === 'delivered_markdown'
+              ? session.slots?.find((item) => item.slot === 'final_document' && item.selected)
+              : undefined
+          }
+          expectedType={slotDef.type}
+          sessionId={session.session_id}
+          slotId={slotDef.id}
+          revisionCount={rev.revision_count}
+          onRefresh={onRefresh}
+          onReference={onReference}
+          readOnly={readOnly}
+        />
+      </div>
+    ))
+  );
+
   return (
-    <div className='workflow-panel__named-slot'>
+    <div className={`workflow-panel__named-slot${prefersFullGridRow ? ' workflow-panel__named-slot--full-grid-row' : ''}`}>
       <div className='workflow-panel__slot-heading'>
         {(slotDef.label || slotDef.id) && (
           <span className='workflow-panel__slot-label'>{slotLabel}</span>
         )}
-      </div>
-      {showStream && artifactStream ? (
-        <SlotMarkdownStream stream={artifactStream} />
-      ) : revisions.length === 0 ? (
-        <div
-          className='workflow-panel__slot-placeholder'
-          aria-label={`${slotLabel} pending`}
-        >
-          <span>—</span>
-        </div>
-      ) : isImageList ? (
-        <SortableImageList
-          revisions={revisions}
-          session={session}
-          slotDef={slotDef}
-          isDraggable={isDraggable}
-          onRefresh={onRefresh}
-          onReference={onReference}
-          onFocusSortOrder={onFocusSortOrder}
-          onAddItem={readOnly ? undefined : onAddItem}
-          readOnly={readOnly}
-        />
-      ) : (
-        revisions.map((rev) => (
-          <div
-            key={`${rev.slot_id}-${rev.list_index ?? -1}`}
-            onClick={() => onFocusSortOrder?.(rev.sort_order)}
-            role='button'
-            tabIndex={0}
-            aria-label={t('chat.workflowContentItemAria', { index: rev.sort_order ?? '' })}
+        {slotDef.widget?.collapsed !== undefined && (
+          <button
+            type='button'
+            className={`workflow-panel__slot-collapse${contentCollapsed ? ' workflow-panel__slot-collapse--collapsed' : ''}`}
+            aria-expanded={!contentCollapsed}
+            aria-label={contentCollapsed ? t('chat.workflowPanelExpand') : t('chat.workflowPanelCollapse')}
+            onClick={() => setContentCollapsed((value) => !value)}
           >
-            <SlotRenderer
-              slot={rev}
-              widget={slotDef.widget}
-              originalFileSlot={
-                slotDef.id === 'delivered_markdown'
-                  ? session.slots?.find((item) => item.slot === 'final_document' && item.selected)
-                  : undefined
-              }
-              expectedType={slotDef.type}
-              sessionId={session.session_id}
-              slotId={slotDef.id}
-              revisionCount={rev.revision_count}
-              onRefresh={onRefresh}
-              onReference={onReference}
-              readOnly={readOnly}
-            />
-          </div>
-        ))
-      )}
+            <span aria-hidden='true'>⌃</span>
+          </button>
+        )}
+      </div>
+      {!contentCollapsed && content}
     </div>
   );
 }
@@ -1771,6 +1809,13 @@ export function WorkflowPanel({
     [footerActions],
   );
   const displayStatus = autoRunning ? 'active' : session.status;
+  const displayStatusKey = isWorkflowReadyToStart(
+    displayStatus,
+    session.projection,
+    session.steps?.length ?? 0,
+  )
+    ? 'chat.workflowStatusReady'
+    : STATUS_KEY[displayStatus] ?? displayStatus;
   // Only block footer actions while the plugin is actually running (or flush-in-progress).
   // Dirty editors no longer disable retry — click flushes saves first, then proceeds.
   const sessionBusy = displayStatus === 'active' || autoRunning;
@@ -1852,7 +1897,7 @@ export function WorkflowPanel({
           <span className='workflow-panel__title'>{ui.name || session.workflow_id}</span>
           <span
             className={`workflow-panel__status workflow-panel__status--${displayStatus}`}
-            aria-label={t('chat.workflowStatusAria', { status: t(STATUS_KEY[displayStatus] ?? displayStatus) })}
+            aria-label={t('chat.workflowStatusAria', { status: t(displayStatusKey) })}
             onClick={() => session && setStateGraphOpen(true)}
             style={{ cursor: 'pointer' }}
             title={t('chat.workflowViewWorkflow')}
@@ -1860,7 +1905,7 @@ export function WorkflowPanel({
             tabIndex={0}
             onKeyDown={(e) => e.key === 'Enter' && session && setStateGraphOpen(true)}
           >
-            {t(STATUS_KEY[displayStatus] ?? displayStatus)}
+            {t(displayStatusKey)}
           </span>
         </div>
         <div className='workflow-panel__header-right'>

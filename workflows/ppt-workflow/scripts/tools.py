@@ -85,9 +85,47 @@ _STAGE_ORDER_HINT = 'preflight → style → outline → asset-plan → batch-pa
 _NULLISH = frozenset({'', 'null', 'none', 'undefined', 'nil'})
 _PROMPT_PLACEHOLDER_RE = re.compile(r'\{(\w+)\}')
 
+_CANONICAL_UPLOAD_ROOT = '/var/lib/lazymind/uploads'
+_CANONICAL_SUBAGENT_ROOT = '/data/subagent'
+
 _run_stage_mod: Any = None
 _model_client_mod: Any = None
 _LOG = logging.getLogger(__name__)
+
+
+class _PPTModelTimeoutError(RuntimeError):
+    """A page model call made no progress before its inactivity timeout."""
+
+
+def _is_model_timeout_exception(exc: BaseException) -> bool:
+    """Recognize provider timeout wrappers without coupling to LazyLLM internals."""
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, (TimeoutError, requests.exceptions.Timeout)):
+            return True
+        if type(current).__name__ in {
+            'ConnectTimeout', 'ReadTimeout', 'TimeoutException',
+        }:
+            return True
+        terminal = getattr(current, 'terminal', None)
+        failure = getattr(terminal, 'failure', None)
+        code = getattr(getattr(failure, 'code', None), 'value', None)
+        if code == 'request_timeout':
+            return True
+        current = current.__cause__ or current.__context__
+    return False
+
+
+def _page_result_timed_out(result: dict[str, Any] | None) -> bool:
+    payload = (result or {}).get('payload') or {}
+    if payload.get('failure_kind') == 'timeout':
+        return True
+    error = str(payload.get('error') or '').lower()
+    return any(marker in error for marker in (
+        'timed out', 'timeout', 'readtimeout', 'connecttimeout',
+    ))
 
 
 def _tool_success(_tool_name: str, result: Any, meta: dict[str, Any] | None = None) -> Any:
@@ -787,8 +825,9 @@ def _strip_ppt_source_meta(html: str) -> str:
 
 
 def _with_ppt_source_meta(html: str, source_path: Path, source_sha256: str) -> str:
+    source_path = _portable_ppt_source_path(source_path)
     payload = base64.urlsafe_b64encode(json.dumps({
-        'path': str(source_path.resolve()),
+        'path': source_path,
         'sha256': source_sha256,
     }, ensure_ascii=False, separators=(',', ':')).encode('utf-8')).decode('ascii')
     return f'<!-- lazymind-ppt-source:{payload} -->\n{_strip_ppt_source_meta(html)}'
@@ -809,6 +848,41 @@ def _read_ppt_source_meta(html: str) -> dict[str, str]:
     if not path or not re.fullmatch(r'[0-9a-f]{64}', sha256):
         raise ValueError('incomplete PPT source metadata')
     return {'path': path, 'sha256': sha256}
+
+
+def _runtime_ppt_path(value: str | Path) -> Path:
+    """Map portable Docker roots onto the active Docker/Desktop data roots."""
+    text = str(value).strip().replace('\\', '/')
+    roots = (
+        (_CANONICAL_UPLOAD_ROOT, os.getenv('LAZYMIND_UPLOAD_ROOT', '')),
+        (_CANONICAL_SUBAGENT_ROOT, os.getenv('LAZYMIND_SUBAGENT_WORKSPACE', '')),
+    )
+    for canonical, configured in roots:
+        if text != canonical and not text.startswith(canonical + '/'):
+            continue
+        runtime_root = configured.strip() or canonical
+        relative = text[len(canonical):].lstrip('/')
+        path = Path(runtime_root).expanduser()
+        if relative:
+            path = path.joinpath(*relative.split('/'))
+        return path.resolve()
+    return Path(text).expanduser()
+
+
+def _portable_ppt_source_path(source_path: Path) -> str:
+    """Persist upload paths with one portable root, independent of the host OS."""
+    resolved = source_path.expanduser().resolve()
+    configured = os.getenv('LAZYMIND_UPLOAD_ROOT', '').strip()
+    if configured:
+        upload_root = Path(configured).expanduser().resolve()
+        try:
+            relative = resolved.relative_to(upload_root)
+        except (OSError, ValueError):
+            pass
+        else:
+            suffix = relative.as_posix()
+            return _CANONICAL_UPLOAD_ROOT + (f'/{suffix}' if suffix else '')
+    return str(resolved)
 
 
 def _inline_preview_images(html: str, deck: Path, html_path: Path) -> tuple[str, int]:
@@ -2382,7 +2456,13 @@ def _batch_page_html_publish_progressive(
                 try:
                     code, payload = fut.result()
                 except Exception as exc:
-                    code, payload = 1, {'status': 'failed', 'error': str(exc)}
+                    code, payload = 1, {
+                        'status': 'failed',
+                        'error': str(exc),
+                        'failure_kind': (
+                            'timeout' if _is_model_timeout_exception(exc) else 'error'
+                        ),
+                    }
                 if not isinstance(payload, dict):
                     payload = {'status': 'failed', 'error': 'empty page payload'}
                 ok = code == 0 and payload.get('status', 'ok' if code == 0 else 'failed') == 'ok'
@@ -2404,7 +2484,14 @@ def _batch_page_html_publish_progressive(
             os.environ.get('LAZYMIND_PPT_PAGE_RETRIES'), 1, lo=0, hi=3,
         )
         for retry_no in range(1, retry_limit + 1):
-            pending = [pno for pno in page_nos if not ready_ok.get(pno, False)]
+            # A timed-out page has already spent the full inactivity window in
+            # the provider call. Retrying it serially can block the workflow
+            # for several more minutes without adding useful information.
+            pending = [
+                pno for pno in page_nos
+                if not ready_ok.get(pno, False)
+                and not _page_result_timed_out(results.get(pno))
+            ]
             if not pending:
                 break
             time.sleep(min(2 ** (retry_no - 1), 4))
@@ -2414,7 +2501,13 @@ def _batch_page_html_publish_progressive(
                 try:
                     code, payload = _run_one(pno)
                 except Exception as exc:
-                    code, payload = 1, {'status': 'failed', 'error': str(exc)}
+                    code, payload = 1, {
+                        'status': 'failed',
+                        'error': str(exc),
+                        'failure_kind': (
+                            'timeout' if _is_model_timeout_exception(exc) else 'error'
+                        ),
+                    }
                 if not isinstance(payload, dict):
                     payload = {'status': 'failed', 'error': 'empty page payload'}
                 ok = code == 0 and payload.get(
@@ -2492,21 +2585,32 @@ def _agent_llm_call(
     effective_timeout = float(
         timeout
         if timeout is not None
-        else os.environ.get('LAZYMIND_PPT_LLM_TIMEOUT', '300')
+        else os.environ.get('LAZYMIND_PPT_LLM_TIMEOUT', '90')
     )
     llm = AutoModel(model='llm').share(
         prompt=ChatPrompter(instruction=instruction),
-        stream=False,
+        # Keep consuming provider chunks so timeout measures inactivity rather
+        # than the total time needed to generate a complete HTML document.
+        # AutoModel still merges the chunks and returns one final string here.
+        stream=True,
     )
     # model_client deliberately forwards its per-request timeout to this
     # adapter. The adapter previously discarded it, so AutoModel fell back to
     # the provider configuration's 120-second timeout. Page HTML commonly
     # needs longer than that; pass the effective timeout into the actual call.
-    out = llm(
-        prompt_input,
-        timeout=effective_timeout,
-        max_retries=max(1, int(retries) + 1),
-    )
+    try:
+        out = llm(
+            prompt_input,
+            timeout=effective_timeout,
+            max_retries=max(1, int(retries) + 1),
+        )
+    except Exception as exc:
+        if _is_model_timeout_exception(exc):
+            raise _PPTModelTimeoutError(
+                f'LLM timed out after {effective_timeout:g}s without receiving progress '
+                f'[{request_name}]'
+            ) from exc
+        raise
     text = str(out).strip() if out is not None else ''
     if not text:
         raise RuntimeError(f'AutoModel llm returned empty text [{request_name}]')
@@ -3237,23 +3341,24 @@ def ppt_attach_material_images(deck_dir: str) -> dict:
         deck_dir (str): Absolute deck directory from ppt_init_deck / ppt_find_deck.
 
     Returns:
-        On success: attached count and reference_images paths.
+        Attached count and reference_images paths. Zero attached images is a
+        successful no-op because material_images is optional for PPT decks.
     """
     try:
         deck = _resolve_deck_dir(deck_dir)
     except FileNotFoundError as exc:
         return _tool_error('ppt_attach_material_images', str(exc))
     result = _attach_material_images_to_deck(deck)
-    if result['attached'] <= 0:
-        return _tool_error(
-            'ppt_attach_material_images',
-            'no material images registered — call ppt_register_material_images in collect_materials first',
-        )
     return _tool_success('ppt_attach_material_images', {
         'deck_dir': str(deck.resolve()),
         'attached': result['attached'],
         'reference_image_count': len(result['reference_images']),
         'reference_images': result['reference_images'],
+        'note': (
+            'No material images were registered; continuing with CSS/SVG/ECharts visuals.'
+            if result['attached'] <= 0 else
+            'Material images attached as Pool B reference images.'
+        ),
     })
 
 
@@ -3511,17 +3616,6 @@ def ppt_build_outline(
     stages: list[dict[str, Any]] = [
         {'step': 'init', 'ok': True, 'deck_id': init_payload.get('deck_id')},
     ]
-
-    # Late register recovery: init attaches automatically, but retry once if empty.
-    if int(init_payload.get('material_images_attached') or 0) <= 0:
-        attach_res = ppt_attach_material_images(deck_dir)
-        if not _tool_failed(attach_res):
-            stages.append({
-                'step': 'attach_material_images',
-                'ok': True,
-                **{k: v for k, v in _tool_payload(attach_res).items()
-                   if k in ('attached', 'reference_image_count')},
-            })
 
     for stage_name in ('preflight', 'style', 'outline'):
         stage_res = ppt_run_stage(deck_dir, stage=stage_name)
@@ -4414,7 +4508,7 @@ def _artifact_html_text(artifact: Any, artifact_store: str) -> str:
             return decoded.decode('utf-8')
         except UnicodeDecodeError as exc:
             raise ValueError('preview_html data URI is not UTF-8') from exc
-    path = Path(raw_path).expanduser()
+    path = _runtime_ppt_path(raw_path)
     if not path.is_absolute():
         path = Path(artifact_store).expanduser() / path
     path = path.resolve()
@@ -4425,7 +4519,7 @@ def _artifact_html_text(artifact: Any, artifact_store: str) -> str:
 
 def _validated_action_source(artifact_html: str) -> tuple[Path, Path, str]:
     meta = _read_ppt_source_meta(artifact_html)
-    source = Path(meta['path']).expanduser().resolve()
+    source = _runtime_ppt_path(meta['path']).resolve()
     if source.parent.name != 'pages' or not re.fullmatch(r'page_\d{3}\.html', source.name):
         raise ValueError('PPT source metadata does not point to a page')
     deck = source.parent.parent
@@ -4433,12 +4527,18 @@ def _validated_action_source(artifact_html: str) -> tuple[Path, Path, str]:
         raise ValueError('PPT source page no longer exists')
     original = source.read_text(encoding='utf-8')
     current_sha = _html_sha256(original)
-    if current_sha != meta['sha256']:
+    public, _ = _inline_preview_images(_sanitize_page_html(original), deck, source)
+    artifact_matches_source = _strip_ppt_source_meta(artifact_html).strip() == public.strip()
+    # An injected bundle may have been renamed after its source metadata was
+    # produced. Exact public/source equality is a stronger freshness proof
+    # than the cached hash, so accept that safe case and let the next revision
+    # publish fresh metadata. Historical revisions whose content differs from
+    # the current source remain stale and cannot overwrite it.
+    if current_sha != meta['sha256'] and not artifact_matches_source:
         error = ValueError('The slide changed after this preview was loaded. Refresh and retry.')
         error.error_code = 'SELECTION_STALE'
         raise error
-    public, _ = _inline_preview_images(_sanitize_page_html(original), deck, source)
-    if _strip_ppt_source_meta(artifact_html).strip() != public.strip():
+    if not artifact_matches_source:
         error = ValueError('The selected artifact does not match its source slide. Refresh and retry.')
         error.error_code = 'SELECTION_STALE'
         raise error
@@ -4923,7 +5023,7 @@ def ppt_apply_selection_edit(
             raise error
         original = current_artifact
     elif mode == 'source_page':
-        source = Path(_coerce_str(manifest.get('source_path'))).resolve()
+        source = _runtime_ppt_path(_coerce_str(manifest.get('source_path'))).resolve()
         if source.parent.name != 'pages' or source.parent.parent == source.parent:
             raise ValueError('invalid PPT source page')
         if not source.is_file():

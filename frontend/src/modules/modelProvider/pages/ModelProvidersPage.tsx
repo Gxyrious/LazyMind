@@ -15,11 +15,10 @@ import {
   UpOutlined,
 } from "@ant-design/icons";
 import { modelProvidersApi, unwrapModelProviderData } from "../api";
+import { getProviderLogoUrl } from "../providerBranding";
 import "../index.scss";
 
-const SENSENOVA_LOGO_URL = "https://www.sensenova.ai/images/logo.png";
-
-type ModelCapability =
+export type ModelCapability =
   | "LLM_CHAT"
   | "EMBEDDING"
   | "VLM"
@@ -202,6 +201,21 @@ export function isOpenAIProvider(provider?: Pick<ProviderOption, "source" | "nam
   return normalizeProviderKey(provider.source || provider.name) === "openai";
 }
 
+export function hasOpenAIRequestPath(
+  provider: Pick<ProviderOption, "source" | "name"> | null | undefined,
+  baseUrl?: string
+): boolean {
+  if (!isOpenAIProvider(provider) || !baseUrl) return false;
+
+  try {
+    const segments = new URL(baseUrl).pathname.split("/").filter(Boolean);
+    const v1Index = segments.findIndex((segment) => segment.toLowerCase() === "v1");
+    return v1Index >= 0 && v1Index < segments.length - 1;
+  } catch {
+    return false;
+  }
+}
+
 function isSensenovaNewBaseUrl(url?: string): boolean {
   return normalizeBaseUrlForCompare(url) === normalizeBaseUrlForCompare(SENSENOVA_NEW_BASE_URL);
 }
@@ -294,9 +308,9 @@ function createConnectionGroup(provider: ProviderOption, overrides: Partial<Prov
 }
 
 enum ModelProviderModelType {
-  VLM = "VLM",
+  VLM = "vlm",
   LLM = "llm",
-  Embedding = "embedding",
+  Embedding = "embed",
   MultimodalEmbedding = "multimodal_embedding",
   TextToImage = "text2image",
   TextToVideo = "text2video",
@@ -320,6 +334,12 @@ const modelTypeByCapability: Record<ModelCapability, ModelProviderModelType> = {
   LLM_SELF_EVOLUTION: ModelProviderModelType.LLM,
 };
 
+export function getModelTypeForCapability(
+  capability: ModelCapability,
+): string {
+  return modelTypeByCapability[capability];
+}
+
 function normalizeProviderKey(value: string) {
   return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-") || "provider";
 }
@@ -336,30 +356,10 @@ function getProviderBrand(name: string) {
     .toUpperCase();
 }
 
-function getProviderLogoUrl(name: string) {
-  const normalized = name.trim().toLowerCase();
-  if (/sensenova|sensecore|商汤|日日新/.test(normalized)) return SENSENOVA_LOGO_URL;
-  const domainMap: Array<[RegExp, string]> = [
-    [/claude|anthropic/, "anthropic.com"],
-    [/deepseek/, "deepseek.com"],
-    [/doubao|volc|ark/, "volcengine.com"],
-    [/glm|bigmodel|zhipu/, "zhipuai.cn"],
-    [/kimi|moonshot/, "moonshot.cn"],
-    [/minimax/, "minimaxi.com"],
-    [/openrouter/, "openrouter.ai"],
-    [/openai/, "openai.com"],
-    [/qwen|tongyi|通义/, "qwen.ai"],
-    [/siliconflow/, "siliconflow.cn"],
-  ];
-  const match = domainMap.find(([pattern]) => pattern.test(normalized));
-  if (!match) return undefined;
-  return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(match[1])}&sz=96`;
-}
-
-function mapModelTypeToCapability(modelType?: string): ModelCapability {
+export function mapModelTypeToCapability(modelType?: string): ModelCapability {
   const normalized = (modelType || "").toLowerCase();
   if (normalized === ModelProviderModelType.MultimodalEmbedding) return "MULTIMODAL_EMBEDDING";
-  if (normalized.includes("embedding")) return "EMBEDDING";
+  if (normalized === ModelProviderModelType.Embedding || normalized.includes("embedding")) return "EMBEDDING";
   if (normalized.includes("rerank")) return "RERANK";
   if (normalized === ModelProviderModelType.STT || normalized === "asr") return "ASR";
   if (normalized === ModelProviderModelType.TTS) return "TTS";
@@ -1214,13 +1214,15 @@ export default function ModelProviderPage({ onConfigurationChanged }: ModelProvi
         groupId: group.id,
         addModelProviderGroupModelOpenAPIRequest: {
           name: values.name.trim(),
-          model_type: modelTypeByCapability[values.capability],
+          model_type: getModelTypeForCapability(values.capability),
         },
       })).data);
       const nextModel: ProviderModel = {
         id: createdModel.id,
         name: createdModel.name,
-        capability: mapModelTypeToCapability(createdModel.model_type || modelTypeByCapability[values.capability]),
+        capability: mapModelTypeToCapability(
+          createdModel.model_type || getModelTypeForCapability(values.capability),
+        ),
         builtIn: Boolean(createdModel.is_default),
         enabled: true,
       };
@@ -1592,6 +1594,11 @@ export default function ModelProviderPage({ onConfigurationChanged }: ModelProvi
               { required: true, message: t("modelProvider.validation.baseUrlRequired") },
               { type: "url", message: t("modelProvider.validation.baseUrlInvalid") },
               { max: 512, message: t("modelProvider.validation.baseUrlMax") },
+              {
+                validator: (_, value?: string) => hasOpenAIRequestPath(configProvider, value)
+                  ? Promise.reject(new Error(t("modelProvider.validation.baseUrlRequestPath")))
+                  : Promise.resolve(),
+              },
             ]}
           >
             <Input maxLength={512} placeholder="https://api.example.com/v1" />

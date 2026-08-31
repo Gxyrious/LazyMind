@@ -152,6 +152,7 @@ vi.mock('./ArtifactRewriteSelectionHighlight', () => ({
 }));
 
 import { MarkdownArtifactEditor } from './MarkdownArtifactEditor';
+import { SlotEditingContext } from './slotEditingContext';
 
 function rect(): DOMRect {
   return {
@@ -436,6 +437,70 @@ describe('MarkdownArtifactEditor rewrite selection highlight', () => {
     fireEvent.click(bold);
   });
 
+  it('positions the selection toolbar in the scrollable editor surface', async () => {
+    const { container } = render(<Harness />);
+    const editor = container.querySelector<HTMLElement>('.writer-markdown-editor');
+    const surface = container.querySelector<HTMLElement>('.writer-markdown-editor__surface');
+    const toolbar = container.querySelector<HTMLElement>('.mdxeditor-toolbar');
+    const paragraph = container.querySelector('p');
+    const textNode = paragraph?.firstChild;
+    expect(editor).not.toBeNull();
+    expect(surface).not.toBeNull();
+    expect(toolbar).not.toBeNull();
+    expect(textNode).not.toBeNull();
+
+    vi.spyOn(surface!, 'getBoundingClientRect').mockReturnValue({
+      ...rect(),
+      top: 80,
+      right: 800,
+      bottom: 500,
+      left: 300,
+      width: 500,
+      height: 420,
+    });
+    Object.defineProperty(surface!, 'clientTop', { configurable: true, value: 3 });
+    Object.defineProperty(surface!, 'clientLeft', { configurable: true, value: 2 });
+    Object.defineProperty(surface!, 'scrollTop', { configurable: true, value: 20 });
+    Object.defineProperty(surface!, 'scrollLeft', { configurable: true, value: 5 });
+    vi.spyOn(toolbar!, 'getBoundingClientRect').mockReturnValue({
+      ...rect(),
+      top: 0,
+      right: 320,
+      bottom: 42,
+      left: 0,
+      width: 320,
+      height: 42,
+    });
+
+    const range = document.createRange();
+    range.setStart(textNode!, 0);
+    range.setEnd(textNode!, 5);
+    const selectedRect = {
+      ...rect(),
+      top: 200,
+      right: 740,
+      bottom: 220,
+      left: 620,
+      width: 120,
+      height: 20,
+    };
+    Object.defineProperty(range, 'getBoundingClientRect', { value: () => selectedRect });
+    Object.defineProperty(range, 'getClientRects', { value: () => [selectedRect] });
+    const browserSelection = window.getSelection();
+    browserSelection?.removeAllRanges();
+    browserSelection?.addRange(range);
+    fireEvent.mouseUp(paragraph!);
+
+    await waitFor(() => {
+      expect(editor!.style.getPropertyValue('--writer-markdown-selection-toolbar-top'))
+        .toBe('87px');
+      expect(editor!.style.getPropertyValue('--writer-markdown-selection-toolbar-left'))
+        .toBe('175px');
+      expect(editor!.style.getPropertyValue('--writer-markdown-selection-toolbar-max-width'))
+        .toBe('484px');
+    });
+  });
+
   it('offers the chat citation action inside the selection toolbar', async () => {
     const onCiteSelection = vi.fn();
     const { container } = render(
@@ -561,6 +626,7 @@ describe('MarkdownArtifactEditor rewrite selection highlight', () => {
         '![图1 雨后山间溪流图](https://example.com/rain.png)',
       ].join('\n'),
       11,
+      'draft',
     );
   });
 
@@ -618,6 +684,38 @@ describe('MarkdownArtifactEditor rewrite selection highlight', () => {
 });
 
 describe('MarkdownArtifactEditor autosave', () => {
+  it('uses a checkpoint when pending edits are flushed at a version boundary', async () => {
+    const onSave = vi.fn(async () => 8);
+    let flush: (() => Promise<boolean>) | undefined;
+    render(
+      <SlotEditingContext.Provider value={{
+        setEditing: vi.fn(),
+        registerFlush: (_key, callback) => {
+          flush = callback;
+          return () => undefined;
+        },
+        registerFooterAction: () => () => undefined,
+      }}>
+        <MarkdownArtifactEditor
+          markdown='Initial draft'
+          sourceRevision={7}
+          editingKey='writer:document'
+          onSave={onSave}
+        />
+      </SlotEditingContext.Provider>,
+    );
+    const editable = screen.getByTestId('markdown-editable');
+    editable.textContent = 'Checkpoint edit';
+    fireEvent.input(editable);
+
+    await waitFor(() => expect(flush).toBeDefined());
+    await act(async () => {
+      expect(await flush?.()).toBe(true);
+    });
+
+    expect(onSave).toHaveBeenCalledWith('Checkpoint edit', 7, 'checkpoint');
+  });
+
   it('replaces clean backend updates without remounting or moving the viewport', async () => {
     vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
       callback(0);
@@ -671,7 +769,7 @@ describe('MarkdownArtifactEditor autosave', () => {
       await act(async () => {
         vi.advanceTimersByTime(1_000);
       });
-      expect(onSave).toHaveBeenCalledWith('Local draft', 7);
+      expect(onSave).toHaveBeenCalledWith('Local draft', 7, 'draft');
       await act(async () => {
         resolveSave?.({ markdown: 'Backend normalized draft', revision: 8 });
         await Promise.resolve();
@@ -722,7 +820,7 @@ describe('MarkdownArtifactEditor autosave', () => {
         await Promise.resolve();
       });
       expect(onSave).toHaveBeenCalledTimes(1);
-      expect(onSave).toHaveBeenCalledWith('Final edit', 7);
+      expect(onSave).toHaveBeenCalledWith('Final edit', 7, 'draft');
       expect(screen.queryByText('chat.writerMarkdown.saved')).toBeNull();
     } finally {
       vi.useRealTimers();
@@ -752,7 +850,7 @@ describe('MarkdownArtifactEditor autosave', () => {
       await act(async () => {
         vi.advanceTimersByTime(1_000);
       });
-      expect(onSave).toHaveBeenCalledWith('First edit', 7);
+      expect(onSave).toHaveBeenCalledWith('First edit', 7, 'draft');
 
       editable.textContent = 'Second edit';
       fireEvent.input(editable);
@@ -770,7 +868,7 @@ describe('MarkdownArtifactEditor autosave', () => {
         await Promise.resolve();
       });
       expect(onSave).toHaveBeenCalledTimes(2);
-      expect(onSave).toHaveBeenLastCalledWith('Second edit', 8);
+      expect(onSave).toHaveBeenLastCalledWith('Second edit', 8, 'draft');
     } finally {
       vi.useRealTimers();
     }
