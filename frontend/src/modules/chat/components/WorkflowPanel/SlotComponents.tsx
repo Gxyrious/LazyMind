@@ -11,6 +11,7 @@ import {
   type RenderWriterDocumentResult,
   type RewriteSelectionPreview,
   type WriterDocumentSlot,
+  type WriterNumberingUpdate,
 } from "@/modules/chat/utils/request";
 import { FilePreviewDrawer } from "./FilePreviewDrawer";
 import {
@@ -2644,6 +2645,8 @@ function useRegisterArtifactDownload({
 function isRenderedWriterDocument(value: unknown): value is RenderWriterDocumentResult {
   if (!value || typeof value !== 'object') return false;
   const result = value as Partial<RenderWriterDocumentResult>;
+  const numbering = result.numbering;
+  if (!numbering?.ordered_style || !numbering.entries) return false;
   if (result.representation === 'markdown') return typeof result.document === 'string';
   if (result.representation === 'ir') return isWriterDocument(result.document);
   return false;
@@ -2803,6 +2806,7 @@ function SlotWriterDocument({
     document: WriterDocument,
     sourceRevision?: string | number,
     mode: WriterIRSaveMode = 'checkpoint',
+    numberingUpdate?: WriterNumberingUpdate,
   ): Promise<WriterIRSaveResult> => {
     if (readOnly || typeof sourceRevision !== 'number' || sourceRevision <= 0) {
       throw new Error(tr('chat.writerIR.saveFailed'));
@@ -2814,6 +2818,7 @@ function SlotWriterDocument({
         normalizeWriterDocumentForSync(document),
         slotId,
         ['draft_document', 'flat_draft_document'].includes(slotId) ? 'draft' : mode,
+        numberingUpdate,
         { silentError: true } as never,
       );
       const result = response?.data?.data;
@@ -2844,6 +2849,7 @@ function SlotWriterDocument({
     document: string,
     baseRevision: number,
     mode: MarkdownSaveMode = 'checkpoint',
+    numberingUpdate?: WriterNumberingUpdate,
   ) => {
     if (readOnly || baseRevision <= 0) {
       throw new Error(tr('chat.writerMarkdown.saveFailed'));
@@ -2855,6 +2861,7 @@ function SlotWriterDocument({
         document,
         slotId,
         ['draft_document', 'flat_draft_document'].includes(slotId) ? 'draft' : mode,
+        numberingUpdate,
         { silentError: true } as never,
       );
       const result = response?.data?.data;
@@ -3003,6 +3010,7 @@ function SlotWriterDocument({
         {writerDocument ? (
           <WriterIRControl
             document={writerDocument}
+            numbering={rendered.numbering}
             sourceRevision={displayRevision}
             readOnly={!canEditWriterIR}
             editingKey={editingKey}
@@ -3024,6 +3032,7 @@ function SlotWriterDocument({
         ) : canEdit ? (
           <MarkdownArtifactEditor
             markdown={markdown}
+            numbering={rendered.numbering}
             sourceRevision={displayRevision}
             editingKey={editingKey}
             onSave={saveMarkdown}
@@ -4696,6 +4705,7 @@ export function SlotRenderer({
     return <SlotPending type={expectedType ?? 'text'} cardMode={cardMode} />;
   }
 
+  const effectiveReadOnly = readOnly || widget?.readOnly;
   const resolvedWidgetSlotId = slotId ?? slot.slot;
   if (
     sessionId
@@ -4709,7 +4719,7 @@ export function SlotRenderer({
         slotId={resolvedWidgetSlotId as WriterDocumentSlot}
         revisionCount={revisionCount}
         onRefresh={onRefresh}
-        readOnly={readOnly}
+        readOnly={effectiveReadOnly}
       />
     );
   }
@@ -4724,7 +4734,7 @@ export function SlotRenderer({
         slotId={slotId}
         revisionCount={revisionCount}
         onRefresh={onRefresh}
-        readOnly={readOnly}
+        readOnly={effectiveReadOnly}
       />
     );
   }
@@ -4738,7 +4748,7 @@ export function SlotRenderer({
         compact={cardMode}
         sessionId={sessionId}
         slotId={artifactSlotKey}
-        readOnly={readOnly}
+        readOnly={effectiveReadOnly}
         onRefresh={onRefresh}
       />
     );
@@ -4754,7 +4764,7 @@ export function SlotRenderer({
         isDraggable={isDraggable}
         onRefresh={onRefresh}
         onReference={onReference}
-        readOnly={readOnly}
+        readOnly={effectiveReadOnly}
         hideMutationActions={hideImageMutationActions}
       />
     );
@@ -4768,7 +4778,7 @@ export function SlotRenderer({
         slotId={slotId}
         revisionCount={revisionCount}
         onRefresh={onRefresh}
-        readOnly={readOnly}
+        readOnly={effectiveReadOnly}
       />
     );
   }
@@ -4780,7 +4790,7 @@ export function SlotRenderer({
         slotId={slotId}
         revisionCount={revisionCount}
         onRefresh={onRefresh}
-        readOnly={readOnly}
+        readOnly={effectiveReadOnly}
       />
     );
   }
@@ -4792,11 +4802,11 @@ export function SlotRenderer({
         slotId={slotId}
         revisionCount={revisionCount}
         onRefresh={onRefresh}
-        readOnly={readOnly}
+        readOnly={effectiveReadOnly}
       />
     );
   }
-  if (normalized === 'file') return <SlotFile slot={slot} sessionId={sessionId} slotId={slotId} revisionCount={revisionCount} onRefresh={onRefresh} readOnly={readOnly} />;
+  if (normalized === 'file') return <SlotFile slot={slot} sessionId={sessionId} slotId={slotId} revisionCount={revisionCount} onRefresh={onRefresh} readOnly={effectiveReadOnly} />;
   return (
     <SlotText
       slot={slot}
@@ -4805,7 +4815,7 @@ export function SlotRenderer({
       slotId={slotId}
       revisionCount={revisionCount}
       onRefresh={onRefresh}
-      readOnly={readOnly}
+      readOnly={effectiveReadOnly}
     />
   );
 }

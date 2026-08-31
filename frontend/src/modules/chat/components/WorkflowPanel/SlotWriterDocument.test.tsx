@@ -82,6 +82,7 @@ function renderedMarkdown(document: string) {
         title: 'Writer document',
         representation: 'markdown',
         document,
+        numbering: { ordered_style: 'hierarchical', entries: {} },
       },
     },
   };
