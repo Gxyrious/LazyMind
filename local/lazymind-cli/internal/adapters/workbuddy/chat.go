@@ -7,15 +7,20 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
+	"time"
 
 	"lazymind/agentconnector/internal/agentcatalog"
 	"lazymind/agentconnector/internal/agentexec"
 	"lazymind/agentconnector/internal/chatagent"
 )
 
-const maxEventBytes = 4 << 20
+const (
+	maxEventBytes     = 4 << 20
+	loginPollInterval = 500 * time.Millisecond
+)
+
+var openInteractiveCommand = agentexec.OpenInteractiveCommand
 
 type ChatRunner struct {
 	binary string
@@ -52,6 +57,37 @@ func Probe(binary string) (bool, bool, string) {
 	return true, ready, reason
 }
 
+func Login(ctx context.Context, binary string) error {
+	return login(ctx, binary, authFile())
+}
+
+func login(ctx context.Context, binary, authenticationFile string) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+	resolved, err := findBinary(binary)
+	if err != nil {
+		return err
+	}
+	if err := openInteractiveCommand(resolved); err != nil {
+		return err
+	}
+	ticker := time.NewTicker(loginPollInterval)
+	defer ticker.Stop()
+	for {
+		if ready, _ := availability(authenticationFile); ready {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
 func availability(auth string) (bool, string) {
 	info, err := os.Stat(auth)
 	if err != nil || info.IsDir() || info.Size() == 0 {
@@ -67,18 +103,8 @@ func authFile() string {
 
 func findBinary(configured string) (string, error) {
 	names := []string{"codebuddy", "cbc"}
-	home, _ := os.UserHomeDir()
-	var candidates []string
-	if home != "" {
-		for _, name := range names {
-			candidates = append(candidates, filepath.Join(home, ".local", "bin", name))
-		}
-	}
-	if runtime.GOOS == "darwin" {
-		candidates = append(candidates, "/opt/homebrew/bin/codebuddy", "/usr/local/bin/codebuddy")
-	}
 	resolved, err := agentexec.FindBound(
-		configured, "LAZYMIND_WORKBUDDY_AGENT_BIN", agentexec.CodeBuddyCLI, names, candidates,
+		configured, "LAZYMIND_WORKBUDDY_AGENT_BIN", agentexec.CodeBuddyCLI, names,
 	)
 	if err != nil {
 		if strings.TrimSpace(configured) != "" || strings.TrimSpace(os.Getenv("LAZYMIND_WORKBUDDY_AGENT_BIN")) != "" {

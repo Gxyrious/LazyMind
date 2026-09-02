@@ -1111,6 +1111,7 @@ export interface ChatExecutorDescriptor {
   installed: boolean;
   host_online: boolean;
   available: boolean;
+  connected?: boolean;
   unavailable_reason?: string;
 }
 
