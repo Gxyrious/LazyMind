@@ -109,7 +109,8 @@ const WRITER_CODE_LANGUAGES = [
 ] as const;
 
 function imageReferencePath(block: WriterBlock): string {
-  const reference = block.references?.find((item) => item.type === 'media_asset');
+  const reference = block.references?.find((item) => item.type === 'preview_asset')
+    ?? block.references?.find((item) => item.type === 'media_asset');
   const value = reference?.url ?? reference?.path;
   return typeof value === 'string' ? value.trim() : '';
 }

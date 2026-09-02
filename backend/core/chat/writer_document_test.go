@@ -51,6 +51,30 @@ func TestWriterSyncStatus(t *testing.T) {
 	}
 }
 
+func TestWriterProviderSelection(t *testing.T) {
+	for name, test := range map[string]struct {
+		value json.RawMessage
+		want  string
+	}{
+		"bound provider":  {json.RawMessage(`{"provider_binding":{"provider":"notion","document_id":"page-1"}}`), "notion"},
+		"target adapter":  {json.RawMessage(`{"adapter":"notion","uri":"https://notion.so/page"}`), "notion"},
+		"unbound default": {json.RawMessage(`{"document_id":"local"}`), "feishu"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := writerDocumentProvider(test.value); got != test.want {
+				t.Fatalf("provider = %q, want %q", got, test.want)
+			}
+		})
+	}
+
+	config, ok := writerProviderToolConfig(map[string]any{
+		"feishu": "feishu-token", "notion": "notion-token",
+	}, "notion")
+	if !ok || len(config) != 1 || config["notion"] != "notion-token" {
+		t.Fatalf("unexpected provider config: %#v, %v", config, ok)
+	}
+}
+
 func TestWriteBackWriterDocumentRequiresFeishuConfiguration(t *testing.T) {
 	authService := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -321,6 +345,48 @@ func TestWriterDocumentIsUnbound(t *testing.T) {
 	}
 	if writerDocumentIsUnbound(json.RawMessage(`{"document_id":"cloud","blocks":[],"provider_binding":{"provider":"feishu","document_id":"doc-1"}}`)) {
 		t.Fatal("Feishu WriterDocument should not be unbound")
+	}
+}
+
+func TestUnbindWriterDocumentClearsNestedProviderState(t *testing.T) {
+	unbound, err := unbindWriterDocument(json.RawMessage(`{
+		"document_id":"page-1",
+		"revision":"rev-1",
+		"provider_binding":{"provider":"notion","document_id":"page-1"},
+		"blocks":[{
+			"node_id":"heading-1",
+			"provider_binding":{"provider":"notion","block_id":"block-1"},
+			"provider_payload":{"archived":false},
+			"children":[{
+				"node_id":"paragraph-1",
+				"provider_binding":{"provider":"notion","block_id":"block-2"},
+				"provider_payload":{"archived":false}
+			}]
+		}]
+	}`))
+	if err != nil {
+		t.Fatalf("unbind WriterDocument: %v", err)
+	}
+	var document map[string]any
+	if err := json.Unmarshal(unbound, &document); err != nil {
+		t.Fatalf("decode unbound WriterDocument: %v", err)
+	}
+	if _, exists := document["revision"]; exists {
+		t.Fatal("provider revision was not removed")
+	}
+	if binding, _ := document["provider_binding"].(map[string]any); len(binding) != 0 {
+		t.Fatalf("document provider binding = %#v, want empty", binding)
+	}
+	blocks := document["blocks"].([]any)
+	parent := blocks[0].(map[string]any)
+	child := parent["children"].([]any)[0].(map[string]any)
+	for name, block := range map[string]map[string]any{"parent": parent, "child": child} {
+		if binding, _ := block["provider_binding"].(map[string]any); len(binding) != 0 {
+			t.Fatalf("%s provider binding = %#v, want empty", name, binding)
+		}
+		if payload, _ := block["provider_payload"].(map[string]any); len(payload) != 0 {
+			t.Fatalf("%s provider payload = %#v, want empty", name, payload)
+		}
 	}
 }
 

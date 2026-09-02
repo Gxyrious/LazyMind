@@ -343,6 +343,40 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+describe('WriterIRDocumentEditor image preview', () => {
+  it('renders a Notion preview asset URL without requiring a media asset', async () => {
+    const previewDocument: WriterDocument = {
+      ...document,
+      blocks: [{
+        node_id: 'notion-image-1',
+        type: 'image',
+        content: '台风安全示意图',
+        references: [{
+          type: 'preview_asset',
+          provider: 'notion',
+          url: 'https://example.com/notion-preview.png',
+          expires_at: '2026-09-02T02:00:00Z',
+        }],
+      }],
+    };
+    const { container } = render(
+      <WriterIRDocumentEditor
+        document={previewDocument}
+        ariaLabel='Writer document'
+        onChange={vi.fn()}
+        onFocus={vi.fn()}
+        onBlur={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector('img')?.getAttribute('src')).toBe(
+        'https://example.com/notion-preview.png',
+      );
+    });
+  });
+});
+
 describe('WriterIRDocumentEditor cross-reference menu', () => {
   it('keeps the selected text highlighted and applies the reference without rewriting it', async () => {
     Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {

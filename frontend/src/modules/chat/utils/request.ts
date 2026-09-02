@@ -548,6 +548,7 @@ export function WorkflowSessionApi() {
       sourceDocument?: Record<string, unknown>,
       revisedDocument?: Record<string, unknown>,
       slot?: WriterDocumentSlot,
+      provider?: string,
       options?: RawAxiosRequestConfig,
     ) {
       const payload: Record<string, unknown> = { base_revision: baseRevision };
@@ -556,6 +557,7 @@ export function WorkflowSessionApi() {
       if (sourceDocument !== undefined) payload.source_document = sourceDocument;
       if (revisedDocument !== undefined) payload.revised_document = revisedDocument;
       if (slot !== undefined && slot !== 'draft_document') payload.slot = slot;
+      if (provider !== undefined) payload.provider = provider;
       return axiosInstance.post<{
         code: number;
         message: string;
