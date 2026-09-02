@@ -13,6 +13,7 @@ export interface WriterMarkdownOutlineItem {
   anchorId: string;
   label: string;
   level: number;
+  instructions?: WriterMarkdownOutlineInstruction;
 }
 
 export interface WriterMarkdownOutline {
@@ -28,6 +29,7 @@ interface WriterMarkdownTargetBinding {
   type: 'heading' | 'image';
   level?: number;
   signature: string;
+  outlineInstructionLine?: string;
 }
 
 interface WriterMarkdownImageTarget {
@@ -101,6 +103,7 @@ function writerMarkdownTargetBindings(markdown: string): WriterMarkdownTargetBin
   } | undefined;
   let fenceCharacter = '';
   let fenceLength = 0;
+  let currentHeadingIndex: number | undefined;
 
   markdown.split(/\r?\n/).forEach((line, lineIndex) => {
     const fence = line.match(/^\s*(`{3,}|~{3,})/);
@@ -141,7 +144,9 @@ function writerMarkdownTargetBindings(markdown: string): WriterMarkdownTargetBin
         level: heading[1].length,
         signature: `${heading[1].length}:${heading[2].trim()}`,
       });
+      currentHeadingIndex = bindings.length - 1;
     } else {
+      currentHeadingIndex = undefined;
       const image = writerMarkdownImageTarget(trimmed);
       if (image) {
         bindings.push({
@@ -260,6 +265,7 @@ export function protectWriterMarkdownAnchors(
       .filter((lineIndex): lineIndex is number => lineIndex !== undefined),
   );
   const insertBefore = new Map<number, string>();
+  const insertAfter = new Map<number, string>();
   next.forEach((target, index) => {
     const assignment = assignments[index];
     if (assignment.anchorId) {
@@ -274,7 +280,7 @@ export function protectWriterMarkdownAnchors(
 
   const result: string[] = [];
   lines.forEach((line, lineIndex) => {
-    if (targetAnchorLines.has(lineIndex)) return;
+    if (targetAnchorLines.has(lineIndex) || OUTLINE_INSTRUCTION_LINE_RE.test(line)) return;
     const anchor = insertBefore.get(lineIndex);
     if (anchor) {
       // MDX serializers may surround a standalone JSX anchor with extra empty
@@ -287,6 +293,8 @@ export function protectWriterMarkdownAnchors(
       result.push(anchor);
     }
     result.push(line);
+    const instruction = insertAfter.get(lineIndex);
+    if (instruction) result.push(instruction);
   });
   return withHeadingNumberingConfigLine(result.join('\n'), configLine);
 }
@@ -443,6 +451,7 @@ export function collectWriterMarkdownOutline(markdown: string): WriterMarkdownOu
   let pendingAnchorId: string | undefined;
   let fenceCharacter = '';
   let fenceLength = 0;
+  let currentItemIndex: number | undefined;
 
   for (const line of markdown.split(/\r?\n/)) {
     const fence = line.match(/^\s*(`{3,}|~{3,})/);
@@ -456,6 +465,7 @@ export function collectWriterMarkdownOutline(markdown: string): WriterMarkdownOu
         fenceLength = 0;
       }
       pendingAnchorId = undefined;
+      currentItemIndex = undefined;
       continue;
     }
     if (fenceCharacter) continue;
@@ -464,6 +474,7 @@ export function collectWriterMarkdownOutline(markdown: string): WriterMarkdownOu
     const anchor = trimmed.match(SYSTEM_ANCHOR_LINE_RE);
     if (anchor) {
       pendingAnchorId = anchor[2];
+      currentItemIndex = undefined;
       continue;
     }
     if (!trimmed) continue;
@@ -478,7 +489,12 @@ export function collectWriterMarkdownOutline(markdown: string): WriterMarkdownOu
           label,
           level: heading[1].length,
         });
+        currentItemIndex = items.length - 1;
+      } else {
+        currentItemIndex = undefined;
       }
+    } else {
+      currentItemIndex = undefined;
     }
     pendingAnchorId = undefined;
   }

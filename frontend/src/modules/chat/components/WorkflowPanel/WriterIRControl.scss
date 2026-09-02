@@ -126,7 +126,7 @@
   z-index: 6;
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: space-between;
   gap: 8px;
   min-height: 34px;
   margin-bottom: 12px;
@@ -167,6 +167,21 @@
   background: transparent;
   color: #64748b;
   line-height: 1;
+}
+
+.writer-ir .writer-ir__outline-instructions-all {
+  min-height: 28px;
+  padding: 3px 10px;
+  border: 1px solid #dbe3ee;
+  border-radius: 7px;
+  background: #fff;
+  color: #475569;
+  font-size: 12px;
+}
+
+.writer-ir .writer-ir__outline-instructions-all:hover {
+  border-color: #93c5fd;
+  color: #1d4ed8;
 }
 
 .writer-ir .writer-ir__width-option:hover:not(:disabled) {
@@ -1209,7 +1224,7 @@
 
 .writer-ir__heading {
   margin: 22px 0 8px;
-  color: #0f172a;
+  color: #163b6d;
   line-height: 1.45;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -1235,6 +1250,55 @@
 .writer-ir__heading--6 {
   font-size: 14px;
   font-weight: 650;
+}
+
+.writer-ir__outline-instructions {
+  margin: 0 0 10px;
+  padding-left: 12px;
+  border-left: 2px solid #d8e2f0;
+  color: #5f6b7a;
+  font-size: 13px;
+  line-height: 1.55;
+  user-select: text;
+}
+
+.writer-ir__outline-instructions > summary {
+  width: fit-content;
+  color: #47607d;
+  cursor: pointer;
+  font-weight: 600;
+  user-select: none;
+}
+
+.writer-ir__outline-instruction-body {
+  display: grid;
+  gap: 5px;
+  padding: 5px 0 1px;
+}
+
+.writer-ir__outline-instruction-row,
+.writer-ir__outline-instruction-group {
+  display: grid;
+  grid-template-columns: 86px minmax(0, 1fr);
+  gap: 8px;
+}
+
+.writer-ir__outline-instruction-group ul {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.writer-ir__outline-subtask-type {
+  margin-right: 6px;
+  color: #245bdb;
+}
+
+@container writer-ir (max-width: 520px) {
+  .writer-ir__outline-instruction-row,
+  .writer-ir__outline-instruction-group {
+    grid-template-columns: 1fr;
+    gap: 1px;
+  }
 }
 
 .writer-ir__paragraph,

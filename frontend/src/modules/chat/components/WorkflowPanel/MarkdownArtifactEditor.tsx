@@ -74,6 +74,7 @@ import {
   writerMarkdownForEditing,
   writerMarkdownPersistenceIdentity,
   writerMarkdownForSave,
+  type WriterMarkdownOutlineItem,
 } from './writerMarkdownAnchors';
 import './MarkdownArtifactEditor.scss';
 
@@ -97,6 +98,97 @@ function WriterAnchorEditor(props: JsxEditorProps) {
     );
   }
   return <GenericJsxEditor {...props} />;
+}
+
+function attachOutlineInstructionControl(
+  heading: HTMLElement,
+  item: WriterMarkdownOutlineItem,
+  expanded: boolean,
+  onToggle: () => void,
+  labels: {
+    instructions: string;
+    targetChars: string;
+    contextRelations: string;
+    writingSubtasks: string;
+    subtaskType: (type: string) => string;
+  },
+): void {
+  const instructions = item.instructions;
+  if (!instructions || heading.querySelector('[data-writer-outline-control]')) return;
+
+  const panelId = `writer-outline-instructions-${item.anchorId}`;
+  const button = globalThis.document.createElement('button');
+  button.type = 'button';
+  button.className = 'writer-markdown-editor__heading-instruction-toggle';
+  button.dataset.writerOutlineControl = item.anchorId;
+  button.setAttribute('contenteditable', 'false');
+  button.setAttribute('aria-expanded', String(expanded));
+  button.setAttribute('aria-controls', panelId);
+  button.textContent = labels.instructions;
+
+  const panel = globalThis.document.createElement('div');
+  panel.id = panelId;
+  panel.className = 'writer-markdown-editor__heading-instructions';
+  panel.dataset.writerOutlinePanel = item.anchorId;
+  panel.setAttribute('contenteditable', 'false');
+  panel.hidden = !expanded;
+
+  const addRow = (label: string, values: string[]) => {
+    if (values.length === 0) return;
+    const row = globalThis.document.createElement('div');
+    row.className = 'writer-markdown-editor__heading-instruction-row';
+    const strong = globalThis.document.createElement('strong');
+    strong.textContent = label;
+    row.append(strong);
+    if (values.length === 1) {
+      const value = globalThis.document.createElement('span');
+      value.textContent = values[0];
+      row.append(value);
+    } else {
+      const list = globalThis.document.createElement('ul');
+      values.forEach((text) => {
+        const entry = globalThis.document.createElement('li');
+        entry.textContent = text;
+        list.append(entry);
+      });
+      row.append(list);
+    }
+    panel.append(row);
+  };
+
+  if (instructions.target_chars) {
+    addRow(labels.targetChars, [String(instructions.target_chars)]);
+  }
+  addRow(
+    labels.contextRelations,
+    instructions.context_relations.map((relation) => (
+      relation.guidance
+      || [relation.relation, relation.target_node_id].filter(Boolean).join(' / ')
+      || '-'
+    )),
+  );
+  addRow(
+    labels.writingSubtasks,
+    instructions.subtasks.map(
+      (subtask) => `${labels.subtaskType(subtask.subtask_type)} ${subtask.question}`,
+    ),
+  );
+
+  button.addEventListener('click', () => {
+    const expanded = button.getAttribute('aria-expanded') !== 'true';
+    button.setAttribute('aria-expanded', String(expanded));
+    panel.hidden = !expanded;
+    onToggle();
+  });
+  heading.append(button);
+  heading.insertAdjacentElement('afterend', panel);
+}
+
+function setOutlineInstructionControlsExpanded(root: HTMLElement, expanded: boolean): void {
+  root.querySelectorAll<HTMLButtonElement>('[data-writer-outline-control]')
+    .forEach((button) => button.setAttribute('aria-expanded', String(expanded)));
+  root.querySelectorAll<HTMLElement>('[data-writer-outline-panel]')
+    .forEach((panel) => { panel.hidden = !expanded; });
 }
 
 function internalWriterReferenceLink(target: EventTarget | null): HTMLAnchorElement | null {
@@ -488,6 +580,7 @@ export function MarkdownArtifactEditor({
   const [saveError, setSaveError] = useState<string>();
   const [conflict, setConflict] = useState(false);
   const [outlineOpen, setOutlineOpen] = useState(false);
+  const [outlineInstructionsExpanded, setOutlineInstructionsExpanded] = useState(false);
   const [pageWidth, setPageWidth] = useState<'default' | 'wide'>('default');
   const [selection, setSelection] = useState<MarkdownSelection | null>(null);
   const [selectionToolbar, setSelectionToolbar] = useState<FloatingToolbarAnchor | null>(null);
@@ -553,6 +646,25 @@ export function MarkdownArtifactEditor({
     ...markdownOutline.items.map((item) => item.level),
     6,
   );
+  const hasOutlineInstructions = markdownOutline.items.some((item) => Boolean(item.instructions));
+  const syncOutlineInstructionsExpanded = useCallback(() => {
+    const controls = Array.from(
+      rootRef.current?.querySelectorAll<HTMLButtonElement>('[data-writer-outline-control]') ?? [],
+    );
+    setOutlineInstructionsExpanded(
+      controls.length > 0 && controls.every(
+        (button) => button.getAttribute('aria-expanded') === 'true',
+      ),
+    );
+  }, []);
+  const expandAllOutlineInstructions = useCallback(() => {
+    if (rootRef.current) setOutlineInstructionControlsExpanded(rootRef.current, true);
+    setOutlineInstructionsExpanded(true);
+  }, []);
+  const collapseAllOutlineInstructions = useCallback(() => {
+    if (rootRef.current) setOutlineInstructionControlsExpanded(rootRef.current, false);
+    setOutlineInstructionsExpanded(false);
+  }, []);
   dirtyRef.current = dirty;
   draftMarkdownRef.current = draftMarkdown;
   savingRef.current = saving;
@@ -1649,6 +1761,20 @@ export function MarkdownArtifactEditor({
             aria-label={t('chat.writerIR.displaySettings')}
             onClick={(event) => event.stopPropagation()}
           >
+            {hasOutlineInstructions && (
+              <button
+                type='button'
+                className='writer-markdown-editor__outline-instructions-all'
+                aria-pressed={outlineInstructionsExpanded}
+                onClick={outlineInstructionsExpanded
+                  ? collapseAllOutlineInstructions
+                  : expandAllOutlineInstructions}
+              >
+                {t(outlineInstructionsExpanded
+                  ? 'chat.writerIR.collapseAllOutlineInstructions'
+                  : 'chat.writerIR.expandAllOutlineInstructions')}
+              </button>
+            )}
             <div className='writer-markdown-editor__width-control'>
               <span className='writer-markdown-editor__width-label'>
                 {t('chat.writerIR.pageWidth')}

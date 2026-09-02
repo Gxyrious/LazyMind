@@ -76,7 +76,8 @@
 .writer-markdown-editor__display-toolbar {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: space-between;
+  gap: 8px;
   min-height: 34px;
   padding: 2px 4px 8px;
   border-bottom: 1px solid #edf1f5;
@@ -112,6 +113,21 @@
   background: transparent;
   color: #64748b;
   line-height: 1;
+}
+
+.writer-markdown-editor .writer-markdown-editor__outline-instructions-all {
+  min-height: 28px;
+  padding: 3px 10px;
+  border: 1px solid #dbe3ee;
+  border-radius: 7px;
+  background: #fff;
+  color: #475569;
+  font-size: 12px;
+}
+
+.writer-markdown-editor .writer-markdown-editor__outline-instructions-all:hover {
+  border-color: #93c5fd;
+  color: #1d4ed8;
 }
 
 .writer-markdown-editor .writer-markdown-editor__width-option:hover {

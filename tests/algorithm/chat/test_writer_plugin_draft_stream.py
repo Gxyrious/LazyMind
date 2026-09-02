@@ -40,6 +40,37 @@ def test_build_writing_task_extracts_document_length_constraints(query, expected
     assert task.get('constraints', {}) == expected
 
 
+@pytest.mark.parametrize(
+    ('query', 'suggested_operation', 'expected_operation'),
+    [
+        (
+            'AI Writer 根据上传材料创作一篇约 2000 字的原创克苏鲁小说。'
+            '先生成大纲，并在相关章节的大纲指令中添加材料分析子任务：'
+            '提炼材料中可借鉴的叙事结构、氛围营造与恐惧递进手法；'
+            '完成子任务后再写成稿。',
+            'revise_document',
+            'create',
+        ),
+        ('修改上传的文章，让表达更简洁', 'create', 'revise_document'),
+        ('重写上传的整篇文章', 'create', 'rewrite_document'),
+    ],
+)
+def test_prepare_control_distinguishes_reference_from_edit_source(
+    query,
+    suggested_operation,
+    expected_operation,
+):
+    tools = _load_tools_module()
+
+    operation, target_stage = tools._resolve_prepare_control(
+        query,
+        suggested_operation,
+        has_document_source=True,
+    )
+
+    assert (operation, target_stage) == (expected_operation, 'document')
+
+
 def test_write_document_revision_emits_markdown_draft_stream(monkeypatch, tmp_path):
     tools = _load_tools_module()
     events: list[dict] = []

@@ -82,6 +82,23 @@ describe('Writer Markdown system anchors', () => {
     ].join('\n'));
   });
 
+  it('keeps outline instructions hidden from the editor and restores them on save', () => {
+    const sidecar = '<!-- writer:outline {"node_id":"sec-1","target_chars":1200,"context_relations":[],"subtasks":[{"subtask_id":"st-1","subtask_type":"retrieve","question":"补充行业数据","status":"pending"}]} -->';
+    const source = [
+      '# 标题',
+      '',
+      '<a id="block-sec-1"></a>',
+      '## 系统设计',
+      sidecar,
+    ].join('\n');
+
+    const editable = writerMarkdownForEditing(source);
+    expect(editable).not.toContain('writer:outline');
+    expect(writerMarkdownForSave(
+      protectWriterMarkdownHeadingAnchors(source, editable),
+    )).toBe(source);
+  });
+
   it('restores stable heading anchors on save and removes anchors for deleted headings', () => {
     const source = [
       '# 标题',
@@ -211,6 +228,36 @@ describe('Writer Markdown system anchors', () => {
         { anchorId: 'block-sec-1', label: '1 系统设计', level: 2 },
         { anchorId: 'block-sec-2', label: '1.1 接口设计', level: 3 },
       ],
+    });
+  });
+
+  it('collects hidden outline instructions for the outline rail', () => {
+    const source = [
+      '# 产品架构说明',
+      '<a id="block-sec-1"></a>',
+      '## 系统设计',
+      '<!-- writer:outline {"node_id":"ignored","target_chars":900,"context_relations":[{"relation":"continuity","target_node_id":"sec-0","guidance":"承接背景"}],"subtasks":[{"subtask_id":"st-1","subtask_type":"reason","question":"比较两种方案","status":"pending"}]} -->',
+    ].join('\n');
+
+    expect(collectWriterMarkdownOutline(source).items[0]).toEqual({
+      anchorId: 'block-sec-1',
+      label: '系统设计',
+      level: 2,
+      instructions: {
+        node_id: 'sec-1',
+        target_chars: 900,
+        context_relations: [{
+          relation: 'continuity',
+          target_node_id: 'sec-0',
+          guidance: '承接背景',
+        }],
+        subtasks: [{
+          subtask_id: 'st-1',
+          subtask_type: 'reason',
+          question: '比较两种方案',
+          status: 'pending',
+        }],
+      },
     });
   });
 
