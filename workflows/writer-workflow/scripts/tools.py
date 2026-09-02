@@ -366,7 +366,7 @@ _EXPLICIT_WRITER_MUTATION = re.compile(
 )
 _EXPLICIT_OUTLINE_TARGET = re.compile(
     r'(?:\b(?:only|just)\b.{0,16}\b(?:outline|plan)\b)'
-    r'|(?:(?:只|仅|只需|仅需|先).{0,12}(?:大纲|提纲))'
+    r'|(?:(?:只|仅|只需|仅需).{0,12}(?:大纲|提纲))'
     r'|(?:(?:生成|写|创建|整理|修改|调整|完善|输出).{0,12}'
     r'(?:大纲|提纲)(?:即可|就行|就可以|[。！!？?]?\s*$))'
     r'|(?:(?:大纲|提纲)(?:即可|就行|就可以|[。！!？?]?\s*$))',
@@ -387,6 +387,13 @@ _SUPPLIED_OUTLINE_REQUEST = re.compile(
 _EXPLICIT_REWRITE_REQUEST = re.compile(
     r'(?:重写|整体改写|整篇改写|重新组织|重构全文)'
     r'|(?:\b(?:rewrite|restructure)\b)',
+    re.IGNORECASE,
+)
+_EXPLICIT_NEW_DOCUMENT_REQUEST = re.compile(
+    r'(?:(?<![改重续扩])写|撰写|创作|生成|产出).{0,32}'
+    r'(?:文章|报告|小说|故事|文案|稿件|正文|文档)'
+    r'|(?:\b(?:write|draft|create|produce)\b.{0,32}'
+    r'\b(?:article|report|story|novel|copy|draft|document)\b)',
     re.IGNORECASE,
 )
 _PROVIDER_DOCUMENT_LOCATOR = re.compile(
@@ -512,13 +519,18 @@ def _resolve_prepare_control(
     operation = suggested_operation
     if not has_document_source:
         operation = 'create'
+    elif _SUPPLIED_OUTLINE_REQUEST.search(user_input):
+        operation = 'use_outline'
+    elif _EXPLICIT_REWRITE_REQUEST.search(user_input):
+        operation = 'rewrite_document'
+    elif _EXPLICIT_NEW_DOCUMENT_REQUEST.search(user_input):
+        # An uploaded document may be evidence or a style reference for a new
+        # deliverable. Keep it in resource profiling instead of treating it as
+        # the draft that must be patched. The authoritative request overrides an
+        # incorrect revise suggestion from the model.
+        operation = 'create'
     elif operation in {'create', 'prepare_only'}:
-        if _SUPPLIED_OUTLINE_REQUEST.search(user_input):
-            operation = 'use_outline'
-        elif _EXPLICIT_REWRITE_REQUEST.search(user_input):
-            operation = 'rewrite_document'
-        else:
-            operation = 'revise_document'
+        operation = 'revise_document'
 
     if operation in {'rewrite_document', 'revise_document'}:
         return operation, 'document'
@@ -980,8 +992,9 @@ def writer_prepare_workspace(
     """Prepare one writing request.
 
     ``source_filename`` is only the basename of an uploaded Markdown, text, or LMD
-    document. Provider document locators belong in ``user_input`` and are resolved
-    as cloud documents.
+    document. It may identify either a document to edit or reference material for a
+    new document; the authoritative request resolves that distinction. Provider
+    document locators belong in ``user_input`` and are resolved as cloud documents.
     """
     user_input = _authoritative_writer_user_input('')
     knowledge_text = _verified_knowledge_text(knowledge_text)
@@ -1140,10 +1153,17 @@ def writer_prepare_workspace(
     return result
 
 
-def writer_prepare_outline(source_document_path: str) -> str:
+def writer_prepare_outline(
+    source_document_path: str,
+    writing_task_path: str = '',
+    writing_context_path: str = '',
+) -> str:
     """Normalize a loaded outline document without regenerating its content."""
     content = WriterCreateToolkit().prepare_outline(
         source_document_json=_read_json_string(source_document_path),
+        writing_task_json=_read_json_string(writing_task_path) if writing_task_path else '',
+        writing_context_json=_read_json_string(writing_context_path)
+        if writing_context_path else '',
     )
     return _save_writer_document(
         'outline_document', content, expected_stage='outline', editable=True,
@@ -1153,6 +1173,7 @@ def writer_prepare_outline(source_document_path: str) -> str:
 def writer_generate_outline(writing_task_path: str, writing_context_path: str) -> str:
     """Generate an outline-stage artifact with a Markdown preview stream."""
     _emit_writer_progress('正在生成大纲')
+    toolkit = WriterCreateToolkit()
     events = DraftMarkdownStreamEventEmitter(
         require_context().emit,
         slot='outline_document',
@@ -1167,12 +1188,18 @@ def writer_generate_outline(writing_task_path: str, writing_context_path: str) -
         events.feed(str(delta))
 
     try:
-        generated = WriterCreateToolkit().stream_outline(
+        generated = toolkit.stream_outline(
             writing_task_json=_read_json_string(writing_task_path),
             writing_context_json=_read_json_string(writing_context_path),
             on_delta=emit_delta,
         )
-        _emit_writer_progress('大纲生成完成，正在校验并保存')
+        _emit_writer_progress('大纲生成完成，正在补全写作指令')
+        generated = toolkit.prepare_outline(
+            source_document_json=generated,
+            writing_task_json=_read_json_string(writing_task_path),
+            writing_context_json=_read_json_string(writing_context_path),
+        )
+        _emit_writer_progress('大纲指令已补全，正在校验并保存')
         outline_path = _save_writer_document(
             'outline_document', generated, expected_stage='outline', editable=True,
         )
@@ -1317,6 +1344,7 @@ def writer_outline_workspace() -> dict:
                 writing_task_path=writing_task_path,
                 writing_context_path=writing_context_path,
             )
+            result['outline_instructions_completed'] = True
             state['result'] = result
             _persist_outline_workspace_state(state, checkpoint_path)
     elif operation == 'use_source':
@@ -1324,7 +1352,12 @@ def writer_outline_workspace() -> dict:
             raise ValueError('source_document_path is required for use_source.')
         if not result.get('outline_document'):
             _emit_writer_progress('正在解析并规范化已有大纲')
-            result['outline_document'] = writer_prepare_outline(source_document_path)
+            result['outline_document'] = writer_prepare_outline(
+                source_document_path,
+                writing_task_path,
+                writing_context_path,
+            )
+            result['outline_instructions_completed'] = True
             state['result'] = result
             _persist_outline_workspace_state(state, checkpoint_path)
     else:
@@ -1381,6 +1414,15 @@ def writer_outline_workspace() -> dict:
                 result['outline_write_result'] = applied['write_result']
             state['result'] = result
             _persist_outline_workspace_state(state, checkpoint_path)
+
+    if operation == 'revise' and not result.get('outline_instructions_completed'):
+        _emit_writer_progress('正在补全大纲字数、上下文关联和子问题')
+        result['outline_document'] = writer_prepare_outline(
+            result['outline_document'], writing_task_path, writing_context_path,
+        )
+        result['outline_instructions_completed'] = True
+        state['result'] = result
+        _persist_outline_workspace_state(state, checkpoint_path)
 
     if not result.get('writing_context_after_outline'):
         _emit_writer_progress('大纲已完成，正在更新写作上下文')
@@ -1476,6 +1518,23 @@ def writer_generate_section_instructions(
         'visual_need_ids': [str(need.get('need_id') or '') for need in visual_needs],
         'warnings': payload.get('warnings') or [],
     }
+
+
+def writer_execute_writing_subtasks(
+    outline_path: str,
+    writing_context_path: str,
+) -> str:
+    """Execute outline-owned writing subtasks without adding a workflow step."""
+    content = WriterCreateToolkit().execute_writing_subtasks(
+        outline_json=_read_json_string(outline_path),
+        writing_context_json=_read_json_string(writing_context_path),
+        on_progress=lambda subtasks: _emit_writer_progress(
+            '正在执行写作子任务', writing_subtasks=subtasks,
+        ),
+    )
+    return _save_writer_document(
+        'outline_document', content, expected_stage='outline', editable=True,
+    )
 
 
 _IMAGE_URL_KEYS = (
@@ -2354,7 +2413,10 @@ def writer_render_document(artifact: Any) -> dict:
         return {
             'title': title_match.group(1).strip() if title_match else '',
             'representation': 'markdown',
-            'document': materialize_markdown(document, view, numbering),
+            # Keep editor content free of generated numbering. The frontend
+            # renders the numbering sidecar as an uneditable heading marker.
+            'document': document,
+            'export_document': materialize_markdown(document, view, numbering),
             'numbering': _numbering_payload(view, numbering),
         }
     source = WriterDocument.model_validate(document)
@@ -2374,7 +2436,7 @@ def writer_save_document(
     base_artifact: Any,
     numbering_update: Mapping[str, Any] | None = None,
 ) -> dict:
-    """Normalize a submitted IR edit back to clean source and re-materialize it."""
+    """Normalize an edit to clean source and return numbering as sidecar data."""
     current_value = _action_artifact_data(artifact)
     if isinstance(current_value, str):
         base_value = _action_artifact_data(base_artifact)
@@ -2392,7 +2454,8 @@ def writer_save_document(
             'source_document': clean,
             'title': title_match.group(1).strip() if title_match else '',
             'representation': 'markdown',
-            'document': materialize_markdown(clean, view, numbering),
+            'document': clean,
+            'export_document': materialize_markdown(clean, view, numbering),
             'numbering': _numbering_payload(view, numbering),
         }
     current = WriterDocument.model_validate(current_value)
@@ -3123,11 +3186,16 @@ def writer_draft_workspace() -> dict:
                 raise ValueError('outline_document_path is required for generate.')
             if not result.get('section_instructions'):
                 _emit_writer_progress(
-                    '正在根据大纲规划 section instructions、视觉需求与辅助任务'
+                    '正在执行大纲中的写作子任务'
                 )
+                result['outline_document'] = writer_execute_writing_subtasks(
+                    outline_path=outline_document_path,
+                    writing_context_path=writing_context_path,
+                )
+                _emit_writer_progress('子任务已完成，正在生成 section instructions')
                 planning = writer_generate_section_instructions(
                     writing_task_path=writing_task_path,
-                    outline_path=outline_document_path,
+                    outline_path=result['outline_document'],
                     writing_context_path=writing_context_path,
                 )
                 result.update({
@@ -3153,7 +3221,7 @@ def writer_draft_workspace() -> dict:
                     section_total=section_count,
                 )
             document_title = ''
-            outline_path = outline_document_path
+            outline_path = str(result.get('outline_document') or outline_document_path)
         else:
             rewrite_base = draft_document_path or source_document_path
             if not rewrite_base:

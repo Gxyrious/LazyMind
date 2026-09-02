@@ -278,6 +278,8 @@ export interface RenderWriterDocumentResult {
   title: string;
   representation: WriterDocumentRepresentation;
   document: RenderedWriterDocument;
+  /** Number-materialized Markdown used only by download/export flows. */
+  export_document?: string;
   numbering: WriterNumberingState;
 }
 

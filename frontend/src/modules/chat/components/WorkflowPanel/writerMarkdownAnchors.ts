@@ -2,6 +2,23 @@ const MATERIALIZED_SYSTEM_ANCHOR_RE = /<a\s+id=(["'])(block-[^"']+)\1((?:\s+[^>]
 const EDITOR_SYSTEM_ANCHOR_RE = /<a\s+id=(["'])(block-[^"']+)\1((?:\s+[^>]*?)?)\s*\/>/gi;
 const SYSTEM_ANCHOR_LINE_RE = /^<a\s+id=(["'])(block-[^"']+)\1((?:\s+[^>]*?)?)\s*(?:\/>|>\s*<\/a>)$/i;
 const HEADING_NUMBERING_CONFIG_LINE_RE = /^\s*<!--\s*heading-numbering:[^\r\n]*-->\s*$/i;
+const OUTLINE_INSTRUCTION_LINE_RE = /^\s*<!--\s*writer:outline\s+(\{.*\})\s*-->\s*$/;
+
+export interface WriterMarkdownOutlineInstruction {
+  node_id: string;
+  target_chars?: number;
+  context_relations: Array<{
+    relation: string;
+    guidance?: string;
+    target_node_id: string;
+  }>;
+  subtasks: Array<{
+    subtask_id: string;
+    subtask_type: 'retrieve' | 'extract' | 'reason';
+    question: string;
+    status: 'pending' | 'running' | 'completed' | 'retrying' | 'failed';
+  }>;
+}
 
 export interface WriterMarkdownReferenceTarget {
   anchorId: string;
@@ -13,6 +30,7 @@ export interface WriterMarkdownOutlineItem {
   anchorId: string;
   label: string;
   level: number;
+  instructions?: WriterMarkdownOutlineInstruction;
 }
 
 export interface WriterMarkdownOutline {
@@ -28,6 +46,7 @@ interface WriterMarkdownTargetBinding {
   type: 'heading' | 'image';
   level?: number;
   signature: string;
+  outlineInstructionLine?: string;
 }
 
 interface WriterMarkdownImageTarget {
@@ -101,6 +120,7 @@ function writerMarkdownTargetBindings(markdown: string): WriterMarkdownTargetBin
   } | undefined;
   let fenceCharacter = '';
   let fenceLength = 0;
+  let currentHeadingIndex: number | undefined;
 
   markdown.split(/\r?\n/).forEach((line, lineIndex) => {
     const fence = line.match(/^\s*(`{3,}|~{3,})/);
@@ -119,6 +139,12 @@ function writerMarkdownTargetBindings(markdown: string): WriterMarkdownTargetBin
     if (fenceCharacter) return;
 
     const trimmed = line.trim();
+    if (OUTLINE_INSTRUCTION_LINE_RE.test(trimmed)) {
+      if (currentHeadingIndex !== undefined) {
+        bindings[currentHeadingIndex].outlineInstructionLine = trimmed;
+      }
+      return;
+    }
     const anchor = trimmed.match(SYSTEM_ANCHOR_LINE_RE);
     if (anchor) {
       pendingAnchor = {
@@ -141,7 +167,9 @@ function writerMarkdownTargetBindings(markdown: string): WriterMarkdownTargetBin
         level: heading[1].length,
         signature: `${heading[1].length}:${heading[2].trim()}`,
       });
+      currentHeadingIndex = bindings.length - 1;
     } else {
+      currentHeadingIndex = undefined;
       const image = writerMarkdownImageTarget(trimmed);
       if (image) {
         bindings.push({
@@ -260,6 +288,7 @@ export function protectWriterMarkdownAnchors(
       .filter((lineIndex): lineIndex is number => lineIndex !== undefined),
   );
   const insertBefore = new Map<number, string>();
+  const insertAfter = new Map<number, string>();
   next.forEach((target, index) => {
     const assignment = assignments[index];
     if (assignment.anchorId) {
@@ -270,11 +299,19 @@ export function protectWriterMarkdownAnchors(
         } />`,
       );
     }
+    if (target.type === 'heading' && assignment.anchorId) {
+      const previousTarget = previous.find(
+        (item) => item.anchorId === assignment.anchorId && item.type === 'heading',
+      );
+      if (previousTarget?.outlineInstructionLine) {
+        insertAfter.set(target.lineIndex, previousTarget.outlineInstructionLine);
+      }
+    }
   });
 
   const result: string[] = [];
   lines.forEach((line, lineIndex) => {
-    if (targetAnchorLines.has(lineIndex)) return;
+    if (targetAnchorLines.has(lineIndex) || OUTLINE_INSTRUCTION_LINE_RE.test(line)) return;
     const anchor = insertBefore.get(lineIndex);
     if (anchor) {
       // MDX serializers may surround a standalone JSX anchor with extra empty
@@ -287,6 +324,8 @@ export function protectWriterMarkdownAnchors(
       result.push(anchor);
     }
     result.push(line);
+    const instruction = insertAfter.get(lineIndex);
+    if (instruction) result.push(instruction);
   });
   return withHeadingNumberingConfigLine(result.join('\n'), configLine);
 }
@@ -328,13 +367,20 @@ export function writerMarkdownForEditing(markdown: string): string {
   const hasConfig = editorMarkdown.split(/\r?\n/).some(
     (line) => HEADING_NUMBERING_CONFIG_LINE_RE.test(line),
   );
-  if (anchorLines.size === 0 && !hasConfig) {
+  const hasOutlineInstructions = editorMarkdown.split(/\r?\n/).some(
+    (line) => OUTLINE_INSTRUCTION_LINE_RE.test(line),
+  );
+  if (anchorLines.size === 0 && !hasConfig && !hasOutlineInstructions) {
     return editorMarkdown;
   }
 
   const result: string[] = [];
   editorMarkdown.split(/\r?\n/).forEach((line, lineIndex) => {
-    if (anchorLines.has(lineIndex) || HEADING_NUMBERING_CONFIG_LINE_RE.test(line)) return;
+    if (
+      anchorLines.has(lineIndex)
+      || HEADING_NUMBERING_CONFIG_LINE_RE.test(line)
+      || OUTLINE_INSTRUCTION_LINE_RE.test(line)
+    ) return;
     if (anchoredTargetLines.has(lineIndex)) {
       while (
         result.length >= 2
@@ -443,6 +489,7 @@ export function collectWriterMarkdownOutline(markdown: string): WriterMarkdownOu
   let pendingAnchorId: string | undefined;
   let fenceCharacter = '';
   let fenceLength = 0;
+  let currentItemIndex: number | undefined;
 
   for (const line of markdown.split(/\r?\n/)) {
     const fence = line.match(/^\s*(`{3,}|~{3,})/);
@@ -456,14 +503,39 @@ export function collectWriterMarkdownOutline(markdown: string): WriterMarkdownOu
         fenceLength = 0;
       }
       pendingAnchorId = undefined;
+      currentItemIndex = undefined;
       continue;
     }
     if (fenceCharacter) continue;
 
     const trimmed = line.trim();
+    const instruction = trimmed.match(OUTLINE_INSTRUCTION_LINE_RE);
+    if (instruction) {
+      if (currentItemIndex !== undefined) {
+        try {
+          const payload = JSON.parse(instruction[1]);
+          if (payload && typeof payload === 'object') {
+            items[currentItemIndex].instructions = {
+              node_id: items[currentItemIndex].anchorId.replace(/^block-/, ''),
+              target_chars: typeof payload.target_chars === 'number'
+                ? payload.target_chars
+                : undefined,
+              context_relations: Array.isArray(payload.context_relations)
+                ? payload.context_relations
+                : [],
+              subtasks: Array.isArray(payload.subtasks) ? payload.subtasks : [],
+            };
+          }
+        } catch {
+          // Invalid sidecars stay hidden and are ignored by the outline UI.
+        }
+      }
+      continue;
+    }
     const anchor = trimmed.match(SYSTEM_ANCHOR_LINE_RE);
     if (anchor) {
       pendingAnchorId = anchor[2];
+      currentItemIndex = undefined;
       continue;
     }
     if (!trimmed) continue;
@@ -478,7 +550,12 @@ export function collectWriterMarkdownOutline(markdown: string): WriterMarkdownOu
           label,
           level: heading[1].length,
         });
+        currentItemIndex = items.length - 1;
+      } else {
+        currentItemIndex = undefined;
       }
+    } else {
+      currentItemIndex = undefined;
     }
     pendingAnchorId = undefined;
   }

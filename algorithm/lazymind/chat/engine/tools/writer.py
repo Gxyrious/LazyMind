@@ -38,12 +38,14 @@ from lazyllm.tools.writer.data_models import (
 from lazyllm.tools.writer.tools import (
     WriterContextTools,
     WriterDraftingTools,
+    WriterExecutionTools,
     WriterMultimodalTools,
     WriterPlanningTools,
     WriterQualityTools,
     WriterResourceTools,
     WriterRevisionTools,
 )
+from lazymind.chat.engine.tools.lazy_kb import KBToolkit
 from lazyllm.tools.writer.tools.revision_tools import apply_patch_to_ir
 from lazyllm.tools.writer.numbering import (
     build_numbering_view_from_markdown,
@@ -1097,11 +1099,18 @@ class WriterToolkitBase:
             'warnings': warnings,
         })
 
-    def prepare_outline(self, source_document_json: str) -> str:
+    def prepare_outline(
+        self,
+        source_document_json: str,
+        writing_task_json: str = '',
+        writing_context_json: str = '',
+    ) -> str:
         """Normalize a supplied document into an editable outline."""
         source = _document_value(source_document_json)
         if isinstance(source, str):
-            return source
+            return self._complete_prepared_outline(
+                source, writing_task_json, writing_context_json,
+            )
         document = WriterDocument.model_validate(source)
         if not any(block.type == 'heading' for block in document.blocks):
             for block in document.blocks:
@@ -1143,9 +1152,30 @@ class WriterToolkitBase:
                 (headings[-1][1].children if headings else roots).append(block)
                 headings.append((level, block))
             document.blocks = roots
-        return _set_document_editable(
+        normalized = _set_document_editable(
             document, stage='outline',
         ).model_dump_json(exclude_defaults=True)
+        return self._complete_prepared_outline(
+            normalized, writing_task_json, writing_context_json,
+        )
+
+    def _complete_prepared_outline(
+        self,
+        normalized: str,
+        writing_task_json: str,
+        writing_context_json: str,
+    ) -> str:
+        if not writing_task_json or not writing_context_json:
+            return normalized
+        planning, task_path, context_path = self._outline_planning(
+            writing_task_json, writing_context_json,
+        )
+        outline_path = _write_document_input(
+            Path(task_path).parent, 'outline_to_complete', normalized,
+        )
+        return self._outline_result(planning._complete_outline_instructions(
+            outline=outline_path, task=task_path, context=context_path,
+        ))
 
     def generate_section_instructions(
         self,
@@ -1208,6 +1238,29 @@ class WriterToolkitBase:
             'visual_plan': visual_plan,
             'warnings': warnings,
         })
+
+    def execute_writing_subtasks(
+        self,
+        outline_json: str,
+        writing_context_json: str,
+        on_progress: Callable[[list[dict[str, Any]]], None] | None = None,
+    ) -> str:
+        root = _temp_root()
+        outline_path = _write_document_input(root, 'outline', outline_json)
+        context_path = _write_input_artifact(
+            root, 'writing_context.json', _json_loads(writing_context_json, {}),
+            writer_schema('context.WritingContext'),
+        )
+        result = WriterExecutionTools(
+            llm=AutoModel(model='llm'), artifact_store=str(root),
+        ).execute_writing_subtasks(
+            outline=outline_path,
+            context=context_path,
+            on_progress=on_progress,
+            retrieve=lambda query: KBToolkit().kb_search(query),
+        )
+        completed = _primary_data(result)
+        return completed if isinstance(completed, str) else _json_dumps(completed)
 
     def generate_draft_section(
         self,

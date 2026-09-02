@@ -236,7 +236,7 @@ func SyncWriterDocument(w http.ResponseWriter, r *http.Request) {
 }
 
 // RenderWriterDocument renders a source, outline, or draft with automatic numbering.
-// It returns the original representation and its materialized document.
+// Markdown remains clean for editing; its numbering is returned as sidecar data.
 func RenderWriterDocument(w http.ResponseWriter, r *http.Request) {
 	sessionID := common.PathVar(r, "session_id")
 	if sessionID == "" {
@@ -304,7 +304,7 @@ func RenderWriterDocument(w http.ResponseWriter, r *http.Request) {
 }
 
 // SaveWriterDocument persists an IR or Markdown edit as a mutable draft or a
-// versioned checkpoint. It returns the re-materialized document and representation.
+// versioned checkpoint. Markdown remains clean and numbering stays in sidecar data.
 func SaveWriterDocument(w http.ResponseWriter, r *http.Request) {
 	sessionID := common.PathVar(r, "session_id")
 	if sessionID == "" {
@@ -472,6 +472,9 @@ func SaveWriterDocument(w http.ResponseWriter, r *http.Request) {
 		"representation": representation,
 		"document":       renderedDocument,
 		"numbering":      numbering,
+	}
+	if exportDocument, exists := result["export_document"]; exists {
+		reply["export_document"] = exportDocument
 	}
 	common.ReplyOK(w, reply)
 }

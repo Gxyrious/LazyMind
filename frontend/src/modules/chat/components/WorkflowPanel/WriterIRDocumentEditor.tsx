@@ -284,6 +284,11 @@ interface WriterEditorLabels extends WriterFoldLabels {
   disableCodeWrap: string;
   copyCode: string;
   codeCopied: string;
+  outlineInstructions: string;
+  targetChars: string;
+  contextRelations: string;
+  writingSubtasks: string;
+  subtaskTypes: Record<'retrieve' | 'extract' | 'reason', string>;
 }
 
 const DEFAULT_WRITER_EDITOR_LABELS: WriterEditorLabels = {
@@ -297,7 +302,53 @@ const DEFAULT_WRITER_EDITOR_LABELS: WriterEditorLabels = {
   disableCodeWrap: 'Disable wrapping',
   copyCode: 'Copy',
   codeCopied: 'Copied',
+  outlineInstructions: 'Writing instructions',
+  targetChars: 'Length',
+  contextRelations: 'Context',
+  writingSubtasks: 'Subtasks',
+  subtaskTypes: {
+    retrieve: 'Retrieve',
+    extract: 'Extract',
+    reason: 'Reason',
+  },
 };
+
+function renderOutlineInstructions(block: WriterBlock, labels: WriterEditorLabels): string {
+  const targetChars = Number(block.target_chars);
+  const contextRelations = block.context_relations ?? [];
+  const subtasks = block.subtasks ?? [];
+  if (!(targetChars > 0) && contextRelations.length === 0 && subtasks.length === 0) return '';
+
+  const targetMarkup = targetChars > 0
+    ? `<div class="writer-ir__outline-instruction-row"><strong>${escapeHtml(labels.targetChars)}</strong><span>${Math.trunc(targetChars)}</span></div>`
+    : '';
+  const contextMarkup = contextRelations.length > 0
+    ? `<div class="writer-ir__outline-instruction-group"><strong>${escapeHtml(labels.contextRelations)}</strong><ul>${contextRelations.map((item) => {
+      const guidance = item.guidance?.trim();
+      const relation = item.relation?.trim();
+      const target = item.target_node_id?.trim();
+      const detail = guidance || [relation, target].filter(Boolean).join(' / ');
+      return `<li>${escapeHtml(detail || '-')}</li>`;
+    }).join('')}</ul></div>`
+    : '';
+  const subtaskMarkup = subtasks.length > 0
+    ? `<div class="writer-ir__outline-instruction-group"><strong>${escapeHtml(labels.writingSubtasks)}</strong><ul>${subtasks.map((item) => {
+      const type = labels.subtaskTypes[item.subtask_type] ?? item.subtask_type;
+      return `<li><span class="writer-ir__outline-subtask-type">${escapeHtml(type)}</span>${escapeHtml(item.question)}</li>`;
+    }).join('')}</ul></div>`
+    : '';
+
+  return [
+    '<details class="writer-ir__outline-instructions" data-writer-outline-instructions="true" contenteditable="false" open>',
+    `<summary>${escapeHtml(labels.outlineInstructions)}</summary>`,
+    '<div class="writer-ir__outline-instruction-body">',
+    targetMarkup,
+    contextMarkup,
+    subtaskMarkup,
+    '</div>',
+    '</details>',
+  ].join('');
+}
 
 function renderFoldToggle(
   nodeId: string,
@@ -584,6 +635,7 @@ function renderBlock(
       foldToggle,
       dragHandle,
       `<h${level} data-writer-block-content="true" data-writer-heading-mode="${numberingMode}" class="writer-ir__heading writer-ir__heading--${level}">${marker}${headingText}</h${level}>`,
+      renderOutlineInstructions(block, foldLabels),
       children,
       '</div>',
     ].join('');
@@ -695,6 +747,12 @@ function textFromBlockElement(
       continue;
     }
     if (!foundContent) continue;
+    if (
+      child instanceof HTMLElement
+      && child.matches('[data-writer-outline-instructions]')
+    ) {
+      continue;
+    }
     if (
       child instanceof HTMLElement
       && child.matches(
@@ -1220,6 +1278,15 @@ export function WriterIRDocumentEditor({
     disableCodeWrap: t('chat.writerIR.disableCodeWrap'),
     copyCode: t('chat.writerIR.copyCode'),
     codeCopied: t('chat.writerIR.codeCopied'),
+    outlineInstructions: t('chat.writerIR.outlineInstructions'),
+    targetChars: t('chat.writerIR.targetChars'),
+    contextRelations: t('chat.writerIR.contextRelations'),
+    writingSubtasks: t('chat.writerIR.writingSubtasks'),
+    subtaskTypes: {
+      retrieve: t('chat.writerIR.subtaskTypes.retrieve'),
+      extract: t('chat.writerIR.subtaskTypes.extract'),
+      reason: t('chat.writerIR.subtaskTypes.reason'),
+    },
   }), [t]);
   const dragLabel = t('chat.writerIR.dragBlock');
 

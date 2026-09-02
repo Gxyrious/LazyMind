@@ -2739,7 +2739,7 @@ function SlotWriterDocument({
       if (!active) return;
       setRendered(result);
       if (result.representation === 'markdown' && typeof result.document === 'string') {
-        setDownloadMarkdownContent(result.document);
+        setDownloadMarkdownContent(result.export_document ?? result.document);
       }
       setError(null);
       setLoading(false);
@@ -2876,7 +2876,7 @@ function SlotWriterDocument({
       }
       const displayDocument = restoreWriterMarkdownInternalReferenceLabels(result.document, document);
       setRendered({ ...result, document: displayDocument });
-      setDownloadMarkdownContent(displayDocument);
+      setDownloadMarkdownContent(result.export_document ?? displayDocument);
       applySavedRevision(result.revision);
       return { markdown: displayDocument, revision: result.revision };
     } catch (saveError) {
@@ -3038,7 +3038,6 @@ function SlotWriterDocument({
             onSave={saveMarkdown}
             onRefresh={refreshDocument}
             onDownload={allowDownload ? () => setDownloadFormatOpen(true) : undefined}
-            onContentChange={setDownloadMarkdownContent}
             onRewriteSelection={rewriteSelection || rewritePreview ? undefined : openMarkdownRewrite}
             rewriteUnavailableReason={rewriteSelection || rewritePreview || canRewrite
               ? undefined
@@ -3063,7 +3062,7 @@ function SlotWriterDocument({
             tabIndex={canRewrite ? 0 : undefined}
           >
             <div className='writer-artifact__markdown'>
-              <MarkdownViewer>{markdown}</MarkdownViewer>
+              <MarkdownViewer>{rendered.export_document ?? markdown}</MarkdownViewer>
             </div>
           </div>
         )}

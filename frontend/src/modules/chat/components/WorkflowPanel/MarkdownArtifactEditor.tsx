@@ -74,12 +74,12 @@ import {
   writerMarkdownForEditing,
   writerMarkdownPersistenceIdentity,
   writerMarkdownForSave,
+  type WriterMarkdownOutlineItem,
 } from './writerMarkdownAnchors';
 import './MarkdownArtifactEditor.scss';
 
 /** Idle debounce after the latest edit before a silent draft save. */
 const MARKDOWN_AUTOSAVE_IDLE_MS = 1_000;
-const MARKDOWN_NUMBERING_HIGHLIGHT = 'writer-markdown-numbering';
 const CHAT_PARAGRAPH_HOVER_MS = 1_000;
 
 function WriterAnchorEditor(props: JsxEditorProps) {
@@ -97,6 +97,97 @@ function WriterAnchorEditor(props: JsxEditorProps) {
     );
   }
   return <GenericJsxEditor {...props} />;
+}
+
+function attachOutlineInstructionControl(
+  heading: HTMLElement,
+  item: WriterMarkdownOutlineItem,
+  expanded: boolean,
+  onToggle: () => void,
+  labels: {
+    instructions: string;
+    targetChars: string;
+    contextRelations: string;
+    writingSubtasks: string;
+    subtaskType: (type: string) => string;
+  },
+): void {
+  const instructions = item.instructions;
+  if (!instructions || heading.querySelector('[data-writer-outline-control]')) return;
+
+  const panelId = `writer-outline-instructions-${item.anchorId}`;
+  const button = globalThis.document.createElement('button');
+  button.type = 'button';
+  button.className = 'writer-markdown-editor__heading-instruction-toggle';
+  button.dataset.writerOutlineControl = item.anchorId;
+  button.setAttribute('contenteditable', 'false');
+  button.setAttribute('aria-expanded', String(expanded));
+  button.setAttribute('aria-controls', panelId);
+  button.textContent = labels.instructions;
+
+  const panel = globalThis.document.createElement('div');
+  panel.id = panelId;
+  panel.className = 'writer-markdown-editor__heading-instructions';
+  panel.dataset.writerOutlinePanel = item.anchorId;
+  panel.setAttribute('contenteditable', 'false');
+  panel.hidden = !expanded;
+
+  const addRow = (label: string, values: string[]) => {
+    if (values.length === 0) return;
+    const row = globalThis.document.createElement('div');
+    row.className = 'writer-markdown-editor__heading-instruction-row';
+    const strong = globalThis.document.createElement('strong');
+    strong.textContent = label;
+    row.append(strong);
+    if (values.length === 1) {
+      const value = globalThis.document.createElement('span');
+      value.textContent = values[0];
+      row.append(value);
+    } else {
+      const list = globalThis.document.createElement('ul');
+      values.forEach((text) => {
+        const entry = globalThis.document.createElement('li');
+        entry.textContent = text;
+        list.append(entry);
+      });
+      row.append(list);
+    }
+    panel.append(row);
+  };
+
+  if (instructions.target_chars) {
+    addRow(labels.targetChars, [String(instructions.target_chars)]);
+  }
+  addRow(
+    labels.contextRelations,
+    instructions.context_relations.map((relation) => (
+      relation.guidance
+      || [relation.relation, relation.target_node_id].filter(Boolean).join(' / ')
+      || '-'
+    )),
+  );
+  addRow(
+    labels.writingSubtasks,
+    instructions.subtasks.map(
+      (subtask) => `${labels.subtaskType(subtask.subtask_type)} ${subtask.question}`,
+    ),
+  );
+
+  button.addEventListener('click', () => {
+    const expanded = button.getAttribute('aria-expanded') !== 'true';
+    button.setAttribute('aria-expanded', String(expanded));
+    panel.hidden = !expanded;
+    onToggle();
+  });
+  heading.append(button);
+  heading.insertAdjacentElement('afterend', panel);
+}
+
+function setOutlineInstructionControlsExpanded(root: HTMLElement, expanded: boolean): void {
+  root.querySelectorAll<HTMLButtonElement>('[data-writer-outline-control]')
+    .forEach((button) => button.setAttribute('aria-expanded', String(expanded)));
+  root.querySelectorAll<HTMLElement>('[data-writer-outline-panel]')
+    .forEach((panel) => { panel.hidden = !expanded; });
 }
 
 function internalWriterReferenceLink(target: EventTarget | null): HTMLAnchorElement | null {
@@ -173,18 +264,6 @@ function markdownTextBoundary(
     textNode = walker.nextNode();
   }
   return { node: paragraph, offset: paragraph.childNodes.length };
-}
-
-function replaceMarkdownNumberingHighlights(previous: Range[], next: Range[]): Range[] {
-  const registry = globalThis.CSS?.highlights;
-  const HighlightConstructor = globalThis.Highlight;
-  if (!registry || !HighlightConstructor) return [];
-  const highlight = registry.get(MARKDOWN_NUMBERING_HIGHLIGHT) ?? new HighlightConstructor();
-  previous.forEach((range) => highlight.delete(range));
-  next.forEach((range) => highlight.add(range));
-  if (highlight.size) registry.set(MARKDOWN_NUMBERING_HIGHLIGHT, highlight);
-  else registry.delete(MARKDOWN_NUMBERING_HIGHLIGHT);
-  return next;
 }
 
 function restoreMarkdownSelection(
@@ -422,27 +501,14 @@ function isMarkdownToolbarInteractionTarget(node: Node | null | undefined): bool
   );
 }
 
-function markdownClickPrefixLength(
-  heading: HTMLElement,
-  browserSelection: Selection,
-  expectedLabel?: string,
-): number {
-  const text = heading.textContent ?? '';
-  const expected = expectedLabel ? `${expectedLabel} ` : '';
-  if (!expected || !text.startsWith(expected)) return -1;
-  const anchorNode = browserSelection.anchorNode;
-  if (!browserSelection.rangeCount || !anchorNode || !heading.contains(anchorNode)) return -1;
-  const offsetRange = document.createRange();
-  offsetRange.selectNodeContents(heading);
-  try {
-    offsetRange.setEnd(
-      anchorNode,
-      browserSelection.anchorOffset,
-    );
-  } catch {
-    return -1;
-  }
-  return offsetRange.toString().length <= expected.length ? expected.length : -1;
+function markdownNumberingMarkerClicked(heading: HTMLElement, clientX: number): boolean {
+  if (!heading.dataset.writerNumberingLabel) return false;
+  const start = markdownTextBoundary(heading, 0);
+  const range = globalThis.document.createRange();
+  range.setStart(start.node, start.offset);
+  range.collapse(true);
+  const textStart = range.getBoundingClientRect().left;
+  return clientX >= heading.getBoundingClientRect().left && clientX < textStart;
 }
 
 function isMarkdownToolbarDropdownOpen(): boolean {
@@ -488,6 +554,7 @@ export function MarkdownArtifactEditor({
   const [saveError, setSaveError] = useState<string>();
   const [conflict, setConflict] = useState(false);
   const [outlineOpen, setOutlineOpen] = useState(false);
+  const [outlineInstructionsExpanded, setOutlineInstructionsExpanded] = useState(false);
   const [pageWidth, setPageWidth] = useState<'default' | 'wide'>('default');
   const [selection, setSelection] = useState<MarkdownSelection | null>(null);
   const [selectionToolbar, setSelectionToolbar] = useState<FloatingToolbarAnchor | null>(null);
@@ -553,6 +620,25 @@ export function MarkdownArtifactEditor({
     ...markdownOutline.items.map((item) => item.level),
     6,
   );
+  const hasOutlineInstructions = markdownOutline.items.some((item) => Boolean(item.instructions));
+  const syncOutlineInstructionsExpanded = useCallback(() => {
+    const controls = Array.from(
+      rootRef.current?.querySelectorAll<HTMLButtonElement>('[data-writer-outline-control]') ?? [],
+    );
+    setOutlineInstructionsExpanded(
+      controls.length > 0 && controls.every(
+        (button) => button.getAttribute('aria-expanded') === 'true',
+      ),
+    );
+  }, []);
+  const expandAllOutlineInstructions = useCallback(() => {
+    if (rootRef.current) setOutlineInstructionControlsExpanded(rootRef.current, true);
+    setOutlineInstructionsExpanded(true);
+  }, []);
+  const collapseAllOutlineInstructions = useCallback(() => {
+    if (rootRef.current) setOutlineInstructionControlsExpanded(rootRef.current, false);
+    setOutlineInstructionsExpanded(false);
+  }, []);
   dirtyRef.current = dirty;
   draftMarkdownRef.current = draftMarkdown;
   savingRef.current = saving;
@@ -570,16 +656,15 @@ export function MarkdownArtifactEditor({
     const root = rootRef.current;
     if (!root) return undefined;
     let frame: number | undefined;
-    let numberingRanges: Range[] = [];
     const applyDomAnchors = () => {
       const editable = root.querySelector<HTMLElement>('.mdxeditor-root-contenteditable');
       if (!editable) return;
-      const nextNumberingRanges: Range[] = [];
       editable.querySelectorAll<HTMLElement>('[data-writer-system-anchor="true"]')
         .forEach((element) => {
           element.removeAttribute('id');
           delete element.dataset.writerSystemAnchor;
           delete element.dataset.writerHeadingMode;
+          delete element.dataset.writerNumberingLabel;
         });
       const headings = editable.querySelectorAll<HTMLElement>('h1, h2, h3, h4, h5, h6');
       const images = editable.querySelectorAll<HTMLElement>('img');
@@ -594,21 +679,24 @@ export function MarkdownArtifactEditor({
           const nodeId = anchor.anchorId.slice('block-'.length);
           target.dataset.writerHeadingMode = numbering?.entries[nodeId]?.mode ?? 'ordered';
           const label = numbering?.entries[nodeId]?.label;
-          const prefix = label ? `${label} ` : '';
-          if (prefix && (target.textContent ?? '').startsWith(prefix)) {
-            const start = markdownTextBoundary(target, 0);
-            const end = markdownTextBoundary(target, prefix.length);
-            const range = globalThis.document.createRange();
-            range.setStart(start.node, start.offset);
-            range.setEnd(end.node, end.offset);
-            nextNumberingRanges.push(range);
-          }
+          if (label) target.dataset.writerNumberingLabel = label;
         }
       });
-      numberingRanges = replaceMarkdownNumberingHighlights(
-        numberingRanges,
-        nextNumberingRanges,
-      );
+      markdownOutline.items.forEach((item) => {
+        const heading = Array.from(headings).find(
+          (candidate) => candidate.id === item.anchorId,
+        );
+        if (!heading) return;
+        attachOutlineInstructionControl(heading, item, false, syncOutlineInstructionsExpanded, {
+          instructions: t('chat.writerIR.outlineInstructions'),
+          targetChars: t('chat.writerIR.targetChars'),
+          contextRelations: t('chat.writerIR.contextRelations'),
+          writingSubtasks: t('chat.writerIR.writingSubtasks'),
+          subtaskType: (type) => t(`chat.writerIR.subtaskTypes.${type}`, {
+            defaultValue: type,
+          }),
+        });
+      });
       if (chatPresentation) {
         editable.querySelectorAll<HTMLAnchorElement>(
           'a[href^="#source-"], a[href^="#user-content-source-"]',
@@ -661,9 +749,16 @@ export function MarkdownArtifactEditor({
     return () => {
       observer.disconnect();
       if (frame !== undefined) window.cancelAnimationFrame(frame);
-      replaceMarkdownNumberingHighlights(numberingRanges, []);
     };
-  }, [chatPresentation, materializedDraftMarkdown, numbering, sourceReferenceMap, t]);
+  }, [
+    chatPresentation,
+    markdownOutline,
+    materializedDraftMarkdown,
+    numbering,
+    sourceReferenceMap,
+    syncOutlineInstructionsExpanded,
+    t,
+  ]);
 
   const replaceMarkdownSilently = useCallback((nextMarkdown: string) => {
     const root = rootRef.current;
@@ -1417,18 +1512,10 @@ export function MarkdownArtifactEditor({
           const anchorId = rawAnchorId.startsWith('block-')
             ? rawAnchorId
             : rawAnchorId ? `block-${rawAnchorId}` : '';
-          const nodeId = anchorId.slice('block-'.length);
-          const browserSelection = globalThis.getSelection();
-          const prefixLength = anchorId && browserSelection
-            ? markdownClickPrefixLength(
-              heading,
-              browserSelection,
-              numbering?.entries[nodeId]?.label,
-            )
-            : -1;
+          const numberingMarker = markdownNumberingMarkerClicked(heading, event.clientX);
           const unorderedControl = heading.dataset.writerHeadingMode === 'unordered'
             && event.clientX < heading.getBoundingClientRect().left;
-          if (anchorId && (prefixLength >= 0 || unorderedControl)) {
+          if (anchorId && (numberingMarker || unorderedControl)) {
             event.preventDefault();
             event.stopPropagation();
             setNumberingMenu({
@@ -1649,6 +1736,20 @@ export function MarkdownArtifactEditor({
             aria-label={t('chat.writerIR.displaySettings')}
             onClick={(event) => event.stopPropagation()}
           >
+            {hasOutlineInstructions && (
+              <button
+                type='button'
+                className='writer-markdown-editor__outline-instructions-all'
+                aria-pressed={outlineInstructionsExpanded}
+                onClick={outlineInstructionsExpanded
+                  ? collapseAllOutlineInstructions
+                  : expandAllOutlineInstructions}
+              >
+                {t(outlineInstructionsExpanded
+                  ? 'chat.writerIR.collapseAllOutlineInstructions'
+                  : 'chat.writerIR.expandAllOutlineInstructions')}
+              </button>
+            )}
             <div className='writer-markdown-editor__width-control'>
               <span className='writer-markdown-editor__width-label'>
                 {t('chat.writerIR.pageWidth')}

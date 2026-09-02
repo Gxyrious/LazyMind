@@ -42,6 +42,18 @@ import { SlotEditingContext } from './slotEditingContext';
 import type { WriterNumberingState, WriterNumberingUpdate } from '@/modules/chat/utils/request';
 import './WriterIRControl.scss';
 
+function hasWriterOutlineInstructions(blocks: WriterBlock[]): boolean {
+  return blocks.some((block) => (
+    (block.type === 'heading'
+      && (
+        Number(block.target_chars) > 0
+        || (block.context_relations?.length ?? 0) > 0
+        || (block.subtasks?.length ?? 0) > 0
+      ))
+    || hasWriterOutlineInstructions(block.children ?? [])
+  ));
+}
+
 /** Idle debounce after the latest edit before draft autosave. */
 const WRITER_IR_AUTOSAVE_IDLE_MS = 1_000;
 /** Max time a dirty draft can wait before a draft save is forced. */
@@ -289,6 +301,7 @@ export function WriterIRControl({
   const [saveError, setSaveError] = useState<string>();
   const [externalUpdate, setExternalUpdate] = useState(false);
   const [outlineOpen, setOutlineOpen] = useState(false);
+  const [outlineInstructionsExpanded, setOutlineInstructionsExpanded] = useState(true);
   const [pageWidth, setPageWidth] = useState<WriterIRPageWidth>('default');
   const [readOnlySelection, setReadOnlySelection] = useState<
     (WriterIRRewriteSelection & { anchor: SelectionActionAnchor }) | null
@@ -324,6 +337,40 @@ export function WriterIRControl({
   const futureRef = useRef(future);
   const outlineId = useId();
   const outlineItems = useMemo(() => collectWriterOutline(draft.blocks), [draft.blocks]);
+  const hasOutlineInstructions = useMemo(
+    () => hasWriterOutlineInstructions(draft.blocks),
+    [draft.blocks],
+  );
+
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root || readOnly) return undefined;
+    const syncExpandedState = () => {
+      const details = Array.from(
+        root.querySelectorAll<HTMLDetailsElement>('[data-writer-outline-instructions]'),
+      );
+      setOutlineInstructionsExpanded(
+        details.length > 0 && details.every((item) => item.open),
+      );
+    };
+    root.addEventListener('toggle', syncExpandedState, true);
+    syncExpandedState();
+    return () => root.removeEventListener('toggle', syncExpandedState, true);
+  }, [draft, readOnly]);
+  const setAllOutlineInstructionsExpanded = useCallback((expanded: boolean) => {
+    rootRef.current
+      ?.querySelectorAll<HTMLDetailsElement>('[data-writer-outline-instructions]')
+      .forEach((details) => { details.open = expanded; });
+    setOutlineInstructionsExpanded(expanded);
+  }, []);
+  const expandAllOutlineInstructions = useCallback(
+    () => setAllOutlineInstructionsExpanded(true),
+    [setAllOutlineInstructionsExpanded],
+  );
+  const collapseAllOutlineInstructions = useCallback(
+    () => setAllOutlineInstructionsExpanded(false),
+    [setAllOutlineInstructionsExpanded],
+  );
   const outlineBaseLevel = useMemo(
     () => Math.min(...outlineItems.map((item) => item.level), 6),
     [outlineItems],
@@ -984,6 +1031,20 @@ export function WriterIRControl({
           aria-label={t('chat.writerIR.displaySettings')}
           onClick={(event) => event.stopPropagation()}
         >
+          {hasOutlineInstructions && !readOnly && (
+            <button
+              type='button'
+              className='writer-ir__outline-instructions-all'
+              aria-pressed={outlineInstructionsExpanded}
+              onClick={outlineInstructionsExpanded
+                ? collapseAllOutlineInstructions
+                : expandAllOutlineInstructions}
+            >
+              {t(outlineInstructionsExpanded
+                ? 'chat.writerIR.collapseAllOutlineInstructions'
+                : 'chat.writerIR.expandAllOutlineInstructions')}
+            </button>
+          )}
           <div className='writer-ir__width-control'>
             <span className='writer-ir__width-label'>{t('chat.writerIR.pageWidth')}</span>
             <div

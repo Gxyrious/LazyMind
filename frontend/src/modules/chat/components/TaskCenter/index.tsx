@@ -23,6 +23,7 @@ import {
   ToolCallItem,
   ToolResultItem,
   TaskStatus,
+  WritingSubtask,
   useTaskCenterStore,
 } from "@/modules/chat/store/taskCenter";
 import {
@@ -256,6 +257,46 @@ function ExecutionLog({ log, isRunning }: { log: TaskLogEntry[]; isRunning: bool
           }
           return null;
         })}
+      </div>
+    </CollapsibleSection>
+  );
+}
+
+function WritingSubtaskList({ subtasks }: { subtasks?: WritingSubtask[] }) {
+  const { t } = useTranslation();
+  if (!subtasks?.length) return null;
+  const toolLabel = (tool: string) => {
+    if (tool === "kb_search") return t("taskCenter.writingSubtaskTool_kb_search");
+    if (tool === "llm") return t("taskCenter.writingSubtaskTool_llm");
+    return tool;
+  };
+  return (
+    <CollapsibleSection
+      title={`${t("taskCenter.writingSubtasks")} (${subtasks.length})`}
+    >
+      <div className="writing-subtask-list">
+        {subtasks.map((item) => (
+          <div className={`writing-subtask-item is-${item.status}`} key={item.subtask_id}>
+            <span className="writing-subtask-status" aria-hidden="true">
+              {item.status === "completed" ? <CheckCircleFilled />
+                : item.status === "failed" ? <CloseCircleFilled /> : <LoadingOutlined />}
+            </span>
+            <span className="writing-subtask-copy">
+              <span className="writing-subtask-heading">
+                <strong>{item.node_title || item.node_id}</strong>
+                <span>{t(`chat.writerIR.subtaskTypes.${item.subtask_type}`)}</span>
+                <span>{t(`taskCenter.writingSubtaskStatus_${item.status}`)}</span>
+              </span>
+              <span>{item.question}</span>
+              {item.tools_used?.length ? (
+                <small>
+                  {t("taskCenter.writingSubtaskTools")}: {item.tools_used.map(toolLabel).join(", ")}
+                </small>
+              ) : null}
+              {item.result_summary && <small>{item.result_summary}</small>}
+            </span>
+          </div>
+        ))}
       </div>
     </CollapsibleSection>
   );
@@ -592,6 +633,7 @@ function TaskCard({ task }: { task: SubAgentTask }) {
             </div>
           )}
           <ExecutionLog log={task.execution_log} isRunning={isRunning} />
+          <WritingSubtaskList subtasks={task.writing_subtasks} />
           <ArtifactGrid artifacts={task.artifacts} />
           <ReferenceSources sources={task.sources} />
         </>
