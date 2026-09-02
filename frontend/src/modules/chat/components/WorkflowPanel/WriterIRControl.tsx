@@ -986,23 +986,32 @@ export function WriterIRControl({
             </button>
             {outlineItems.length > 0 ? (
               <ol className='writer-ir__outline-list'>
-                {outlineItems.map((item) => (
-                  <li key={item.nodeId}>
-                    <button
-                      type='button'
-                      className={
-                        `writer-ir__outline-link writer-ir__outline-link--level-${
-                          Math.max(1, item.level - outlineBaseLevel + 1)
-                        }`
-                      }
-                      title={item.title}
-                      aria-label={t('chat.writerIR.jumpToHeading', { title: item.title })}
-                      onClick={() => navigateToOutlineItem(item.nodeId)}
-                    >
-                      {item.title}
-                    </button>
-                  </li>
-                ))}
+                {outlineItems.map((item) => {
+                  const numberingLabel = numbering?.entries[item.nodeId]?.label;
+                  const displayLabel = numberingLabel
+                    ? `${numberingLabel} ${item.title}`
+                    : item.title;
+                  return (
+                    <li key={item.nodeId}>
+                      <button
+                        type='button'
+                        className={
+                          `writer-ir__outline-link writer-ir__outline-link--level-${
+                            Math.max(1, item.level - outlineBaseLevel + 1)
+                          }`
+                        }
+                        title={displayLabel}
+                        aria-label={t('chat.writerIR.jumpToHeading', { title: displayLabel })}
+                        onClick={() => navigateToOutlineItem(item.nodeId)}
+                      >
+                        {numberingLabel && (
+                          <span className='writer-ir__outline-number'>{numberingLabel}</span>
+                        )}
+                        <span>{item.title}</span>
+                      </button>
+                    </li>
+                  );
+                })}
               </ol>
             ) : (
               <div className='writer-ir__outline-empty' role='status'>

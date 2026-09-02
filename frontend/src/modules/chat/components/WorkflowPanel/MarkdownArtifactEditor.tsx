@@ -1687,24 +1687,36 @@ export function MarkdownArtifactEditor({
               )}
               {markdownOutline.items.length > 0 ? (
                 <ol className='writer-markdown-editor__outline-list'>
-                  {markdownOutline.items.map((item) => (
-                    <li key={item.anchorId}>
-                      <button
-                        type='button'
-                        className={
-                          `writer-markdown-editor__outline-link `
-                          + `writer-markdown-editor__outline-link--level-${
-                            Math.max(1, item.level - outlineBaseLevel + 1)
-                          }`
-                        }
-                        title={item.label}
-                        aria-label={t('chat.writerIR.jumpToHeading', { title: item.label })}
-                        onClick={() => navigateToOutlineItem(item.anchorId)}
-                      >
-                        {item.label}
-                      </button>
-                    </li>
-                  ))}
+                  {markdownOutline.items.map((item) => {
+                    const nodeId = item.anchorId.slice('block-'.length);
+                    const numberingLabel = numbering?.entries[nodeId]?.label;
+                    const displayLabel = numberingLabel
+                      ? `${numberingLabel} ${item.label}`
+                      : item.label;
+                    return (
+                      <li key={item.anchorId}>
+                        <button
+                          type='button'
+                          className={
+                            `writer-markdown-editor__outline-link `
+                            + `writer-markdown-editor__outline-link--level-${
+                              Math.max(1, item.level - outlineBaseLevel + 1)
+                            }`
+                          }
+                          title={displayLabel}
+                          aria-label={t('chat.writerIR.jumpToHeading', { title: displayLabel })}
+                          onClick={() => navigateToOutlineItem(item.anchorId)}
+                        >
+                          {numberingLabel && (
+                            <span className='writer-markdown-editor__outline-number'>
+                              {numberingLabel}
+                            </span>
+                          )}
+                          <span>{item.label}</span>
+                        </button>
+                      </li>
+                    );
+                  })}
                 </ol>
               ) : (
                 <div className='writer-markdown-editor__outline-empty' role='status'>

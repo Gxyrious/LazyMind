@@ -202,7 +202,7 @@
   border: 0;
   border-radius: 5px;
   background: transparent;
-  color: #2563eb;
+  color: #0f172a;
   text-align: left;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -214,7 +214,7 @@
 .writer-markdown-editor .writer-markdown-editor__outline-document-link:hover:not(:disabled) {
   border-color: transparent;
   background: #f1f5f9;
-  color: #1d4ed8;
+  color: #0f172a;
 }
 
 .writer-markdown-editor__outline-list {
@@ -228,7 +228,9 @@
 }
 
 .writer-markdown-editor .writer-markdown-editor__outline-link {
-  display: block;
+  display: flex;
+  align-items: baseline;
+  gap: 0.35em;
   width: 100%;
   min-height: 28px;
   padding: 4px 6px;
@@ -236,17 +238,23 @@
   border: 0;
   border-radius: 5px;
   background: transparent;
-  color: #475569;
+  color: #0f172a;
   text-align: left;
   text-overflow: ellipsis;
   white-space: nowrap;
   cursor: pointer;
 }
 
+.writer-markdown-editor__outline-number {
+  flex: none;
+  color: #2563eb;
+  font-weight: 600;
+}
+
 .writer-markdown-editor .writer-markdown-editor__outline-link:hover {
   border-color: transparent;
   background: #f1f5f9;
-  color: #1d4ed8;
+  color: #0f172a;
 }
 
 .writer-markdown-editor .writer-markdown-editor__outline-link--level-2 { padding-left: 16px; }
@@ -327,12 +335,12 @@
 }
 
 .writer-markdown-editor .mdxeditor-root-contenteditable :is(h1, h2, h3, h4, h5, h6) {
-  color: #163b6d;
+  color: #0f172a;
 }
 
 .writer-markdown-editor .mdxeditor-root-contenteditable [data-writer-numbering-label]::before {
   margin-right: 0.35em;
-  color: #163b6d;
+  color: #2563eb;
   content: attr(data-writer-numbering-label);
   cursor: pointer;
   user-select: none;

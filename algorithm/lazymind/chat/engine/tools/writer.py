@@ -15,6 +15,7 @@ from queue import Empty, Queue
 from threading import Event, RLock
 from typing import Any, ClassVar
 
+import lazyllm
 from lazyllm import LOG, AutoModel, ThreadPoolExecutor
 from lazyllm.module.llms.onlinemodule.base.model_call_runner import (
     is_retryable_transport_error,
@@ -58,6 +59,13 @@ from lazyllm.tools.writer.utils import (
     save_artifact_json,
     writer_document_to_markdown,
 )
+from lazyllm.tools.tools.search import (
+    BingSearch,
+    BochaSearch,
+    GoogleSearch,
+    SciverseSearch,
+    TavilySearch,
+)
 
 WRITER_DATA_MODEL_SCHEMA_PREFIX = 'lazyllm.tools.writer.data_models'
 _PROVIDER_LOCATOR_RE = re.compile(
@@ -79,6 +87,49 @@ _SECTION_STREAM_IDLE_ERROR_RE = re.compile(
     r'(?:^|:\s)Draft (?:Markdown|IR) stream was idle for '
     r'\d+(?:\.\d+)? seconds\.$',
 )
+
+
+class _WriterRetrievalError(RuntimeError):
+    def __init__(self, message: str, tools_used: list[str]):
+        super().__init__(message)
+        self.tools_used = tools_used
+
+
+def _writer_selected_kb_ids() -> list[str]:
+    config = lazyllm.globals.get('agentic_config') or {}
+    selected = (config.get('filters') or {}).get('kb_id')
+    values = selected if isinstance(selected, list) else [selected]
+    return [str(value).strip() for value in values if str(value or '').strip()]
+
+
+def _writer_retrieve(query: str) -> tuple[str, Any]:
+    """Use the request-selected KB, otherwise the configured external search provider."""
+    if _writer_selected_kb_ids():
+        return 'kb_search', KBToolkit().kb_search(query)
+
+    attempted: list[str] = []
+    candidates = (
+        ('sciverse_search', SciverseSearch),
+        ('google_search', GoogleSearch),
+        ('bing_search', BingSearch),
+        ('bocha_search', BochaSearch),
+        ('tavily_search', TavilySearch),
+    )
+    for tool_name, search_type in candidates:
+        try:
+            engine = search_type()
+            if not engine.__key_source__():
+                continue
+            attempted.append(tool_name)
+            return tool_name, engine.search(query)
+        except Exception as exc:
+            LOG.warning('[Writer] %s retrieval failed: %s', tool_name, type(exc).__name__)
+    if attempted:
+        raise _WriterRetrievalError('All configured search providers failed.', attempted)
+    raise _WriterRetrievalError(
+        'No knowledge base is selected and no external search provider is configured.',
+        [],
+    )
 
 
 def _is_retryable_section_error(exc: Exception) -> bool:
@@ -1257,7 +1308,7 @@ class WriterToolkitBase:
             outline=outline_path,
             context=context_path,
             on_progress=on_progress,
-            retrieve=lambda query: KBToolkit().kb_search(query),
+            retrieve=_writer_retrieve,
         )
         completed = _primary_data(result)
         return completed if isinstance(completed, str) else _json_dumps(completed)
