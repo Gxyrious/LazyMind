@@ -280,6 +280,27 @@ afterEach(() => {
 });
 
 describe('MarkdownArtifactEditor rewrite selection highlight', () => {
+  it('renders numbering from state in the outline without changing the heading title', () => {
+    render(
+      <MarkdownArtifactEditor
+        markdown={'# Document\n\n<a id="block-section-1"></a>\n## Heading'}
+        numbering={{
+          ordered_style: 'hierarchical',
+          entries: { 'section-1': { label: '1.' } },
+        }}
+        sourceRevision={1}
+        onSave={async () => 1}
+      />,
+    );
+
+    fireEvent.click(screen.getByLabelText('chat.writerIR.expandOutline'));
+
+    const link = screen.getByTitle('1. Heading');
+    expect(link).toHaveTextContent('1.Heading');
+    expect(link.querySelector('.writer-markdown-editor__outline-number'))
+      .toHaveTextContent('1.');
+  });
+
   it('keeps TeX expressions as Markdown text instead of parsing them as MDX', () => {
     const { container } = render(
       <MarkdownArtifactEditor

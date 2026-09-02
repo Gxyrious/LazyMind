@@ -40,6 +40,25 @@ def test_build_writing_task_extracts_document_length_constraints(query, expected
     assert task.get('constraints', {}) == expected
 
 
+def test_writer_retrieve_uses_configured_search_provider(monkeypatch):
+    from lazymind.chat.engine.tools import writer
+
+    class FakeSciverseSearch:
+        def __key_source__(self):
+            return True
+
+        def search(self, query):
+            return [{'title': query}]
+
+    monkeypatch.setattr(writer, '_writer_selected_kb_ids', lambda: [])
+    monkeypatch.setattr(writer, 'SciverseSearch', FakeSciverseSearch)
+
+    tool_name, result = writer._writer_retrieve('evidence')
+
+    assert tool_name == 'sciverse_search'
+    assert result == [{'title': 'evidence'}]
+
+
 @pytest.mark.parametrize(
     ('query', 'suggested_operation', 'expected_operation'),
     [

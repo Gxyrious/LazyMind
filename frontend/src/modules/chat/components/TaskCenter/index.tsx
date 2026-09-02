@@ -265,14 +265,28 @@ function ExecutionLog({ log, isRunning }: { log: TaskLogEntry[]; isRunning: bool
 function WritingSubtaskList({ subtasks }: { subtasks?: WritingSubtask[] }) {
   const { t } = useTranslation();
   if (!subtasks?.length) return null;
+  const completed = subtasks.filter((item) => item.status === "completed").length;
+  const failed = subtasks.filter((item) => item.status === "failed").length;
   const toolLabel = (tool: string) => {
-    if (tool === "kb_search") return t("taskCenter.writingSubtaskTool_kb_search");
-    if (tool === "llm") return t("taskCenter.writingSubtaskTool_llm");
+    const knownTools = new Set([
+      "kb_search",
+      "sciverse_search",
+      "google_search",
+      "bing_search",
+      "bocha_search",
+      "tavily_search",
+      "llm",
+    ]);
+    if (knownTools.has(tool)) return t(`taskCenter.writingSubtaskTool_${tool}`);
     return tool;
   };
   return (
     <CollapsibleSection
-      title={`${t("taskCenter.writingSubtasks")} (${subtasks.length})`}
+      title={`${t("taskCenter.writingSubtasks")} (${t("taskCenter.writingSubtaskSummary", {
+        total: subtasks.length,
+        completed,
+        failed,
+      })})`}
     >
       <div className="writing-subtask-list">
         {subtasks.map((item) => (
