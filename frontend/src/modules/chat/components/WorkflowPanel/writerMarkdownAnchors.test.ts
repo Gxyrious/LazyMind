@@ -77,9 +77,41 @@ describe('Writer Markdown system anchors', () => {
       '',
       '## 1 章节',
       '',
-      '<a id="block-image-1" />',
       '![插图](https://example.com/image.png)',
     ].join('\n'));
+  });
+
+  it('keeps image and following heading anchors stable across an HTML image round trip', () => {
+    const source = [
+      '# 标题',
+      '',
+      '<a id="block-sec-002-001"></a>',
+      '### 证据与谜团',
+      '',
+      '[因果链](#block-IMAGE-1)',
+      '',
+      '<a id="block-IMAGE-1"></a>',
+      '![恐惧递进因果链](/data/chain.jpg)',
+      '',
+      '<a id="block-sec-002-002"></a>',
+      '### 不可名状的征兆',
+    ].join('\n');
+    const editable = writerMarkdownForEditing(source).replace(
+      '![恐惧递进因果链](/data/chain.jpg)',
+      '<img height="712" width="712" alt="恐惧递进因果链" src="/data/chain.jpg" />',
+    );
+    const restored = writerMarkdownForSave(
+      protectWriterMarkdownHeadingAnchors(source, editable),
+    );
+
+    expect(editable).not.toContain('<a id=');
+    expect(restored).toContain(
+      '<a id="block-IMAGE-1"></a>\n<img height="712" width="712"',
+    );
+    expect(restored).toContain(
+      '<a id="block-sec-002-002"></a>\n### 不可名状的征兆',
+    );
+    expect(restored).not.toContain('block-user-');
   });
 
   it('keeps outline instructions hidden from the editor and restores them on save', () => {

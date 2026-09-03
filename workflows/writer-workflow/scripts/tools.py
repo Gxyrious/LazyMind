@@ -2422,11 +2422,12 @@ def writer_render_document(artifact: Any) -> dict:
     source = WriterDocument.model_validate(document)
     view = build_numbering_view_from_ir(source)
     numbering = compute_numbering(view)
-    materialized = materialize_ir(source, numbering)
     return {
         'title': source.title,
         'representation': 'ir',
-        'document': materialized.model_dump(exclude_defaults=True),
+        # Match the Markdown editor contract: editable content stays canonical
+        # and generated labels are rendered exclusively from the sidecar.
+        'document': source.model_dump(exclude_defaults=True),
         'numbering': _numbering_payload(view, numbering),
     }
 
@@ -2466,12 +2467,11 @@ def writer_save_document(
         clean = apply_numbering_update_ir(clean, numbering_update)
     view = build_numbering_view_from_ir(clean)
     numbering = compute_numbering(view)
-    materialized = materialize_ir(clean, numbering)
     return {
         'source_document': clean.model_dump(exclude_defaults=True),
         'title': clean.title,
         'representation': 'ir',
-        'document': materialized.model_dump(exclude_defaults=True),
+        'document': clean.model_dump(exclude_defaults=True),
         'numbering': _numbering_payload(view, numbering),
     }
 

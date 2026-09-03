@@ -354,15 +354,13 @@ export function writerMarkdownForEditing(markdown: string): string {
   const bindings = writerMarkdownTargetBindings(editorMarkdown);
   const anchorLines = new Set(
     bindings
-      .filter((heading) => heading.type === 'heading')
-      .map((heading) => heading.anchorLineIndex)
+      .map((target) => target.anchorLineIndex)
       .filter((lineIndex): lineIndex is number => lineIndex !== undefined),
   );
   const anchoredTargetLines = new Set(
     bindings
-      .filter((heading) => heading.type === 'heading')
-      .filter((heading) => heading.anchorLineIndex !== undefined)
-      .map((heading) => heading.lineIndex),
+      .filter((target) => target.anchorLineIndex !== undefined)
+      .map((target) => target.lineIndex),
   );
   const hasConfig = editorMarkdown.split(/\r?\n/).some(
     (line) => HEADING_NUMBERING_CONFIG_LINE_RE.test(line),
