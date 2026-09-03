@@ -238,6 +238,8 @@ export interface WriteBackWriterDocumentResult {
   document: Record<string, unknown>;
 }
 
+export type WriterWriteBackProvider = 'feishu' | 'notion' | 'wechat';
+
 export interface WriteBackWriterDocumentRequest {
   base_revision: number;
   slot?: WriterDocumentSlot;
@@ -278,6 +280,8 @@ export interface RenderWriterDocumentResult {
   title: string;
   representation: WriterDocumentRepresentation;
   document: RenderedWriterDocument;
+  /** Number-materialized Markdown used only by download/export flows. */
+  export_document?: string;
   numbering: WriterNumberingState;
 }
 
@@ -546,7 +550,7 @@ export function WorkflowSessionApi() {
       sourceDocument?: Record<string, unknown>,
       revisedDocument?: Record<string, unknown>,
       slot?: WriterDocumentSlot,
-      provider?: string,
+      provider?: WriterWriteBackProvider,
       options?: RawAxiosRequestConfig,
     ) {
       const payload: Record<string, unknown> = { base_revision: baseRevision };

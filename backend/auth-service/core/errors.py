@@ -110,6 +110,8 @@ class ErrorCodes:
     CLOUD_CREDENTIAL_DECRYPT_FAILED: ErrorTuple = (500, 1000822, 'cloud credential decryption failed')
     CLOUD_PROVIDER_REFRESH_TOKEN_EMPTY: ErrorTuple = (502, 1000823, 'cloud provider returned an empty refresh token')
     GOOGLE_DRIVE_OAUTH_USER_ONLY: ErrorTuple = (400, 1000824, 'Google Drive only supports oauth_user connections')
+    WECHAT_OFFICIAL_ACCOUNT_SERVICE_ACCOUNT_ONLY: ErrorTuple = (400, 1000825, 'WeChat Official Account only supports service_account connections')
+    CLOUD_CONNECTION_VERIFICATION_REQUIRED: ErrorTuple = (409, 1000826, 'cloud connection must be verified before it can be enabled')
 
     JWT_SECRET_REQUIRED: ErrorTuple = (500, 1000901, 'JWT signing secret is not configured')
     CLOUD_PROVIDER_HTTP_ERROR: ErrorTuple = (502, 1000902, 'cloud provider returned an HTTP error')

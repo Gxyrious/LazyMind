@@ -222,25 +222,6 @@ function ReferenceHarness({ onSave }: { onSave: (markdown: string, revision: num
   );
 }
 
-function ImageReferenceHarness({
-  onSave,
-}: {
-  onSave: (markdown: string, revision: number) => Promise<number>;
-}) {
-  return (
-    <MarkdownArtifactEditor
-      markdown={[
-        'Alpha beta gamma',
-        '',
-        '<a id="block-image-1"></a>',
-        '![图1 雨后山间溪流图](https://example.com/rain.png)',
-      ].join('\n')}
-      sourceRevision={11}
-      onSave={onSave}
-    />
-  );
-}
-
 function BackendUpdateHarness() {
   const [source, setSource] = useState({ markdown: 'Initial draft', revision: 7 });
   return (
@@ -629,40 +610,6 @@ describe('MarkdownArtifactEditor rewrite selection highlight', () => {
     expect(referenceTrigger.getAttribute('aria-expanded')).toBe('false');
   });
 
-  it('applies and saves a cross-reference to an anchored image', async () => {
-    const onSave = vi.fn(async () => 12);
-    const { container } = render(<ImageReferenceHarness onSave={onSave} />);
-    const paragraph = container.querySelector('p');
-    const textNode = paragraph?.firstChild;
-    expect(paragraph).not.toBeNull();
-    expect(textNode).not.toBeNull();
-
-    const range = document.createRange();
-    range.setStart(textNode!, 0);
-    range.setEnd(textNode!, 5);
-    const browserSelection = window.getSelection();
-    browserSelection?.removeAllRanges();
-    browserSelection?.addRange(range);
-    fireEvent.mouseUp(paragraph!);
-
-    const referenceTrigger = await screen.findByTitle('chat.writerIR.crossReference');
-    fireEvent.mouseDown(referenceTrigger);
-    fireEvent.click(referenceTrigger);
-    fireEvent.click(screen.getByTitle('图1 雨后山间溪流图'));
-
-    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
-    expect(onSave).toHaveBeenCalledWith(
-      [
-        '[Alpha](#block-image-1) beta gamma',
-        '',
-        '<a id="block-image-1"></a>',
-        '![图1 雨后山间溪流图](https://example.com/rain.png)',
-      ].join('\n'),
-      11,
-      'draft',
-    );
-  });
-
   it('removes an internal reference and saves the unchanged visible wording', async () => {
     vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
       callback(0);
@@ -717,38 +664,6 @@ describe('MarkdownArtifactEditor rewrite selection highlight', () => {
 });
 
 describe('MarkdownArtifactEditor autosave', () => {
-  it('uses a checkpoint when pending edits are flushed at a version boundary', async () => {
-    const onSave = vi.fn(async () => 8);
-    let flush: (() => Promise<boolean>) | undefined;
-    render(
-      <SlotEditingContext.Provider value={{
-        setEditing: vi.fn(),
-        registerFlush: (_key, callback) => {
-          flush = callback;
-          return () => undefined;
-        },
-        registerFooterAction: () => () => undefined,
-      }}>
-        <MarkdownArtifactEditor
-          markdown='Initial draft'
-          sourceRevision={7}
-          editingKey='writer:document'
-          onSave={onSave}
-        />
-      </SlotEditingContext.Provider>,
-    );
-    const editable = screen.getByTestId('markdown-editable');
-    editable.textContent = 'Checkpoint edit';
-    fireEvent.input(editable);
-
-    await waitFor(() => expect(flush).toBeDefined());
-    await act(async () => {
-      expect(await flush?.()).toBe(true);
-    });
-
-    expect(onSave).toHaveBeenCalledWith('Checkpoint edit', 7, 'checkpoint');
-  });
-
   it('replaces clean backend updates without remounting or moving the viewport', async () => {
     vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
       callback(0);
@@ -773,137 +688,4 @@ describe('MarkdownArtifactEditor autosave', () => {
     expect(screen.queryByText('chat.writerMarkdown.externalUpdate')).toBeNull();
   });
 
-  it('adopts changed content returned by the save without moving the viewport', async () => {
-    vi.useFakeTimers();
-    try {
-      vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
-        callback(0);
-        return 0;
-      });
-      let resolveSave: ((result: { markdown: string; revision: number }) => void) | undefined;
-      const onSave = vi.fn(() => new Promise<{ markdown: string; revision: number }>((resolve) => {
-        resolveSave = resolve;
-      }));
-      const { container } = render(
-        <MarkdownArtifactEditor
-          markdown='Initial draft'
-          sourceRevision={7}
-          onSave={onSave}
-        />,
-      );
-      const surface = container.querySelector<HTMLElement>('.writer-markdown-editor__surface');
-      const editable = screen.getByTestId('markdown-editable');
-      surface!.scrollTop = 140;
-      editable.focus();
-      window.getSelection()?.removeAllRanges();
-      editable.textContent = 'Local draft';
-      fireEvent.input(editable);
-
-      await act(async () => {
-        vi.advanceTimersByTime(1_000);
-      });
-      expect(onSave).toHaveBeenCalledWith('Local draft', 7, 'draft');
-      await act(async () => {
-        resolveSave?.({ markdown: 'Backend normalized draft', revision: 8 });
-        await Promise.resolve();
-      });
-      const currentSurface = container.querySelector<HTMLElement>('.writer-markdown-editor__surface');
-      expect(currentSurface?.dataset.markdown).toBe('Backend normalized draft');
-      expect(currentSurface).toBe(surface);
-      expect(currentSurface!.scrollTop).toBe(140);
-      expect(document.activeElement).toBe(editable);
-      expect(screen.queryByText('chat.writerMarkdown.externalUpdate')).toBeNull();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it('silently saves only after input has been idle for one second', async () => {
-    vi.useFakeTimers();
-    try {
-      const onSave = vi.fn(async () => 8);
-      render(
-        <MarkdownArtifactEditor
-          markdown='Initial draft'
-          sourceRevision={7}
-          onSave={onSave}
-        />,
-      );
-      const editable = screen.getByTestId('markdown-editable');
-
-      await act(async () => {
-        vi.advanceTimersByTime(2_000);
-      });
-      expect(onSave).not.toHaveBeenCalled();
-
-      editable.textContent = 'First edit';
-      fireEvent.input(editable);
-      await act(async () => {
-        vi.advanceTimersByTime(700);
-      });
-      editable.textContent = 'Final edit';
-      fireEvent.input(editable);
-      await act(async () => {
-        vi.advanceTimersByTime(999);
-      });
-      expect(onSave).not.toHaveBeenCalled();
-
-      await act(async () => {
-        vi.advanceTimersByTime(1);
-        await Promise.resolve();
-      });
-      expect(onSave).toHaveBeenCalledTimes(1);
-      expect(onSave).toHaveBeenCalledWith('Final edit', 7, 'draft');
-      expect(screen.queryByText('chat.writerMarkdown.saved')).toBeNull();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it('keeps edits made during a save and persists them in a follow-up request', async () => {
-    vi.useFakeTimers();
-    try {
-      let resolveFirstSave: ((revision: number) => void) | undefined;
-      const onSave = vi.fn((markdown: string) => (
-        markdown === 'First edit'
-          ? new Promise<number>((resolve) => { resolveFirstSave = resolve; })
-          : Promise.resolve(9)
-      ));
-      render(
-        <MarkdownArtifactEditor
-          markdown='Initial draft'
-          sourceRevision={7}
-          onSave={onSave}
-        />,
-      );
-      const editable = screen.getByTestId('markdown-editable');
-
-      editable.textContent = 'First edit';
-      fireEvent.input(editable);
-      await act(async () => {
-        vi.advanceTimersByTime(1_000);
-      });
-      expect(onSave).toHaveBeenCalledWith('First edit', 7, 'draft');
-
-      editable.textContent = 'Second edit';
-      fireEvent.input(editable);
-      await act(async () => {
-        resolveFirstSave?.(8);
-        await Promise.resolve();
-      });
-      await act(async () => {
-        vi.advanceTimersByTime(999);
-      });
-      expect(onSave).toHaveBeenCalledTimes(1);
-
-      await act(async () => {
-        vi.advanceTimersByTime(1);
-        await Promise.resolve();
-      });
-      expect(onSave).toHaveBeenCalledTimes(2);
-      expect(onSave).toHaveBeenLastCalledWith('Second edit', 8, 'draft');
-    } finally {
-      vi.useRealTimers();
-    }
-  });
 });

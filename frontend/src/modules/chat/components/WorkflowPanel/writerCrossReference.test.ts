@@ -37,11 +37,11 @@ describe('Writer IR cross references', () => {
       {
         node_id: 'image-1',
         type: 'image',
-        content: '图1 雨后山间溪流图',
+        content: '雨后山间溪流',
       },
     ])).toEqual([
       { nodeId: 'sec-1', label: '1 系统设计', type: 'heading' },
-      { nodeId: 'image-1', label: '图1 雨后山间溪流图', type: 'image' },
+      { nodeId: 'image-1', label: '雨后山间溪流', type: 'image' },
     ]);
   });
 

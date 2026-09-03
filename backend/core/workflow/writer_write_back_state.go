@@ -22,6 +22,7 @@ type writerProviderBinding struct {
 	Provider   string `json:"provider"`
 	DocumentID string `json:"document_id"`
 	URI        string `json:"uri"`
+	BrowserURL string `json:"browser_url"`
 }
 
 type writerDocumentIdentity struct {
@@ -38,7 +39,7 @@ type writerWriteBackInfo struct {
 
 // enrichWriterWriteBackSlots exposes the server-owned delivery state for the
 // selected Writer draft. A source_document remains authoritative when present;
-// ordinary Markdown drafts can create the default provider document on first delivery.
+// ordinary Markdown drafts can create a provider document on first delivery.
 func enrichWriterWriteBackSlots(ctx context.Context, db *gorm.DB, sessionID string, slots []slotDTO) {
 	var source *slotDTO
 	for i := range slots {
@@ -80,7 +81,6 @@ func writerWriteBackState(
 	if err != nil {
 		return info
 	}
-
 	var binding writerProviderBinding
 	hasBinding := false
 	if source != nil {
@@ -150,7 +150,11 @@ func writerWriteBackState(
 func applyWriterProviderBinding(info *writerWriteBackInfo, binding writerProviderBinding) {
 	info.Provider = binding.Provider
 	info.ProviderDocumentID = binding.DocumentID
-	info.URL = writerProviderURL(binding.URI)
+	url := binding.BrowserURL
+	if strings.TrimSpace(url) == "" {
+		url = binding.URI
+	}
+	info.URL = writerProviderURL(binding.Provider, url)
 }
 
 func writerRevisionPointer(revision int) *int {
@@ -300,23 +304,32 @@ func writerArtifactPathAllowed(path string) bool {
 
 func writerProviderSupported(provider string) bool {
 	switch strings.ToLower(strings.TrimSpace(provider)) {
-	case "feishu", "notion":
+	case "feishu", "notion", "wechat":
 		return true
 	default:
 		return false
 	}
 }
 
-func writerProviderURL(uri string) string {
+func writerProviderURL(provider, uri string) string {
 	if !strings.HasPrefix(uri, "https://") {
 		return ""
 	}
+	provider = strings.ToLower(strings.TrimSpace(provider))
 	host := strings.ToLower(strings.Split(strings.TrimPrefix(uri, "https://"), "/")[0])
-	if host == "feishu.cn" || strings.HasSuffix(host, ".feishu.cn") ||
-		host == "larksuite.com" || strings.HasSuffix(host, ".larksuite.com") ||
-		host == "app.notion.com" ||
-		host == "notion.so" || strings.HasSuffix(host, ".notion.so") ||
-		host == "notion.site" || strings.HasSuffix(host, ".notion.site") {
+	valid := false
+	switch provider {
+	case "feishu":
+		valid = host == "feishu.cn" || strings.HasSuffix(host, ".feishu.cn") ||
+			host == "larksuite.com" || strings.HasSuffix(host, ".larksuite.com")
+	case "notion":
+		valid = host == "app.notion.com" || host == "notion.so" ||
+			strings.HasSuffix(host, ".notion.so") || host == "notion.site" ||
+			strings.HasSuffix(host, ".notion.site")
+	case "wechat":
+		valid = host == "mp.weixin.qq.com"
+	}
+	if valid {
 		return uri
 	}
 	return ""

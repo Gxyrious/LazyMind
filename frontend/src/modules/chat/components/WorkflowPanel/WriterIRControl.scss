@@ -1209,7 +1209,7 @@
   user-select: none;
 }
 
-.writer-ir__document--editable [contenteditable='false'] {
+.writer-ir__document--editable .writer-ir__block--readonly {
   border-radius: 4px;
   background: #f8fafc;
   color: #64748b;

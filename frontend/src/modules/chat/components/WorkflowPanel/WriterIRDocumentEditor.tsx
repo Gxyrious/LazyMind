@@ -1,6 +1,5 @@
 import {
   BoldOutlined,
-  CodeOutlined,
   DisconnectOutlined,
   DownOutlined,
   FontSizeOutlined,
@@ -8,7 +7,6 @@ import {
   LinkOutlined,
   OrderedListOutlined,
   PictureOutlined,
-  TableOutlined,
   UnorderedListOutlined,
 } from '@ant-design/icons';
 import { Dropdown } from 'antd';
@@ -171,8 +169,6 @@ function writerBlockDomId(nodeId: string): string {
 
 function writerReferenceTargetIcon(type: string) {
   if (type === 'image') return <PictureOutlined aria-hidden />;
-  if (type === 'table') return <TableOutlined aria-hidden />;
-  if (type === 'code') return <CodeOutlined aria-hidden />;
   return <FontSizeOutlined aria-hidden />;
 }
 
@@ -229,26 +225,6 @@ function renderEditableBlockText(block: WriterBlock): string {
 function headingLevel(block: WriterBlock): number {
   const level = Number(block.numbering?.level ?? 2);
   return Number.isFinite(level) ? Math.min(6, Math.max(1, Math.trunc(level))) : 2;
-}
-
-function headingWithoutMaterializedLabel(
-  block: WriterBlock,
-  label: string | undefined,
-): WriterBlock {
-  const prefix = label ? `${label} ` : '';
-  const content = block.content ?? '';
-  if (!prefix || !content.startsWith(prefix)) return block;
-  const spans = block.spans?.length
-    && block.spans.map((span) => span.text).join('') === content
-    ? block.spans.map((span, index) => index === 0
-      ? { ...span, text: span.text.slice(prefix.length) }
-      : span)
-    : block.spans;
-  return {
-    ...block,
-    content: content.slice(prefix.length),
-    spans,
-  };
 }
 
 function headingSectionEndIndex(blocks: WriterBlock[], headingIndex: number): number {
@@ -586,7 +562,7 @@ function renderBlock(
       foldable ? ' writer-ir__block--foldable' : ''
     }${draggable ? ' writer-ir__block--draggable' : ''}${
       collapsed ? ' writer-ir__block--folded' : ''
-    }${hiddenByAncestor ? ' writer-ir__section-hidden' : ''}"`,
+    }${block.editable === false ? ' writer-ir__block--readonly' : ''}${hiddenByAncestor ? ' writer-ir__section-hidden' : ''}"`,
     block.editable === false ? 'contenteditable="false"' : '',
     hiddenByAncestor ? 'hidden' : '',
   ].filter(Boolean).join(' ');
@@ -625,9 +601,7 @@ function renderBlock(
     const entry = numbering?.entries[block.node_id];
     const label = entry?.label;
     const numberingMode = entry?.mode ?? 'ordered';
-    const headingText = renderEditableBlockText(
-      headingWithoutMaterializedLabel(block, label),
-    );
+    const headingText = renderEditableBlockText(block);
     const marker = label
       ? `<span class="writer-ir__numbering-marker" data-writer-numbering-marker="${escapeHtmlAttribute(block.node_id)}" contenteditable="false" role="button" tabindex="-1">${escapeHtml(label)}</span>`
       : '';
@@ -636,6 +610,7 @@ function renderBlock(
       foldToggle,
       dragHandle,
       `<h${level} data-writer-block-content="true" data-writer-heading-mode="${numberingMode}" class="writer-ir__heading writer-ir__heading--${level}">${marker}${headingText}</h${level}>`,
+      renderOutlineInstructions(block, foldLabels),
       children,
       '</div>',
     ].join('');

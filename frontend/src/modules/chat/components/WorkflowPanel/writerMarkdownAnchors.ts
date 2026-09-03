@@ -2,6 +2,23 @@ const MATERIALIZED_SYSTEM_ANCHOR_RE = /<a\s+id=(["'])(block-[^"']+)\1((?:\s+[^>]
 const EDITOR_SYSTEM_ANCHOR_RE = /<a\s+id=(["'])(block-[^"']+)\1((?:\s+[^>]*?)?)\s*\/>/gi;
 const SYSTEM_ANCHOR_LINE_RE = /^<a\s+id=(["'])(block-[^"']+)\1((?:\s+[^>]*?)?)\s*(?:\/>|>\s*<\/a>)$/i;
 const HEADING_NUMBERING_CONFIG_LINE_RE = /^\s*<!--\s*heading-numbering:[^\r\n]*-->\s*$/i;
+const OUTLINE_INSTRUCTION_LINE_RE = /^\s*<!--\s*writer:outline\s+(\{.*\})\s*-->\s*$/;
+
+export interface WriterMarkdownOutlineInstruction {
+  node_id: string;
+  target_chars?: number;
+  context_relations: Array<{
+    relation: string;
+    guidance?: string;
+    target_node_id: string;
+  }>;
+  subtasks: Array<{
+    subtask_id: string;
+    subtask_type: 'retrieve' | 'extract' | 'reason';
+    question: string;
+    status: 'pending' | 'running' | 'completed' | 'retrying' | 'failed';
+  }>;
+}
 
 export interface WriterMarkdownReferenceTarget {
   anchorId: string;
@@ -122,6 +139,12 @@ function writerMarkdownTargetBindings(markdown: string): WriterMarkdownTargetBin
     if (fenceCharacter) return;
 
     const trimmed = line.trim();
+    if (OUTLINE_INSTRUCTION_LINE_RE.test(trimmed)) {
+      if (currentHeadingIndex !== undefined) {
+        bindings[currentHeadingIndex].outlineInstructionLine = trimmed;
+      }
+      return;
+    }
     const anchor = trimmed.match(SYSTEM_ANCHOR_LINE_RE);
     if (anchor) {
       pendingAnchor = {
@@ -276,6 +299,14 @@ export function protectWriterMarkdownAnchors(
         } />`,
       );
     }
+    if (target.type === 'heading' && assignment.anchorId) {
+      const previousTarget = previous.find(
+        (item) => item.anchorId === assignment.anchorId && item.type === 'heading',
+      );
+      if (previousTarget?.outlineInstructionLine) {
+        insertAfter.set(target.lineIndex, previousTarget.outlineInstructionLine);
+      }
+    }
   });
 
   const result: string[] = [];
@@ -336,13 +367,20 @@ export function writerMarkdownForEditing(markdown: string): string {
   const hasConfig = editorMarkdown.split(/\r?\n/).some(
     (line) => HEADING_NUMBERING_CONFIG_LINE_RE.test(line),
   );
-  if (anchorLines.size === 0 && !hasConfig) {
+  const hasOutlineInstructions = editorMarkdown.split(/\r?\n/).some(
+    (line) => OUTLINE_INSTRUCTION_LINE_RE.test(line),
+  );
+  if (anchorLines.size === 0 && !hasConfig && !hasOutlineInstructions) {
     return editorMarkdown;
   }
 
   const result: string[] = [];
   editorMarkdown.split(/\r?\n/).forEach((line, lineIndex) => {
-    if (anchorLines.has(lineIndex) || HEADING_NUMBERING_CONFIG_LINE_RE.test(line)) return;
+    if (
+      anchorLines.has(lineIndex)
+      || HEADING_NUMBERING_CONFIG_LINE_RE.test(line)
+      || OUTLINE_INSTRUCTION_LINE_RE.test(line)
+    ) return;
     if (anchoredTargetLines.has(lineIndex)) {
       while (
         result.length >= 2
@@ -471,6 +509,29 @@ export function collectWriterMarkdownOutline(markdown: string): WriterMarkdownOu
     if (fenceCharacter) continue;
 
     const trimmed = line.trim();
+    const instruction = trimmed.match(OUTLINE_INSTRUCTION_LINE_RE);
+    if (instruction) {
+      if (currentItemIndex !== undefined) {
+        try {
+          const payload = JSON.parse(instruction[1]);
+          if (payload && typeof payload === 'object') {
+            items[currentItemIndex].instructions = {
+              node_id: items[currentItemIndex].anchorId.replace(/^block-/, ''),
+              target_chars: typeof payload.target_chars === 'number'
+                ? payload.target_chars
+                : undefined,
+              context_relations: Array.isArray(payload.context_relations)
+                ? payload.context_relations
+                : [],
+              subtasks: Array.isArray(payload.subtasks) ? payload.subtasks : [],
+            };
+          }
+        } catch {
+          // Invalid sidecars stay hidden and are ignored by the outline UI.
+        }
+      }
+      continue;
+    }
     const anchor = trimmed.match(SYSTEM_ANCHOR_LINE_RE);
     if (anchor) {
       pendingAnchorId = anchor[2];

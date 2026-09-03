@@ -80,7 +80,6 @@ import './MarkdownArtifactEditor.scss';
 
 /** Idle debounce after the latest edit before a silent draft save. */
 const MARKDOWN_AUTOSAVE_IDLE_MS = 1_000;
-const MARKDOWN_NUMBERING_HIGHLIGHT = 'writer-markdown-numbering';
 const CHAT_PARAGRAPH_HOVER_MS = 1_000;
 
 function WriterAnchorEditor(props: JsxEditorProps) {
@@ -265,18 +264,6 @@ function markdownTextBoundary(
     textNode = walker.nextNode();
   }
   return { node: paragraph, offset: paragraph.childNodes.length };
-}
-
-function replaceMarkdownNumberingHighlights(previous: Range[], next: Range[]): Range[] {
-  const registry = globalThis.CSS?.highlights;
-  const HighlightConstructor = globalThis.Highlight;
-  if (!registry || !HighlightConstructor) return [];
-  const highlight = registry.get(MARKDOWN_NUMBERING_HIGHLIGHT) ?? new HighlightConstructor();
-  previous.forEach((range) => highlight.delete(range));
-  next.forEach((range) => highlight.add(range));
-  if (highlight.size) registry.set(MARKDOWN_NUMBERING_HIGHLIGHT, highlight);
-  else registry.delete(MARKDOWN_NUMBERING_HIGHLIGHT);
-  return next;
 }
 
 function restoreMarkdownSelection(
@@ -514,27 +501,14 @@ function isMarkdownToolbarInteractionTarget(node: Node | null | undefined): bool
   );
 }
 
-function markdownClickPrefixLength(
-  heading: HTMLElement,
-  browserSelection: Selection,
-  expectedLabel?: string,
-): number {
-  const text = heading.textContent ?? '';
-  const expected = expectedLabel ? `${expectedLabel} ` : '';
-  if (!expected || !text.startsWith(expected)) return -1;
-  const anchorNode = browserSelection.anchorNode;
-  if (!browserSelection.rangeCount || !anchorNode || !heading.contains(anchorNode)) return -1;
-  const offsetRange = document.createRange();
-  offsetRange.selectNodeContents(heading);
-  try {
-    offsetRange.setEnd(
-      anchorNode,
-      browserSelection.anchorOffset,
-    );
-  } catch {
-    return -1;
-  }
-  return offsetRange.toString().length <= expected.length ? expected.length : -1;
+function markdownNumberingMarkerClicked(heading: HTMLElement, clientX: number): boolean {
+  if (!heading.dataset.writerNumberingLabel) return false;
+  const start = markdownTextBoundary(heading, 0);
+  const range = globalThis.document.createRange();
+  range.setStart(start.node, start.offset);
+  range.collapse(true);
+  const textStart = range.getBoundingClientRect().left;
+  return clientX >= heading.getBoundingClientRect().left && clientX < textStart;
 }
 
 function isMarkdownToolbarDropdownOpen(): boolean {
@@ -682,16 +656,15 @@ export function MarkdownArtifactEditor({
     const root = rootRef.current;
     if (!root) return undefined;
     let frame: number | undefined;
-    let numberingRanges: Range[] = [];
     const applyDomAnchors = () => {
       const editable = root.querySelector<HTMLElement>('.mdxeditor-root-contenteditable');
       if (!editable) return;
-      const nextNumberingRanges: Range[] = [];
       editable.querySelectorAll<HTMLElement>('[data-writer-system-anchor="true"]')
         .forEach((element) => {
           element.removeAttribute('id');
           delete element.dataset.writerSystemAnchor;
           delete element.dataset.writerHeadingMode;
+          delete element.dataset.writerNumberingLabel;
         });
       const headings = editable.querySelectorAll<HTMLElement>('h1, h2, h3, h4, h5, h6');
       const images = editable.querySelectorAll<HTMLElement>('img');
@@ -706,21 +679,24 @@ export function MarkdownArtifactEditor({
           const nodeId = anchor.anchorId.slice('block-'.length);
           target.dataset.writerHeadingMode = numbering?.entries[nodeId]?.mode ?? 'ordered';
           const label = numbering?.entries[nodeId]?.label;
-          const prefix = label ? `${label} ` : '';
-          if (prefix && (target.textContent ?? '').startsWith(prefix)) {
-            const start = markdownTextBoundary(target, 0);
-            const end = markdownTextBoundary(target, prefix.length);
-            const range = globalThis.document.createRange();
-            range.setStart(start.node, start.offset);
-            range.setEnd(end.node, end.offset);
-            nextNumberingRanges.push(range);
-          }
+          if (label) target.dataset.writerNumberingLabel = label;
         }
       });
-      numberingRanges = replaceMarkdownNumberingHighlights(
-        numberingRanges,
-        nextNumberingRanges,
-      );
+      markdownOutline.items.forEach((item) => {
+        const heading = Array.from(headings).find(
+          (candidate) => candidate.id === item.anchorId,
+        );
+        if (!heading) return;
+        attachOutlineInstructionControl(heading, item, false, syncOutlineInstructionsExpanded, {
+          instructions: t('chat.writerIR.outlineInstructions'),
+          targetChars: t('chat.writerIR.targetChars'),
+          contextRelations: t('chat.writerIR.contextRelations'),
+          writingSubtasks: t('chat.writerIR.writingSubtasks'),
+          subtaskType: (type) => t(`chat.writerIR.subtaskTypes.${type}`, {
+            defaultValue: type,
+          }),
+        });
+      });
       if (chatPresentation) {
         editable.querySelectorAll<HTMLAnchorElement>(
           'a[href^="#source-"], a[href^="#user-content-source-"]',
@@ -773,9 +749,16 @@ export function MarkdownArtifactEditor({
     return () => {
       observer.disconnect();
       if (frame !== undefined) window.cancelAnimationFrame(frame);
-      replaceMarkdownNumberingHighlights(numberingRanges, []);
     };
-  }, [chatPresentation, materializedDraftMarkdown, numbering, sourceReferenceMap, t]);
+  }, [
+    chatPresentation,
+    markdownOutline,
+    materializedDraftMarkdown,
+    numbering,
+    sourceReferenceMap,
+    syncOutlineInstructionsExpanded,
+    t,
+  ]);
 
   const replaceMarkdownSilently = useCallback((nextMarkdown: string) => {
     const root = rootRef.current;
@@ -1529,18 +1512,10 @@ export function MarkdownArtifactEditor({
           const anchorId = rawAnchorId.startsWith('block-')
             ? rawAnchorId
             : rawAnchorId ? `block-${rawAnchorId}` : '';
-          const nodeId = anchorId.slice('block-'.length);
-          const browserSelection = globalThis.getSelection();
-          const prefixLength = anchorId && browserSelection
-            ? markdownClickPrefixLength(
-              heading,
-              browserSelection,
-              numbering?.entries[nodeId]?.label,
-            )
-            : -1;
+          const numberingMarker = markdownNumberingMarkerClicked(heading, event.clientX);
           const unorderedControl = heading.dataset.writerHeadingMode === 'unordered'
             && event.clientX < heading.getBoundingClientRect().left;
-          if (anchorId && (prefixLength >= 0 || unorderedControl)) {
+          if (anchorId && (numberingMarker || unorderedControl)) {
             event.preventDefault();
             event.stopPropagation();
             setNumberingMenu({

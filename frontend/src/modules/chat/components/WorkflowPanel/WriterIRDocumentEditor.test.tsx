@@ -119,7 +119,7 @@ const imageTargetDocument: WriterDocument = {
     {
       node_id: 'image-1',
       type: 'image',
-      content: '图1 雨后山间溪流图',
+      content: '雨后山间溪流',
     },
     document.blocks[1],
   ],
@@ -466,7 +466,7 @@ describe('WriterIRDocumentEditor cross-reference menu', () => {
     });
     fireEvent.mouseDown(trigger);
     fireEvent.click(trigger);
-    fireEvent.click(screen.getByTitle('图1 雨后山间溪流图'));
+    fireEvent.click(screen.getByTitle('雨后山间溪流'));
 
     expect(onCrossReferenceApplied).toHaveBeenCalledTimes(1);
     const updated = onCrossReferenceApplied.mock.calls[0][0] as WriterDocument;

@@ -116,12 +116,12 @@ export function collectWriterOutline(blocks: WriterBlock[]): WriterOutlineItem[]
   return items;
 }
 
-/** Numbered IR blocks that can be addressed by an internal_ref span. */
+/** Heading and image blocks that can be addressed by an internal_ref span. */
 export function collectWriterReferenceTargets(blocks: WriterBlock[]): WriterReferenceTarget[] {
   const targets: WriterReferenceTarget[] = [];
   const visit = (current: WriterBlock[]) => {
     current.forEach((block) => {
-      if (['heading', 'image', 'table', 'code'].includes(block.type)) {
+      if (['heading', 'image'].includes(block.type)) {
         targets.push({
           nodeId: block.node_id,
           label: block.content?.trim() || block.node_id,

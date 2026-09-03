@@ -46,13 +46,14 @@ from lazyllm.tools.writer.tools import (
     WriterResourceTools,
     WriterRevisionTools,
 )
+from lazymind.chat.engine.tools.lazy_kb import KBToolkit
 from lazyllm.tools.writer.tools.revision_tools import apply_patch_to_ir
 from lazyllm.tools.writer.numbering import (
     build_numbering_view_from_markdown,
     compute_numbering,
     materialize_markdown,
 )
-from lazyllm.tools.writer.provider import match_writer_provider
+from lazyllm.tools.writer.provider import get_writer_provider, match_writer_provider
 from lazyllm.tools.writer.utils import (
     render_block_markdown,
     save_artifact_json,
@@ -68,7 +69,7 @@ from lazyllm.tools.tools.search import (
 
 WRITER_DATA_MODEL_SCHEMA_PREFIX = 'lazyllm.tools.writer.data_models'
 _PROVIDER_LOCATOR_RE = re.compile(
-    r"(?:https?://|[a-z][a-z0-9+.-]*:(?://)?)[^\s<>\"'，。；！？、（）【】《》「」『』]+",
+    r"(?:https?://|[a-z][a-z0-9_+.-]*:(?://)?)[^\s<>\"'，。；！？、（）【】《》「」『』]+",
     re.IGNORECASE,
 )
 _CHINESE_CHAR_LIMIT_RE = re.compile(
@@ -85,6 +86,13 @@ _MARKDOWN_DRAFT_ROOT_ERROR = 'Markdown draft section must contain exactly one H2
 _SECTION_STREAM_IDLE_ERROR_RE = re.compile(
     r'(?:^|:\s)Draft (?:Markdown|IR) stream was idle for '
     r'\d+(?:\.\d+)? seconds\.$',
+)
+_WECHAT_COVER_SIZE = (900, 383)
+_WECHAT_DRAFT_REVISION_TERMS = ('微信', '公众号', '草稿箱')
+_WECHAT_REVISION_INTENT_TERMS = (
+    '修改', '改写', '重写', '润色', '编辑', '修订', '优化',
+    '删除', '删掉', '移除', '替换', '更换', '调整',
+    '扩写', '续写', '新增', '添加', '插入', '合并', '重排', '增强',
 )
 
 
@@ -577,6 +585,35 @@ def _provider_target(user_input: str, *, stage: str | None = None) -> TargetDocu
     return targets[0]
 
 
+def is_wechat_draft_revision_request(user_input: str) -> bool:
+    """Return whether the request explicitly targets a WeChat draft revision."""
+    request = str(user_input or '')
+    return (
+        all(term in request for term in _WECHAT_DRAFT_REVISION_TERMS)
+        and any(term in request for term in _WECHAT_REVISION_INTENT_TERMS)
+    )
+
+
+def _source_document_target(
+    user_input: str,
+    *,
+    stage: str = 'final',
+) -> TargetDocument:
+    """Resolve a URL-backed source or a WeChat draft title from the request."""
+    if is_wechat_draft_revision_request(user_input):
+        provider = get_writer_provider('wechat')
+        try:
+            return provider.resolve_from_prompt(user_input, stage=stage)
+        except ValueError as exc:
+            raise ToolExecutionError(str(exc)) from exc
+    targets = _provider_targets(user_input, stage=stage)
+    if len(targets) > 1:
+        raise ToolExecutionError('Exactly one provider document locator is required.')
+    if targets:
+        return targets[0]
+    raise ToolExecutionError('A supported provider document locator is required.')
+
+
 def _extract_provider_resources(user_input: str) -> list[dict]:
     resources: list[dict] = []
     for idx, target in enumerate(_provider_targets(user_input)):
@@ -601,7 +638,8 @@ def _set_document_editable(value: Any, *, stage: str | None = None) -> WriterDoc
 
     def update_blocks(blocks: list[WriterBlock], level: int = 1) -> None:
         for block in blocks:
-            block.editable = True
+            # Provider opaque blocks must stay read-only after workflow normalization.
+            block.editable = block.type != 'wechat_opaque'
             if stage is not None:
                 block.stage = stage
             heading_level = block.numbering.get('level')
@@ -624,6 +662,12 @@ def _target_from_document(value: Any) -> TargetDocument | None:
         doc_id=binding.get('document_id'),
         uri=binding.get('uri'),
         adapter=binding.get('provider'),
+        title=document.title or None,
+        meta={
+            key: binding[key]
+            for key in ('article_index', 'thumb_media_id', 'browser_url')
+            if binding.get(key) is not None
+        },
     )
     if target.uri or target.doc_id:
         return target
@@ -643,6 +687,67 @@ def _document_text(document: WriterDocument) -> str:
         for block in document.iter_blocks()
         if block.content
     )
+
+
+def _prepare_wechat_cover(
+    target: TargetDocument,
+    document: WriterDocument | str,
+    root: Path,
+    *,
+    model_available: Callable[[str], bool] | None = None,
+    generator: Callable[..., dict[str, Any]] | None = None,
+) -> TargetDocument:
+    if (
+        target.adapter != 'wechat'
+        or target.doc_id
+        or target.meta.get('thumb_media_id')
+    ):
+        return target
+    if isinstance(document, WriterDocument):
+        binding = document.provider_binding
+        if binding.get('provider') == 'wechat' and binding.get('document_id'):
+            return target
+        title = document.title or target.title or '未命名文档'
+        body = _document_text(document)
+    else:
+        title = target.title or '未命名文档'
+        body = str(document)
+
+    from PIL import Image, ImageOps
+
+    cover_path = root / 'wechat-cover.png'
+    try:
+        if model_available is None:
+            from lazymind.model_config import is_model_role_available
+            model_available = is_model_role_available
+        if not model_available('image_generator'):
+            raise RuntimeError('image_generator is not configured')
+        if generator is None:
+            from lazymind.chat.engine.tools.multimodal import image_generator
+            generator = image_generator
+        result = generator(
+            '为微信公众号文章生成一张专业、简洁、无文字、无水印的横版封面图。\n'
+            f'文章标题：{title}\n文章内容摘要：{body[:1000]}',
+            image_size='1024x1024',
+            batch_size=1,
+        )
+        generated_path = Path(str(result.get('local_path') or ''))
+        if not generated_path.is_file():
+            raise ValueError('image_generator returned no usable local image')
+        with Image.open(generated_path) as source:
+            cover = ImageOps.fit(
+                source.convert('RGB'),
+                _WECHAT_COVER_SIZE,
+                method=Image.Resampling.LANCZOS,
+            )
+            cover.save(cover_path, format='PNG')
+    except Exception as exc:  # noqa: BLE001 - a valid cover is still required.
+        LOG.warning('[Writer] WeChat cover generation failed; using white cover: %s', exc)
+        Image.new('RGB', _WECHAT_COVER_SIZE, 'white').save(cover_path, format='PNG')
+
+    prepared = target.model_copy(deep=True)
+    prepared.meta['cover_path'] = str(cover_path)
+    return prepared
 
 
 def _published_link(target: TargetDocument) -> str:
@@ -1202,7 +1307,7 @@ class WriterToolkitBase:
                 (headings[-1][1].children if headings else roots).append(block)
                 headings.append((level, block))
             document.blocks = roots
-        return _set_document_editable(
+        normalized = _set_document_editable(
             document, stage='outline',
         ).model_dump_json(exclude_defaults=True)
         return self._complete_prepared_outline(
@@ -2383,7 +2488,7 @@ class WriterToolkitBase:
         if stage not in {'outline', 'draft', 'final'}:
             raise ToolExecutionError('stage must be outline, draft, or final.')
         root = _temp_root()
-        target = _provider_target(user_input, stage=stage)
+        target = _source_document_target(user_input, stage=stage)
         result = WriterResourceTools(
             llm=None, artifact_store=str(root),
         ).load_document(target)
@@ -2523,17 +2628,27 @@ class WriterToolkitBase:
         media_assets = (
             _json_loads(media_assets_json, {}) if media_assets_json.strip() else None
         )
+        if mode == 'replace':
+            target = _prepare_wechat_cover(target, publish_document, root)
         write_result = (
             resource.replace_document(publish_document, target, media_assets)
             if mode == 'replace'
             else resource.append_to_document(publish_document, target, media_assets)
         )
-        refreshed = resource.load_document(TargetDocument(
-            **target.model_dump(exclude={'meta'}),
-            meta={**target.meta, 'stage': 'final'},
-        ))
-        published_value = _primary_data(refreshed)
-        if refreshed.get('representation') == 'ir':
+        artifact_paths = (write_result.get('metadata') or {}).get('artifact_paths') or {}
+        persisted_path = artifact_paths.get('persisted_document')
+        if persisted_path:
+            published_value = _read_artifact_data(persisted_path)
+            representation = str(
+                (write_result.get('metadata') or {}).get('representation') or 'ir')
+        else:
+            refreshed = resource.load_document(TargetDocument(
+                **target.model_dump(exclude={'meta'}),
+                meta={**target.meta, 'stage': 'final'},
+            ))
+            published_value = _primary_data(refreshed)
+            representation = str(refreshed.get('representation') or '')
+        if representation == 'ir':
             persisted = WriterDocument.model_validate(published_value)
             published = (
                 _merge_provider_state(publish_document, persisted)
@@ -2550,7 +2665,7 @@ class WriterToolkitBase:
                 if isinstance(published, WriterDocument)
                 else published
             ),
-            'representation': refreshed.get('representation'),
+            'representation': representation,
             'provider': str(target.adapter or ''),
             'published_link': _published_link(target),
         })

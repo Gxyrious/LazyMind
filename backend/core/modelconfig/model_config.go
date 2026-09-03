@@ -17,7 +17,7 @@ import (
 
 const cloudToolTokenTimeout = 5 * time.Second
 
-var cloudToolProviders = []string{"feishu", "googledrive", "notion"}
+var cloudToolProviders = []string{"feishu", "googledrive", "notion", "wechat"}
 
 type cloudConnectionList struct {
 	Data struct {

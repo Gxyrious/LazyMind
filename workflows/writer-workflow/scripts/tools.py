@@ -42,7 +42,6 @@ from lazyllm.tools.writer.numbering import (
     dematerialize_ir,
     ensure_markdown_heading_anchors,
     format_target_number,
-    materialize_ir,
     materialize_markdown,
 )
 from lazyllm.tools.writer.provider import match_writer_provider
@@ -71,6 +70,7 @@ from lazymind.chat.engine.tools.writer import (
     WriterResourceToolkit,
     WriterRevisionToolkit,
     WriterToolkitBase,
+    is_wechat_draft_revision_request,
     sync_writer_documents,
     writer_schema,
 )
@@ -359,11 +359,6 @@ def writer_resolve_command(
     )
 
 
-_EXPLICIT_WRITER_MUTATION = re.compile(
-    r'(?:修改|改写|重写|扩写|续写|润色|新增|添加|插入|删除|替换|调整|合并|重排|增强)'
-    r'|\b(?:modify|revise|rewrite|expand|continue|polish|add|insert|delete|replace|edit)\b',
-    re.IGNORECASE,
-)
 _EXPLICIT_OUTLINE_TARGET = re.compile(
     r'(?:\b(?:only|just)\b.{0,16}\b(?:outline|plan)\b)'
     r'|(?:(?:只|仅|只需|仅需).{0,12}(?:大纲|提纲))'
@@ -387,6 +382,13 @@ _SUPPLIED_OUTLINE_REQUEST = re.compile(
 _EXPLICIT_REWRITE_REQUEST = re.compile(
     r'(?:重写|整体改写|整篇改写|重新组织|重构全文)'
     r'|(?:\b(?:rewrite|restructure)\b)',
+    re.IGNORECASE,
+)
+_EXPLICIT_NEW_DOCUMENT_REQUEST = re.compile(
+    r'(?:(?<![改重续扩])写|撰写|创作|生成|产出).{0,32}'
+    r'(?:文章|报告|小说|故事|文案|稿件|正文|文档)'
+    r'|(?:\b(?:write|draft|create|produce)\b.{0,32}'
+    r'\b(?:article|report|story|novel|copy|draft|document)\b)',
     re.IGNORECASE,
 )
 _PROVIDER_DOCUMENT_LOCATOR = re.compile(
@@ -985,7 +987,9 @@ def writer_prepare_workspace(
     """Prepare one writing request.
 
     ``source_filename`` is only the basename of an uploaded Markdown, text, or LMD
-    document. Provider document locators belong in ``user_input`` and are resolved
+    document. It may identify either a document to edit or reference material for a
+    new document; the authoritative request resolves that distinction. Provider
+    URLs and WeChat draft article titles belong in ``user_input`` and are resolved
     as cloud documents.
     """
     user_input = _authoritative_writer_user_input('')
@@ -1011,8 +1015,13 @@ def writer_prepare_workspace(
         if Path(path).suffix.lower() in _LOCAL_WRITER_DOCUMENT_SUFFIXES
     ]
     source_filename = str(source_filename or '').strip()
-    cloud_source_locator = _provider_document_locator(user_input or '')
-    has_cloud_source = bool(cloud_source_locator)
+    should_find_wechat_draft = is_wechat_draft_revision_request(user_input)
+    if should_find_wechat_draft:
+        source_filename = ''
+    cloud_source_locator = (
+        '' if should_find_wechat_draft else _provider_document_locator(user_input or '')
+    )
+    has_cloud_source = bool(cloud_source_locator) or should_find_wechat_draft
 
     # Models occasionally copy a provider locator into both fields.
     # Treat that as one cloud source, never as a local filename override.
@@ -1045,7 +1054,7 @@ def writer_prepare_workspace(
         'local' if source_filename or local_candidates else 'cloud'
     )
     source_ref = (
-        cloud_source_locator if cloud_source_locator else source_filename
+        cloud_source_locator or ('wechat' if should_find_wechat_draft else source_filename)
     )
 
     # The model may suggest an operation for ambiguous supplied documents, but it
@@ -2395,7 +2404,7 @@ def writer_export_markdown(content_path: str) -> str:
 
 
 def writer_render_document(artifact: Any) -> dict:
-    """Render a Writer IR or Markdown artifact with automatic numbering."""
+    """Render a Writer IR or Markdown artifact with automatic heading numbering."""
     document = _action_artifact_data(artifact)
     if isinstance(document, str):
         document = ensure_markdown_heading_anchors(document)
@@ -2405,17 +2414,21 @@ def writer_render_document(artifact: Any) -> dict:
         return {
             'title': title_match.group(1).strip() if title_match else '',
             'representation': 'markdown',
-            'document': materialize_markdown(document, view, numbering),
+            # Keep editor content free of generated numbering. The frontend
+            # renders the independent numbering map as an uneditable heading marker.
+            'document': document,
+            'export_document': materialize_markdown(document, view, numbering),
             'numbering': _numbering_payload(view, numbering),
         }
     source = WriterDocument.model_validate(document)
     view = build_numbering_view_from_ir(source)
     numbering = compute_numbering(view)
-    materialized = materialize_ir(source, numbering)
     return {
         'title': source.title,
         'representation': 'ir',
-        'document': materialized.model_dump(exclude_defaults=True),
+        # IR is the editor's canonical source. Automatic numbering is supplied
+        # separately and materialized only when exporting to a provider or file.
+        'document': source.model_dump(exclude_defaults=True),
         'numbering': _numbering_payload(view, numbering),
     }
 
@@ -2425,7 +2438,7 @@ def writer_save_document(
     base_artifact: Any,
     numbering_update: Mapping[str, Any] | None = None,
 ) -> dict:
-    """Normalize a submitted IR edit back to clean source and re-materialize it."""
+    """Normalize an edit to clean source and return an independent numbering map."""
     current_value = _action_artifact_data(artifact)
     if isinstance(current_value, str):
         base_value = _action_artifact_data(base_artifact)
@@ -2443,7 +2456,8 @@ def writer_save_document(
             'source_document': clean,
             'title': title_match.group(1).strip() if title_match else '',
             'representation': 'markdown',
-            'document': materialize_markdown(clean, view, numbering),
+            'document': clean,
+            'export_document': materialize_markdown(clean, view, numbering),
             'numbering': _numbering_payload(view, numbering),
         }
     current = WriterDocument.model_validate(current_value)
@@ -2454,12 +2468,11 @@ def writer_save_document(
         clean = apply_numbering_update_ir(clean, numbering_update)
     view = build_numbering_view_from_ir(clean)
     numbering = compute_numbering(view)
-    materialized = materialize_ir(clean, numbering)
     return {
         'source_document': clean.model_dump(exclude_defaults=True),
         'title': clean.title,
         'representation': 'ir',
-        'document': materialized.model_dump(exclude_defaults=True),
+        'document': clean.model_dump(exclude_defaults=True),
         'numbering': _numbering_payload(view, numbering),
     }
 
@@ -2470,9 +2483,7 @@ def _numbering_payload(
 ) -> dict[str, Any]:
     entries: dict[str, dict[str, Any]] = {}
     for node_id, entry in numbering.items():
-        payload: dict[str, Any] = {'label': format_target_number(entry)}
-        if entry.kind == 'section':
-            payload.update(mode=entry.mode, restart=entry.restart)
+        payload = {'label': format_target_number(entry), 'mode': entry.mode, 'restart': entry.restart}
         entries[node_id] = payload
     return {'ordered_style': view.ordered_style, 'entries': entries}
 
@@ -2598,17 +2609,16 @@ def writer_sync_document(
     if markdown_content:
         return _sync_markdown_document(
             markdown_content, target_document=target_document, title=title,
-            media_assets=media_assets, artifact_store=artifact_store, adapter=adapter,
+            media_assets=media_assets, adapter=adapter,
         )
     if revised_document is None:
         raise ValueError('revised_document is required for IR sync.')
     if source_document is None:
         document = WriterDocument.model_validate(revised_document)
-        return _replace_document_and_read_back(
+        return _replace_document_through_provider(
             document,
             title=document.title,
             media_assets=media_assets,
-            artifact_store=artifact_store,
             source_format='lmd',
             adapter=adapter,
         )
@@ -2626,37 +2636,34 @@ def _sync_markdown_document(
     target_document: Mapping[str, Any] | None,
     title: str,
     media_assets: Mapping[str, Any] | None,
-    artifact_store: str,
     adapter: str,
 ) -> dict:
-    """Replace Markdown through a provider and read it back in its native representation."""
+    """Replace Markdown through a provider and return its persisted representation."""
     markdown = markdown_content.strip()
     if not markdown:
         raise ValueError('Markdown draft is empty.')
     heading = re.search(r'^#\s+(.+?)\s*$', markdown, flags=re.MULTILINE)
     document_title = (heading.group(1).strip() if heading else title.strip()) or '未命名文档'
-    return _replace_document_and_read_back(
+    return _replace_document_through_provider(
         markdown_content,
         title=document_title,
         target_document=target_document,
         media_assets=media_assets,
-        artifact_store=artifact_store,
         source_format='markdown',
         adapter=adapter,
     )
 
 
-def _replace_document_and_read_back(
+def _replace_document_through_provider(
     content: str | WriterDocument,
     *,
     title: str,
-    artifact_store: str,
     source_format: str,
     target_document: Mapping[str, Any] | None = None,
     media_assets: Mapping[str, Any] | None = None,
     adapter: str = 'feishu',
 ) -> dict:
-    """Replace a provider document and return its confirmed representation."""
+    """Replace a provider document and return its persisted representation."""
     if target_document:
         target = TargetDocument.model_validate(target_document)
     else:
@@ -2696,7 +2703,7 @@ def _replace_document_and_read_back(
         persisted = persisted_document.model_dump()
     result = PatchResult(
         success=True,
-        message='Document written to provider and read back successfully.',
+        message='Document written to provider successfully.',
         meta={
             'mode': 'replace',
             'source_format': source_format,

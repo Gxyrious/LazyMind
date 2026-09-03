@@ -3,6 +3,7 @@ import { Form, message } from "antd";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 import { dataSourceCloudOauthApi } from "@/modules/dataSource/api/clients";
+import type { CloudConnectionResponse } from "@/api/generated/auth-client";
 import {
   createFeishuAccountId,
   getOAuthStateFromConnection,
@@ -34,6 +35,7 @@ import {
   CLOUD_DOCUMENTS_GOOGLE_DRIVE_PATH,
   CLOUD_DOCUMENTS_LOCAL_PATH,
   CLOUD_DOCUMENTS_PATH,
+  CLOUD_DOCUMENTS_WECHAT_OFFICIAL_ACCOUNT_PATH,
 } from "../utils/cloudDocumentUrls";
 import { useLocalDataSourceSettings } from "./useLocalDataSourceSettings";
 import { markCloudDocumentConnectionSuccess } from "../utils/cloudDocumentOnboarding";
@@ -65,6 +67,8 @@ export function useCloudDocumentProviders() {
   >([]);
   const [googleDriveConnection, setGoogleDriveConnection] =
     useState<ManagementContext["notionOauthConnection"]>(null);
+  const [wechatOfficialAccountConnections, setWechatOfficialAccountConnections] =
+    useState<CloudConnectionResponse[]>([]);
   const [oauthConnection, setOauthConnection] = useState<ManagementContext["oauthConnection"]>(null);
   const [oauthState, setOauthState] = useState<OAuthState>("pending");
   const [connectionVerified, setConnectionVerified] = useState(false);
@@ -96,6 +100,9 @@ export function useCloudDocumentProviders() {
   const isGoogleDriveAuthValid =
     googleDriveConnection?.status === "connected" &&
     Boolean(googleDriveConnection.connectionId);
+  const isWeChatOfficialAccountAuthValid = wechatOfficialAccountConnections.some(
+    (connection) => connection.status.trim().toUpperCase() === "ACTIVE",
+  );
 
   const ctx = {} as ManagementContext;
   Object.assign(ctx, {
@@ -239,6 +246,19 @@ export function useCloudDocumentProviders() {
     }
   };
 
+  const refreshWeChatOfficialAccountConnections = async () => {
+    try {
+      const response =
+        await dataSourceCloudOauthApi.listConnectionsApiAuthserviceV1CloudConnectionsGet({
+          provider: "wechat",
+          status: null,
+        });
+      setWechatOfficialAccountConnections(getCloudConnectionItems(response.data));
+    } catch {
+      setWechatOfficialAccountConnections([]);
+    }
+  };
+
   const refreshPageData = async () => {
     setOauthLoading(true);
     try {
@@ -248,6 +268,7 @@ export function useCloudDocumentProviders() {
         ctx.refreshFeishuAuthAccounts(),
         ctx.refreshNotionAuthConnection(),
         refreshGoogleDriveConnection(),
+        refreshWeChatOfficialAccountConnections(),
       ]);
     } finally {
       setOauthLoading(false);
@@ -341,6 +362,10 @@ export function useCloudDocumentProviders() {
     navigate(CLOUD_DOCUMENTS_GOOGLE_DRIVE_PATH);
   };
 
+  const handleManageWeChatOfficialAccount = () => {
+    navigate(CLOUD_DOCUMENTS_WECHAT_OFFICIAL_ACCOUNT_PATH);
+  };
+
   const handleOpenNotionSetup = () => {
     openCloudSetupModal("notion", "auth");
   };
@@ -424,6 +449,8 @@ export function useCloudDocumentProviders() {
     isFeishuAuthValid,
     isNotionAuthValid,
     isGoogleDriveAuthValid,
+    isWeChatOfficialAccountAuthValid,
+    hasWeChatOfficialAccount: wechatOfficialAccountConnections.length > 0,
     isFeishuSetupReady,
     isNotionSetupReady,
     validFeishuAccounts,
@@ -432,6 +459,7 @@ export function useCloudDocumentProviders() {
     handleManageFeishuAuth,
     handleManageLocalSource,
     handleManageGoogleDrive,
+    handleManageWeChatOfficialAccount,
     handleOpenNotionSetup,
     openCloudSetupModal,
     handleSaveFeishuSetup,

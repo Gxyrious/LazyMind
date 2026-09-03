@@ -176,7 +176,7 @@ describe('Writer Markdown system anchors', () => {
       '## 1 系统设计',
       '',
       '<a id="block-image-1"></a>',
-      '![图1 雨后山间溪流图](https://example.com/rain.png)',
+      '![雨后山间溪流](https://example.com/rain.png)',
       '',
       '<a id="block-image-2" />',
       '![](https://example.com/forest.png)',
@@ -198,7 +198,7 @@ describe('Writer Markdown system anchors', () => {
 
     expect(collectWriterMarkdownReferenceTargets(source)).toEqual([
       { anchorId: 'block-sec-1', label: '1 系统设计', type: 'heading' },
-      { anchorId: 'block-image-1', label: '图1 雨后山间溪流图', type: 'image' },
+      { anchorId: 'block-image-1', label: '雨后山间溪流', type: 'image' },
       { anchorId: 'block-image-2', label: 'block-image-2', type: 'image' },
     ]);
     expect(collectWriterMarkdownOutline(source).items).toEqual([
