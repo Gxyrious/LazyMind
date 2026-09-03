@@ -93,7 +93,7 @@ func writerDocumentProvider(values ...json.RawMessage) string {
 		if provider == "" {
 			provider = strings.ToLower(strings.TrimSpace(identity.Adapter))
 		}
-		if provider == "feishu" || provider == "notion" {
+		if writerDocumentProviderSupported(provider) {
 			return provider
 		}
 	}
@@ -106,6 +106,15 @@ func writerProviderToolConfig(toolConfig map[string]any, provider string) (map[s
 		return nil, false
 	}
 	return map[string]any{provider: credential}, true
+}
+
+func writerDocumentProviderSupported(provider string) bool {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "feishu", "notion", "wechat":
+		return true
+	default:
+		return false
+	}
 }
 
 func writerDocumentSlot(slot string) (string, bool) {
@@ -541,7 +550,7 @@ func SaveWriterDocument(w http.ResponseWriter, r *http.Request) {
 }
 
 // WriteBackWriterDocument writes the active IR or Markdown draft to the selected
-// cloud-document provider and saves the provider-confirmed IR as a new revision.
+// provider and saves the provider-confirmed IR as a new revision.
 func WriteBackWriterDocument(w http.ResponseWriter, r *http.Request) {
 	sessionID := common.PathVar(r, "session_id")
 	if sessionID == "" {
@@ -605,7 +614,11 @@ func WriteBackWriterDocument(w http.ResponseWriter, r *http.Request) {
 		}, http.StatusConflict)
 		return
 	}
-
+	provider := strings.ToLower(strings.TrimSpace(body.Provider))
+	if provider != "" && !writerDocumentProviderSupported(provider) {
+		common.ReplyErr(w, "unsupported writer document provider", http.StatusBadRequest)
+		return
+	}
 	syncRequest := algo.WriterDocumentSyncRequest{
 		WorkflowID: session.WorkflowID, RevisionID: session.WorkflowRevisionID,
 		TreeHash: session.WorkflowTreeHash, UserID: userID,
@@ -663,7 +676,7 @@ func WriteBackWriterDocument(w http.ResponseWriter, r *http.Request) {
 				ctx, db, sessionID, slot, draft.Revision.Revision,
 			)
 			if baselineErr != nil {
-				common.ReplyErrWithData(w, "initial Feishu write-back has not completed", map[string]any{
+				common.ReplyErrWithData(w, "initial provider write-back has not completed", map[string]any{
 					"status": "baseline_not_found", "current_revision": draft.Revision.Revision,
 				}, http.StatusConflict)
 				return
@@ -678,7 +691,9 @@ func WriteBackWriterDocument(w http.ResponseWriter, r *http.Request) {
 				common.ReplyErr(w, "invalid synchronized WriterDocument baseline", http.StatusConflict)
 				return
 			}
-			revisedDocument, normalizeErr = preserveExistingWriterImageBlocks(baselineDocument, revisedDocument)
+			revisedDocument, normalizeErr = preserveExistingWriterImageBlocks(
+				baselineDocument, revisedDocument,
+			)
 			if normalizeErr != nil {
 				common.ReplyErr(w, "invalid current WriterDocument: "+normalizeErr.Error(), http.StatusBadRequest)
 				return
@@ -701,15 +716,14 @@ func WriteBackWriterDocument(w http.ResponseWriter, r *http.Request) {
 		syncRequest.RevisedDocument,
 		syncRequest.TargetDocument,
 	)
-	provider := strings.ToLower(strings.TrimSpace(body.Provider))
 	if provider == "" {
 		provider = boundProvider
 	}
-	if provider != "feishu" && provider != "notion" {
+	if !writerDocumentProviderSupported(provider) {
 		common.ReplyErr(w, "unsupported writer document provider", http.StatusBadRequest)
 		return
 	}
-	if provider != boundProvider {
+	if boundProvider != "" && provider != boundProvider {
 		if len(syncRequest.RevisedDocument) > 0 {
 			unbound, unbindErr := unbindWriterDocument(syncRequest.RevisedDocument)
 			if unbindErr != nil {
@@ -742,7 +756,6 @@ func WriteBackWriterDocument(w http.ResponseWriter, r *http.Request) {
 		common.ReplyErr(w, "writer document write-back failed", http.StatusBadGateway)
 		return
 	}
-
 	artifact, err := json.Marshal(map[string]any{
 		"schema":         "lazyllm.tools.writer.data_models.writer_ir.WriterDocument",
 		"schema_version": "0.1",
@@ -916,7 +929,7 @@ func validateWriterWriteBackPair(source, revised json.RawMessage) error {
 	}
 	provider, _ := sourceDoc.ProviderBinding["provider"].(string)
 	externalID, _ := sourceDoc.ProviderBinding["document_id"].(string)
-	if (provider != "feishu" && provider != "notion") || externalID == "" {
+	if !writerDocumentProviderSupported(provider) || externalID == "" {
 		return fmt.Errorf("synchronized baseline is not bound to a supported cloud document")
 	}
 	revisedProvider, _ := revisedDoc.ProviderBinding["provider"].(string)
@@ -1122,7 +1135,7 @@ func writerArtifactData(value json.RawMessage, requireLMD bool) (json.RawMessage
 		return nil, fmt.Errorf("writer artifact has no local path")
 	}
 	if requireLMD && strings.ToLower(filepath.Ext(path)) != ".lmd" {
-		// TODO(writing-2.0): Convert Markdown to IR on its first Feishu write-back,
+		// TODO(writing-2.0): Convert Markdown to IR on its first provider write-back,
 		// resolve/create the destination, then use the provider-confirmed IR as the
 		// baseline for all later revisions.
 		return nil, fmt.Errorf("active draft_document must be an .lmd artifact")

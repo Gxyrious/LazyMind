@@ -57,6 +57,7 @@ func TestWriterProviderSelection(t *testing.T) {
 		want  string
 	}{
 		"bound provider":  {json.RawMessage(`{"provider_binding":{"provider":"notion","document_id":"page-1"}}`), "notion"},
+		"WeChat provider": {json.RawMessage(`{"provider_binding":{"provider":"wechat","document_id":"draft-1"}}`), "wechat"},
 		"target adapter":  {json.RawMessage(`{"adapter":"notion","uri":"https://notion.so/page"}`), "notion"},
 		"unbound default": {json.RawMessage(`{"document_id":"local"}`), "feishu"},
 	} {
@@ -253,6 +254,7 @@ func TestSaveWriterDocumentDraftUpdatesInPlaceAndCheckpointCreatesRevision(t *te
 				"source_document": edited.Data,
 				"representation":  "markdown",
 				"document":        edited.Data,
+				"numbering":       map[string]any{},
 				"title":           "Draft",
 			},
 		})

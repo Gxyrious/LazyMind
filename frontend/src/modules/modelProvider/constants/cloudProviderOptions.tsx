@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
-import { ApiOutlined, DatabaseOutlined, FolderOpenOutlined, GoogleOutlined } from "@ant-design/icons";
+import { ApiOutlined, DatabaseOutlined, FolderOpenOutlined, GoogleOutlined, WechatOutlined } from "@ant-design/icons";
 
-export type CloudProviderType = "local" | "feishu" | "notion" | "googledrive";
+export type CloudProviderType = "local" | "feishu" | "notion" | "googledrive" | "wechat";
 
 export const cloudProviderOptions: Array<{
   type: CloudProviderType;
@@ -27,6 +27,10 @@ export const cloudProviderOptions: Array<{
   {
     type: "googledrive",
     icon: <GoogleOutlined />,
+  },
+  {
+    type: "wechat",
+    icon: <WechatOutlined />,
   },
 ];
 

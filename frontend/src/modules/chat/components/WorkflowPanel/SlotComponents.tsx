@@ -12,6 +12,7 @@ import {
   type RewriteSelectionPreview,
   type WriterDocumentSlot,
   type WriterNumberingUpdate,
+  type WriterWriteBackProvider,
 } from "@/modules/chat/utils/request";
 import { FilePreviewDrawer } from "./FilePreviewDrawer";
 import {
@@ -54,7 +55,6 @@ import { SlotJsonSlide } from './ppt/SlotJsonSlide';
 import { isSlideSpecArtifact } from './ppt/slideSchema';
 import type { TaskArtifactStream } from '@/modules/chat/store/taskCenter';
 import { Modal, Radio, type RadioChangeEvent } from 'antd';
-import { WechatOutlined } from '@ant-design/icons';
 import { cloudProviderOptions } from '@/modules/modelProvider/constants/cloudProviderOptions';
 
 export { SlotEditingContext } from './slotEditingContext';
@@ -2484,9 +2484,19 @@ function isWriterWriteBackDisabled(
   );
 }
 
-type WriterWriteBackProvider = 'feishu' | 'notion';
+const writerProviders: WriterWriteBackProvider[] = [
+  'feishu',
+  'notion',
+  'wechat',
+];
 
-const futureWriterProviders = ['yuque', 'obsidian', 'githubWiki', 'wechatOfficialAccount'] as const;
+const futureWriterProviders = ['yuque', 'obsidian', 'githubWiki'] as const;
+
+function normalizeWriterProvider(provider?: string): WriterWriteBackProvider {
+  return writerProviders.includes(provider as WriterWriteBackProvider)
+    ? provider as WriterWriteBackProvider
+    : 'feishu';
+}
 
 function WriterProviderChoice({
   initialProvider,
@@ -2512,12 +2522,14 @@ function WriterProviderChoice({
         }}
         className='workflow-writer-provider-picker__options'
       >
-        {(['feishu', 'notion'] as const).map((item) => {
+        {writerProviders.map((item) => {
           const config = option(item);
           return (
             <Radio key={item} value={item}>
               <span className='workflow-writer-provider-picker__option'>
-                {config?.logoUrl ? <img src={config.logoUrl} alt='' aria-hidden='true' /> : config?.icon}
+                {config?.logoUrl
+                  ? <img src={config.logoUrl} alt='' aria-hidden='true' />
+                  : config?.icon}
                 <span>{tr(`chat.writerIR.providers.${item}`)}</span>
               </span>
             </Radio>
@@ -2527,7 +2539,7 @@ function WriterProviderChoice({
           <Radio key={item} value={item} disabled>
             <span className='workflow-writer-provider-picker__option'>
               <span className='workflow-writer-provider-picker__fallback-icon' aria-hidden='true'>
-                {item === 'wechatOfficialAccount' ? <WechatOutlined /> : '◇'}
+                ◇
               </span>
               <span>{tr(`chat.writerIR.providers.${item}`)}</span>
               <small>{tr('chat.writerIR.comingSoon')}</small>
@@ -2578,11 +2590,11 @@ function useRegisterWriterWriteBack({
   const writeBackUrl = serverWriteBackUrl;
 
   const [selectedProvider, setSelectedProvider] = useState<WriterWriteBackProvider>(
-    provider === 'notion' ? 'notion' : 'feishu',
+    normalizeWriterProvider(provider),
   );
 
   useEffect(() => {
-    setSelectedProvider(provider === 'notion' ? 'notion' : 'feishu');
+    setSelectedProvider(normalizeWriterProvider(provider));
   }, [provider]);
 
   const writeBack = useCallback(async (targetProvider: WriterWriteBackProvider) => {
@@ -2646,7 +2658,7 @@ function useRegisterWriterWriteBack({
       flushBeforeAction: true,
       flushKey,
       onClick: () => {
-        let chosen = provider === 'notion' ? 'notion' : selectedProvider;
+        let chosen = normalizeWriterProvider(provider || selectedProvider);
         Modal.confirm({
           title: tr('chat.writerIR.providerPickerTitle'),
           content: (
