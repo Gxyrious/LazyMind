@@ -129,8 +129,6 @@ export default function CloudDocumentProviderPanel({ vm }: { vm: CloudDocumentPr
     isGoogleDriveAuthValid,
     isWeChatOfficialAccountAuthValid,
     hasWeChatOfficialAccount,
-    isFeishuSetupReady,
-    isNotionSetupReady,
     isMailConnected,
     mailConnectionLabel,
     handleManageFeishuAuth,
@@ -164,10 +162,6 @@ export default function CloudDocumentProviderPanel({ vm }: { vm: CloudDocumentPr
             <h3>{getProviderTitle("local", t)}</h3>
             <p>{getProviderDescription("local", t, vm)}</p>
           </div>
-          <div className="model-provider-cloud-doc-resource-count">
-            <strong>{vm.localSourceCount}</strong>
-            {t("modelProvider.cloudDocuments.directoryUnit")}
-          </div>
           <div className="model-provider-cloud-doc-resource-controls">
             <button
               type="button"
@@ -192,15 +186,14 @@ export default function CloudDocumentProviderPanel({ vm }: { vm: CloudDocumentPr
             : isWeChatOfficialAccount
               ? isWeChatOfficialAccountAuthValid
               : isNotionAuthValid;
-        const isSetupReady = isFeishu ? isFeishuSetupReady : isNotionSetupReady;
         const isProviderLocked = isWeChatOfficialAccount
           ? !hasWeChatOfficialAccount
-          : !isGoogleDrive && !isAuthValid && !isSetupReady;
+          : !isAuthValid;
         const authStatusText = isAuthValid
           ? t("modelProvider.cloudDocuments.authValid")
-          : isProviderLocked
-            ? t("modelProvider.cloudDocuments.credentialMissing")
-            : t("modelProvider.cloudDocuments.authPending");
+          : isWeChatOfficialAccount && hasWeChatOfficialAccount
+            ? t("modelProvider.cloudDocuments.authPending")
+            : t("modelProvider.cloudDocuments.credentialMissing");
 
         const handleManage = () => {
           if (isFeishu) {
@@ -230,9 +223,7 @@ export default function CloudDocumentProviderPanel({ vm }: { vm: CloudDocumentPr
             </div>
             <Tag
               className="model-provider-cloud-doc-resource-status"
-              color={
-                isAuthValid ? "success" : isProviderLocked ? "default" : "processing"
-              }
+              color={isAuthValid ? "success" : isProviderLocked ? "default" : "processing"}
             >
               {authStatusText}
             </Tag>
@@ -267,7 +258,7 @@ export default function CloudDocumentProviderPanel({ vm }: { vm: CloudDocumentPr
         >
           {isMailConnected
             ? t("modelProvider.cloudDocuments.authValid")
-            : t("modelProvider.cloudDocuments.authPending")}
+            : t("modelProvider.cloudDocuments.credentialMissing")}
         </Tag>
         <div className="model-provider-cloud-doc-resource-controls">
           <button
