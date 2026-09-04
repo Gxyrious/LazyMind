@@ -66,10 +66,14 @@ from lazyllm.tools.tools.search import (
     SciverseSearch,
     TavilySearch,
 )
+from lazyllm.tools.writer.provider.wechat import (
+    prepare_wechat_cover,
+    resolve_wechat_draft_target,
+)
 
 WRITER_DATA_MODEL_SCHEMA_PREFIX = 'lazyllm.tools.writer.data_models'
 _PROVIDER_LOCATOR_RE = re.compile(
-    r"(?:https?://|[a-z][a-z0-9+.-]*:(?://)?)[^\s<>\"'，。；！？、（）【】《》「」『』]+",
+    r"(?:https?://|[a-z][a-z0-9_+.-]*:(?://)?)[^\s<>\"'，。；！？、（）【】《》「」『』]+",
     re.IGNORECASE,
 )
 _CHINESE_CHAR_LIMIT_RE = re.compile(
@@ -87,8 +91,6 @@ _SECTION_STREAM_IDLE_ERROR_RE = re.compile(
     r'(?:^|:\s)Draft (?:Markdown|IR) stream was idle for '
     r'\d+(?:\.\d+)? seconds\.$',
 )
-
-
 class _WriterRetrievalError(RuntimeError):
     def __init__(self, message: str, tools_used: list[str]):
         super().__init__(message)
@@ -578,6 +580,26 @@ def _provider_target(user_input: str, *, stage: str | None = None) -> TargetDocu
     return targets[0]
 
 
+def _source_document_target(
+    user_input: str,
+    *,
+    stage: str = 'final',
+) -> TargetDocument:
+    """Resolve one provider source target from the request."""
+    try:
+        wechat_target = resolve_wechat_draft_target(user_input, stage=stage)
+    except ValueError as exc:
+        raise ToolExecutionError(str(exc)) from exc
+    if wechat_target is not None:
+        return wechat_target
+    targets = _provider_targets(user_input, stage=stage)
+    if len(targets) > 1:
+        raise ToolExecutionError('Exactly one provider document locator is required.')
+    if targets:
+        return targets[0]
+    raise ToolExecutionError('A supported provider document locator is required.')
+
+
 def _extract_provider_resources(user_input: str) -> list[dict]:
     resources: list[dict] = []
     for idx, target in enumerate(_provider_targets(user_input)):
@@ -602,7 +624,6 @@ def _set_document_editable(value: Any, *, stage: str | None = None) -> WriterDoc
 
     def update_blocks(blocks: list[WriterBlock], level: int = 1) -> None:
         for block in blocks:
-            block.editable = True
             if stage is not None:
                 block.stage = stage
             heading_level = block.numbering.get('level')
@@ -625,6 +646,12 @@ def _target_from_document(value: Any) -> TargetDocument | None:
         doc_id=binding.get('document_id'),
         uri=binding.get('uri'),
         adapter=binding.get('provider'),
+        title=document.title or None,
+        meta={
+            key: binding[key]
+            for key in ('article_index', 'thumb_media_id', 'browser_url')
+            if binding.get(key) is not None
+        },
     )
     if target.uri or target.doc_id:
         return target
@@ -2384,7 +2411,7 @@ class WriterToolkitBase:
         if stage not in {'outline', 'draft', 'final'}:
             raise ToolExecutionError('stage must be outline, draft, or final.')
         root = _temp_root()
-        target = _provider_target(user_input, stage=stage)
+        target = _source_document_target(user_input, stage=stage)
         result = WriterResourceTools(
             llm=None, artifact_store=str(root),
         ).load_document(target)
@@ -2524,17 +2551,36 @@ class WriterToolkitBase:
         media_assets = (
             _json_loads(media_assets_json, {}) if media_assets_json.strip() else None
         )
+        if mode == 'replace':
+            from lazymind.chat.engine.tools.multimodal import image_generator
+            from lazymind.model_config import is_model_role_available
+
+            target = prepare_wechat_cover(
+                target,
+                publish_document,
+                root,
+                model_available=is_model_role_available,
+                generator=image_generator,
+            )
         write_result = (
             resource.replace_document(publish_document, target, media_assets)
             if mode == 'replace'
             else resource.append_to_document(publish_document, target, media_assets)
         )
-        refreshed = resource.load_document(TargetDocument(
-            **target.model_dump(exclude={'meta'}),
-            meta={**target.meta, 'stage': 'final'},
-        ))
-        published_value = _primary_data(refreshed)
-        if refreshed.get('representation') == 'ir':
+        artifact_paths = (write_result.get('metadata') or {}).get('artifact_paths') or {}
+        persisted_path = artifact_paths.get('persisted_document')
+        if persisted_path:
+            published_value = _read_artifact_data(persisted_path)
+            representation = str(
+                (write_result.get('metadata') or {}).get('representation') or 'ir')
+        else:
+            refreshed = resource.load_document(TargetDocument(
+                **target.model_dump(exclude={'meta'}),
+                meta={**target.meta, 'stage': 'final'},
+            ))
+            published_value = _primary_data(refreshed)
+            representation = str(refreshed.get('representation') or '')
+        if representation == 'ir':
             persisted = WriterDocument.model_validate(published_value)
             published = (
                 _merge_provider_state(publish_document, persisted)
@@ -2551,7 +2597,7 @@ class WriterToolkitBase:
                 if isinstance(published, WriterDocument)
                 else published
             ),
-            'representation': refreshed.get('representation'),
+            'representation': representation,
             'provider': str(target.adapter or ''),
             'published_link': _published_link(target),
         })

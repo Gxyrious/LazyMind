@@ -592,6 +592,72 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /api/authservice/v1/cloud/connections/{connection_id}/token:refresh:
+    post:
+      tags:
+      - cloud-oauth
+      summary: Refresh Connection Token
+      operationId: refresh_connection_token_api_authservice_v1_cloud_connections__connection_id__token_refresh_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: connection_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Connection Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CloudConnectionVerifyResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/authservice/v1/cloud/connections/internal/chat-enabled:
+    get:
+      tags:
+      - cloud-oauth
+      summary: List Chat Enabled Connections
+      description: 'Internal endpoint: list connections with chat_enabled=true for
+        a given owner.'
+      operationId: list_chat_enabled_connections_api_authservice_v1_cloud_connections_internal_chat_enabled_get
+      parameters:
+      - name: provider
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Provider
+      - name: owner_user_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Owner User Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CloudConnectionListResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/authservice/v1/cloud/connections/{connection_id}/token:
     get:
       tags:
@@ -1501,6 +1567,10 @@ components:
         client_secret:
           type: string
           title: Client Secret
+        display_name:
+          type: string
+          title: Display Name
+          default: ''
         provider_options:
           anyOf:
           - additionalProperties: true

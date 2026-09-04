@@ -74,6 +74,7 @@ from lazymind.chat.engine.tools.writer import (
     sync_writer_documents,
     writer_schema,
 )
+from lazyllm.tools.writer.provider.wechat import is_wechat_draft_revision_request
 from lazymind.chat.engine.tools.multimodal import image_generator
 from lazymind.model_config import is_model_role_available
 
@@ -1019,8 +1020,13 @@ def writer_prepare_workspace(
         if Path(path).suffix.lower() in _LOCAL_WRITER_DOCUMENT_SUFFIXES
     ]
     source_filename = str(source_filename or '').strip()
-    cloud_source_locator = _provider_document_locator(user_input or '')
-    has_cloud_source = bool(cloud_source_locator)
+    should_find_wechat_draft = is_wechat_draft_revision_request(user_input)
+    if should_find_wechat_draft:
+        source_filename = ''
+    cloud_source_locator = (
+        '' if should_find_wechat_draft else _provider_document_locator(user_input or '')
+    )
+    has_cloud_source = bool(cloud_source_locator) or should_find_wechat_draft
 
     # Models occasionally copy a provider locator into both fields.
     # Treat that as one cloud source, never as a local filename override.
@@ -1053,7 +1059,7 @@ def writer_prepare_workspace(
         'local' if source_filename or local_candidates else 'cloud'
     )
     source_ref = (
-        cloud_source_locator if cloud_source_locator else source_filename
+        cloud_source_locator or ('wechat' if should_find_wechat_draft else source_filename)
     )
 
     # The model may suggest an operation for ambiguous supplied documents, but it
