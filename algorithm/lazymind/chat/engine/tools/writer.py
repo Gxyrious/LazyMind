@@ -53,7 +53,7 @@ from lazyllm.tools.writer.numbering import (
     compute_numbering,
     materialize_markdown,
 )
-from lazyllm.tools.writer.provider import get_writer_provider, match_writer_provider
+from lazyllm.tools.writer.provider import match_writer_provider
 from lazyllm.tools.writer.utils import (
     render_block_markdown,
     save_artifact_json,
@@ -88,14 +88,6 @@ _SECTION_STREAM_IDLE_ERROR_RE = re.compile(
     r'\d+(?:\.\d+)? seconds\.$',
 )
 _WECHAT_COVER_SIZE = (900, 383)
-_WECHAT_DRAFT_REVISION_TERMS = ('微信', '公众号', '草稿箱')
-_WECHAT_REVISION_INTENT_TERMS = (
-    '修改', '改写', '重写', '润色', '编辑', '修订', '优化',
-    '删除', '删掉', '移除', '替换', '更换', '调整',
-    '扩写', '续写', '新增', '添加', '插入', '合并', '重排', '增强',
-)
-
-
 class _WriterRetrievalError(RuntimeError):
     def __init__(self, message: str, tools_used: list[str]):
         super().__init__(message)
@@ -585,33 +577,27 @@ def _provider_target(user_input: str, *, stage: str | None = None) -> TargetDocu
     return targets[0]
 
 
-def is_wechat_draft_revision_request(user_input: str) -> bool:
-    """Return whether the request explicitly targets a WeChat draft revision."""
-    request = str(user_input or '')
-    return (
-        all(term in request for term in _WECHAT_DRAFT_REVISION_TERMS)
-        and any(term in request for term in _WECHAT_REVISION_INTENT_TERMS)
-    )
-
-
 def _source_document_target(
     user_input: str,
     *,
     stage: str = 'final',
 ) -> TargetDocument:
-    """Resolve a URL-backed source or a WeChat draft title from the request."""
-    if is_wechat_draft_revision_request(user_input):
-        provider = get_writer_provider('wechat')
-        try:
-            return provider.resolve_from_prompt(user_input, stage=stage)
-        except ValueError as exc:
-            raise ToolExecutionError(str(exc)) from exc
+    """Resolve a provider document source from the request."""
     targets = _provider_targets(user_input, stage=stage)
     if len(targets) > 1:
         raise ToolExecutionError('Exactly one provider document locator is required.')
     if targets:
         return targets[0]
-    raise ToolExecutionError('A supported provider document locator is required.')
+    try:
+        provider = match_writer_provider(user_input)
+    except ValueError as exc:
+        raise ToolExecutionError('A supported provider document locator is required.') from exc
+    try:
+        target = provider.resolve(user_input)
+    except ValueError as exc:
+        raise ToolExecutionError(str(exc)) from exc
+    target.meta = {**target.meta, 'stage': stage}
+    return target
 
 
 def _extract_provider_resources(user_input: str) -> list[dict]:

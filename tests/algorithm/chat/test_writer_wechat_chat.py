@@ -14,7 +14,6 @@ from lazyllm.tools.writer.provider.wechat import WeChatWriterProvider
 from lazymind.chat.engine.tools.writer import (
     WriterResourceToolkit,
     _prepare_wechat_cover,
-    is_wechat_draft_revision_request,
 )
 from PIL import Image
 
@@ -131,7 +130,7 @@ def test_wechat_prompt_title_not_found(monkeypatch):
     ],
 )
 def test_wechat_draft_revision_requires_all_explicit_terms(prompt, expected):
-    assert is_wechat_draft_revision_request(prompt) is expected
+    assert WeChatWriterProvider.matches(prompt) is expected
 
 
 def _document() -> WriterDocument:
