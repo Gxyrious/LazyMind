@@ -253,6 +253,7 @@ func TestSaveWriterDocumentDraftUpdatesInPlaceAndCheckpointCreatesRevision(t *te
 				"source_document": edited.Data,
 				"representation":  "markdown",
 				"document":        edited.Data,
+				"numbering":       map[string]any{},
 				"title":           "Draft",
 			},
 		})
