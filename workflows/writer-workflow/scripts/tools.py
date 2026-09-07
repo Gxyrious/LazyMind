@@ -2683,12 +2683,25 @@ def _replace_document_and_read_back(
     media_library = (
         MediaAssetLibrary.model_validate(media_assets) if media_assets else None
     )
-    publish_content = content.model_copy(deep=True) \
-        if isinstance(content, WriterDocument) else content
-    serialized_content = (
-        json.dumps(publish_content.model_dump(), ensure_ascii=False)
-        if isinstance(publish_content, WriterDocument)
-        else publish_content
+    if isinstance(content, WriterDocument):
+        publish_document = content.model_copy(deep=True)
+    else:
+        publish_document = parse_document_markdown(
+            content,
+            document_id=f'writer-document-{uuid.uuid4()}',
+            stage='final',
+            media_assets=media_library,
+        )
+        if media_library is not None:
+            for block in publish_document.iter_blocks():
+                if block.type != 'image':
+                    continue
+                for reference in block.references:
+                    asset = media_library.assets.get(reference.get('id'))
+                    if asset is not None and asset.uri:
+                        reference.setdefault('path', asset.uri)
+    serialized_content = json.dumps(
+        publish_document.model_dump(), ensure_ascii=False,
     )
 
     payload = _json_loads(WriterResourceToolkit().replace_document(
