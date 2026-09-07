@@ -212,3 +212,57 @@ def test_wechat_cover_generation_does_not_run_for_existing_or_other_targets(
     assert _prepare_wechat_cover(
         notion, _document(), tmp_path, generator=generator,
     ) is notion
+
+
+@pytest.mark.parametrize('provider', ['github', 'wechat', 'feishu'])
+def test_replace_preserves_provider_specific_results(monkeypatch, tmp_path, provider):
+    from lazymind.chat.engine.tools.writer import WriterResourceTools
+
+    document = _document()
+    persisted = tmp_path / 'persisted.json'
+    persisted.write_text(document.model_dump_json())
+    write_result = tmp_path / 'write_result.json'
+    write_result.write_text(json.dumps({'success': True}))
+    monkeypatch.setattr(WriterResourceTools, 'replace_document', lambda *args: {
+        'artifact_path': str(write_result),
+        'metadata': {
+            'artifact_paths': {'persisted_document': str(persisted)},
+            'representation': 'ir',
+        },
+    })
+
+    def unexpected_reload(*args, **kwargs):
+        pytest.fail('Confirmed writes must not reload the provider document')
+
+    monkeypatch.setattr(WriterResourceTools, 'load_document', unexpected_reload)
+    target = TargetDocument(
+        adapter=provider, doc_id='existing-doc',
+        meta={'browser_url': 'https://example.test/existing-doc'},
+    )
+    content = '# GitHub draft' if provider == 'github' else document.model_dump()
+    result = json.loads(WriterResourceToolkit().replace_document(
+        content_json=json.dumps(content),
+        source_document_json='',
+        target_document_json=target.model_dump_json(),
+    ))
+
+    assert result['provider'] == provider
+    assert result['target_document']['adapter'] == provider
+    assert result['target_document']['doc_id'] == 'existing-doc'
+    assert result['representation'] == ('markdown' if provider == 'github' else 'ir')
+    if provider == 'github':
+        assert result['draft_document'] == content
+    else:
+        published = WriterDocument.model_validate(result['draft_document'])
+        assert published.document_id == document.document_id
+        assert published.title == document.title
+        assert [(b.type, b.content) for b in published.blocks] == [
+            (b.type, b.content) for b in document.blocks
+        ]
+
+
+def test_missing_provider_url_reports_writeback_error():
+    from lazymind.chat.engine.tools.writer import _published_link, ToolExecutionError
+
+    with pytest.raises(ToolExecutionError, match='no browser URL was returned'):
+        _published_link(TargetDocument(adapter='wechat', doc_id='existing-doc'))

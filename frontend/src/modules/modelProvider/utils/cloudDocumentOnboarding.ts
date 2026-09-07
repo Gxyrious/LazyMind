@@ -2,6 +2,7 @@ export type CloudDocumentGuideProvider =
   | "local"
   | "feishu"
   | "notion"
+  | "github"
   | "googledrive"
   | "wechat";
 
@@ -13,6 +14,7 @@ const CONNECTION_PROVIDERS = new Set<CloudDocumentGuideProvider>([
   "local",
   "feishu",
   "notion",
+  "github",
   "googledrive",
   "wechat",
 ]);

@@ -77,6 +77,7 @@ export default function CloudDocumentsPage() {
     (vm.canCreateLocalSource && vm.localSourceCount > 0 ? 1 : 0) +
     (vm.isFeishuAuthValid ? 1 : 0) +
     (vm.isNotionAuthValid ? 1 : 0) +
+    (vm.isGitHubAuthValid ? 1 : 0) +
     (vm.isGoogleDriveAuthValid ? 1 : 0) +
     (vm.isWeChatOfficialAccountAuthValid ? 1 : 0);
   const hasConnectedProvider = providerReadyCount > 0;
@@ -84,7 +85,7 @@ export default function CloudDocumentsPage() {
     (vm.canCreateLocalSource && vm.localSourceCount > 0) ||
     vm.isFeishuAuthValid ||
     vm.isNotionAuthValid;
-  const nonKnowledgeProviderOnly = hasConnectedProvider && !hasKnowledgeSyncProvider;
+  const chatOnly = hasConnectedProvider && !hasKnowledgeSyncProvider;
 
   useEffect(() => {
     if (vm.loading || guideInitializedRef.current) {
@@ -148,6 +149,8 @@ export default function CloudDocumentsPage() {
         vm.handleOpenNotionSetup();
       } else if (provider === "wechat") {
         vm.handleManageWeChatOfficialAccount();
+      } else if (provider === "github") {
+        vm.handleOpenGitHubSetup();
       } else {
         vm.handleManageGoogleDrive();
       }
@@ -157,7 +160,7 @@ export default function CloudDocumentsPage() {
   };
 
   const successKnowledgePath =
-    guideProvider === "googledrive" || guideProvider === "wechat"
+    guideProvider === "googledrive" || guideProvider === "github" || guideProvider === "wechat"
       ? null
       : getCloudKnowledgeCreatePath(guideProvider);
 
@@ -273,7 +276,7 @@ export default function CloudDocumentsPage() {
                 className={
                   hasKnowledgeSyncProvider
                     ? "is-unlocked"
-                    : nonKnowledgeProviderOnly
+                    : chatOnly
                       ? "is-partial"
                       : ""
                 }
@@ -305,10 +308,10 @@ export default function CloudDocumentsPage() {
                       <button
                         type="button"
                         disabled
-                        className={nonKnowledgeProviderOnly ? "is-unavailable" : ""}
+                        className={chatOnly ? "is-unavailable" : ""}
                       >
                         <FolderOpenOutlined aria-hidden="true" />
-                        {nonKnowledgeProviderOnly
+                        {chatOnly
                           ? t("modelProvider.cloudDocuments.guideKnowledgeUnavailable")
                           : t("modelProvider.cloudDocuments.guideKnowledgeCapability")}
                       </button>
@@ -316,7 +319,7 @@ export default function CloudDocumentsPage() {
                   </div>
                 </div>
                 <span className="model-provider-cloud-doc-guide-state">
-                  {nonKnowledgeProviderOnly
+                  {chatOnly
                     ? t("modelProvider.cloudDocuments.onboardingPartiallyUnlocked")
                     : hasConnectedProvider
                       ? t("modelProvider.cloudDocuments.onboardingUnlocked")
@@ -388,7 +391,9 @@ export default function CloudDocumentsPage() {
                 ? t("modelProvider.cloudDocuments.connectionSuccessGoogleDescription")
                 : guideProvider === "wechat"
                   ? t("modelProvider.cloudDocuments.connectionSuccessWeChatDescription")
-                  : t("modelProvider.cloudDocuments.connectionSuccessDescription")}
+                  : guideProvider === "github"
+                    ? t("modelProvider.cloudDocuments.connectionSuccessGitHubDescription")
+                    : t("modelProvider.cloudDocuments.connectionSuccessDescription")}
             </p>
             <div className="model-provider-cloud-doc-guide-next-list">
               <Link to={CHAT_PATH} onClick={closeGuide}>

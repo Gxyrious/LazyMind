@@ -1,7 +1,20 @@
 import type { ReactNode } from "react";
-import { ApiOutlined, DatabaseOutlined, FolderOpenOutlined, GoogleOutlined, WechatOutlined } from "@ant-design/icons";
+import {
+  ApiOutlined,
+  DatabaseOutlined,
+  FolderOpenOutlined,
+  GithubOutlined,
+  GoogleOutlined,
+  WechatOutlined,
+} from "@ant-design/icons";
 
-export type CloudProviderType = "local" | "feishu" | "notion" | "googledrive" | "wechat";
+export type CloudProviderType =
+  | "local"
+  | "feishu"
+  | "notion"
+  | "github"
+  | "googledrive"
+  | "wechat";
 
 export const cloudProviderOptions: Array<{
   type: CloudProviderType;
@@ -23,6 +36,10 @@ export const cloudProviderOptions: Array<{
     type: "notion",
     icon: <DatabaseOutlined />,
     logoUrl: "https://www.google.com/s2/favicons?domain=notion.so&sz=96",
+  },
+  {
+    type: "github",
+    icon: <GithubOutlined />,
   },
   {
     type: "googledrive",

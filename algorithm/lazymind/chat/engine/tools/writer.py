@@ -53,7 +53,11 @@ from lazyllm.tools.writer.numbering import (
     compute_numbering,
     materialize_markdown,
 )
-from lazyllm.tools.writer.provider import match_writer_provider
+from lazyllm.tools.writer.provider import (
+    get_writer_provider,
+    match_writer_provider,
+    resolve_writer_create_target,
+)
 from lazyllm.tools.writer.utils import (
     render_block_markdown,
     save_artifact_json,
@@ -607,6 +611,19 @@ def _source_document_target(
     return target
 
 
+def _provider_create_target(user_input: str) -> tuple[str, TargetDocument] | None:
+    """Resolve one deferred provider target without treating it as a source document."""
+    for match in _PROVIDER_LOCATOR_RE.finditer(user_input or ''):
+        locator = match.group(0).rstrip(').,;!?]}，。；！？】》」』')
+        try:
+            target = resolve_writer_create_target(locator)
+        except ValueError:
+            continue
+        if target.meta.get('create_pending'):
+            return locator, target
+    return None
+
+
 def _extract_provider_resources(user_input: str) -> list[dict]:
     resources: list[dict] = []
     for idx, target in enumerate(_provider_targets(user_input)):
@@ -746,7 +763,7 @@ def _prepare_wechat_cover(
 def _published_link(target: TargetDocument) -> str:
     link = str(
         target.meta.get('browser_url')
-        or (target.uri if target.uri.startswith(('http://', 'https://')) else '')
+        or (target.uri if (target.uri or '').startswith(('http://', 'https://')) else '')
     ).strip()
     if not link:
         raise ToolExecutionError(
@@ -790,6 +807,7 @@ class WriterToolkitBase:
     def build_resources(
         self,
         file_paths_json: str = '[]',
+        input_resources_json: str = '[]',
         source_document_json: str = '',
         knowledge_text: str = '',
     ) -> str:
@@ -797,7 +815,12 @@ class WriterToolkitBase:
         file_paths = _json_loads(file_paths_json, [])
         if not isinstance(file_paths, list):
             raise ToolExecutionError('file_paths_json must be a JSON array.')
-        resources = [{
+        resources = _json_loads(input_resources_json, [])
+        if not isinstance(resources, list):
+            raise ToolExecutionError('input_resources_json must be a JSON array.')
+        resources = [dict(item) for item in resources if isinstance(item, dict)]
+        known_uris = {str(item.get('uri') or '') for item in resources}
+        resources += [{
             'resource_id': os.path.basename(path),
             'resource_type': 'file',
             'uri': path,
@@ -805,7 +828,7 @@ class WriterToolkitBase:
             'mime_type': None,
             'summary': None,
             'meta': {},
-        } for path in file_paths]
+        } for path in file_paths if str(path) not in known_uris]
 
         if source_document_json:
             source = _document_value(source_document_json)
@@ -2485,10 +2508,16 @@ class WriterToolkitBase:
         result = WriterResourceTools(
             llm=None, artifact_store=str(root),
         ).load_document(target)
+        artifact_paths = (result.get('metadata') or {}).get('artifact_paths') or {}
         return _json_dumps({
             'source_document': _primary_data(result),
             'target_document': _result_data(result, 'target_document'),
             'representation': result.get('representation'),
+            'input_resources': (
+                _result_data(result, 'input_resources')
+                if artifact_paths.get('input_resources') else []
+            ),
+            'resource_warnings': (result.get('metadata') or {}).get('warnings') or [],
         })
 
     def create_document(self, title: str, parent_uri: str = '', adapter: str = '') -> str:
@@ -2555,6 +2584,7 @@ class WriterToolkitBase:
         source_document_json: str,
         target_document_json: str = '',
         target_uri: str = '',
+        target_title: str = '',
         media_assets_json: str = '',
     ) -> str:
         """Replace a provider document with the selected Writer IR or Markdown."""
@@ -2564,6 +2594,7 @@ class WriterToolkitBase:
             source_document_json=source_document_json,
             target_document_json=target_document_json,
             target_uri=target_uri,
+            target_title=target_title,
             media_assets_json=media_assets_json,
         )
 
@@ -2601,6 +2632,7 @@ class WriterToolkitBase:
         source_document_json: str = '',
         target_document_json: str = '',
         target_uri: str = '',
+        target_title: str = '',
         media_assets_json: str = '',
     ) -> str:
         root = _temp_root()
@@ -2610,6 +2642,8 @@ class WriterToolkitBase:
         target = _resolve_target(source, target_document_json, target_uri)
         if target is None:
             raise ToolExecutionError('A target provider document is required.')
+        if target.meta.get('create_pending') and not target.title and target_title.strip():
+            target.title = target_title.strip()
         publish_document = (
             _set_document_editable(document, stage='final')
             if isinstance(document, dict)
@@ -2628,6 +2662,25 @@ class WriterToolkitBase:
             if mode == 'replace'
             else resource.append_to_document(publish_document, target, media_assets)
         )
+        if str(target.adapter or '').strip().lower() == 'github':
+            published_result = _primary_data(write_result)
+            if published_result.get('success') is not True:
+                raise ToolExecutionError('GitHub did not confirm that the document was written.')
+            return _json_dumps({
+                'publish_result': published_result,
+                'draft_document': (
+                    publish_document.model_dump(exclude_defaults=True)
+                    if isinstance(publish_document, WriterDocument)
+                    else publish_document
+                ),
+                'representation': (
+                    'ir' if isinstance(publish_document, WriterDocument) else 'markdown'
+                ),
+                'provider': 'github',
+                'published_link': _published_link(target),
+                'target_document': target.model_dump(exclude_defaults=True),
+            })
+        refreshed_target = target.model_dump(exclude_defaults=True)
         artifact_paths = (write_result.get('metadata') or {}).get('artifact_paths') or {}
         persisted_path = artifact_paths.get('persisted_document')
         if persisted_path:
@@ -2640,6 +2693,7 @@ class WriterToolkitBase:
                 meta={**target.meta, 'stage': 'final'},
             ))
             published_value = _primary_data(refreshed)
+            refreshed_target = _result_data(refreshed, 'target_document')
             representation = str(refreshed.get('representation') or '')
         if representation == 'ir':
             persisted = WriterDocument.model_validate(published_value)
@@ -2661,6 +2715,7 @@ class WriterToolkitBase:
             'representation': representation,
             'provider': str(target.adapter or ''),
             'published_link': _published_link(target),
+            'target_document': refreshed_target,
         })
 
 
@@ -2703,6 +2758,43 @@ class WriterRevisionToolkit(WriterToolkitBase):
 
 class WriterResourceToolkit(WriterToolkitBase):
     """Load and persist WriterDocuments through provider-neutral resource tools."""
+
+    def resolve_create_target(self, user_input: str) -> str:
+        """Resolve an optional deferred provider target for a new document."""
+        resolved = _provider_create_target(user_input)
+        if resolved is None:
+            return _json_dumps({})
+        locator, target = resolved
+        return _json_dumps({
+            'target_ref': locator,
+            'target_document': target.model_dump(exclude_defaults=True),
+        })
+
+    def prepare_markdown_for_editor(
+        self,
+        markdown: str,
+        target_document_json: str,
+    ) -> str:
+        """Prepare Markdown for the editor through an optional provider capability."""
+        target = TargetDocument.model_validate(
+            _json_loads(target_document_json, {}),
+        )
+        provider_name = str(target.adapter or '').strip()
+        if not provider_name:
+            return _json_dumps({'markdown': markdown, 'target_document': None})
+        provider = get_writer_provider(provider_name)
+        prepare = getattr(provider, 'normalize_code_fences_for_writer', None)
+        if not callable(prepare):
+            return _json_dumps({'markdown': markdown, 'target_document': None})
+        original_target = target.model_dump()
+        prepared = prepare(markdown, target)
+        changed = prepared != markdown or target.model_dump() != original_target
+        return _json_dumps({
+            'markdown': prepared,
+            'target_document': (
+                target.model_dump(exclude_defaults=True) if changed else None
+            ),
+        })
 
     __public_apis__ = [
         'load_document', 'create_document', 'publish_revision',

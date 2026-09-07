@@ -2,7 +2,9 @@ function getBaseName() {
   return ((window as Window & { BASENAME?: string }).BASENAME || "").trim();
 }
 
-export function getCloudDocumentsUrl(provider?: "feishu" | "notion" | "local" | "googledrive" | "gmail" | "wechat") {
+export function getCloudDocumentsUrl(
+  provider?: "feishu" | "notion" | "github" | "local" | "googledrive" | "gmail" | "wechat",
+) {
   const baseName = getBaseName().replace(/\/$/, "");
   if (provider === "feishu") {
     return `${window.location.origin}${baseName}/cloud-documents/feishu`;
