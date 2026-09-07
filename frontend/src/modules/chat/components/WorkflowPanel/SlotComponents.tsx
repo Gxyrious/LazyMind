@@ -56,6 +56,7 @@ import { isSlideSpecArtifact } from './ppt/slideSchema';
 import type { TaskArtifactStream } from '@/modules/chat/store/taskCenter';
 import { Modal, Radio, type RadioChangeEvent } from 'antd';
 import { cloudProviderOptions } from '@/modules/modelProvider/constants/cloudProviderOptions';
+import { isVideoArtifactValue } from './artifactMedia';
 
 export { SlotEditingContext } from './slotEditingContext';
 export type { SlotEditingContextValue } from './slotEditingContext';
@@ -4811,6 +4812,61 @@ export function SlotFile({ slot, sessionId, slotId, revisionCount, onRefresh, re
   );
 }
 
+export function SlotVideo({ slot, sessionId, slotId, revisionCount, onRefresh }: SlotFileProps) {
+  const allowDownload = useContext(SlotDownloadContext);
+  const raw = slot.artifact_value;
+  const rawPath = String(raw?.url ?? raw?.path ?? '').trim();
+  const name = String(raw?.filename ?? raw?.name ?? rawPath.split('/').pop() ?? slot.slot);
+  const { url, resolving, hasSource } = useArtifactFileUrl(raw);
+  const showVersionBadge = revisionCount !== undefined
+    && revisionCount > 0
+    && Boolean(sessionId && slotId);
+
+  if (!hasSource || resolving || !url) return <SlotPending type='file' />;
+
+  return (
+    <div className='workflow-slot workflow-slot--video'>
+      <video
+        className='workflow-slot__video'
+        src={url}
+        autoPlay
+        loop
+        muted
+        playsInline
+        controls
+        preload='auto'
+        aria-label={name}
+      />
+      {showVersionBadge && (
+        <div className='workflow-slot__version-overlay-badge'>
+          <SlotVersionPopover
+            sessionId={sessionId!}
+            slotId={slotId!}
+            listIndex={slot.list_index ?? -1}
+            revisionCount={revisionCount!}
+            currentRevision={slot.revision}
+            currentVersionNumber={slot.version_number}
+            currentValue={slot.artifact_value}
+            currentChangeSource={slot.change_source}
+            contentType='file'
+            onRollbackDone={onRefresh}
+          />
+        </div>
+      )}
+      {allowDownload && (
+        <a
+          className='workflow-slot__download-btn--overlay'
+          href={url}
+          download={name}
+          title={tr('chat.slots.download')}
+          aria-label={tr('chat.slots.download')}
+          onClick={(event) => event.stopPropagation()}
+        >↓</a>
+      )}
+    </div>
+  );
+}
+
 function SlotHtmlFilePreview({
   slot,
   sessionId,
@@ -5046,6 +5102,9 @@ export function SlotRenderer({
         readOnly={effectiveReadOnly}
       />
     );
+  }
+  if (normalized === 'file' && isVideoArtifactValue(slot.artifact_value)) {
+    return <SlotVideo slot={slot} sessionId={sessionId} slotId={slotId} revisionCount={revisionCount} onRefresh={onRefresh} readOnly={effectiveReadOnly} />;
   }
   if (normalized === 'file') return <SlotFile slot={slot} sessionId={sessionId} slotId={slotId} revisionCount={revisionCount} onRefresh={onRefresh} readOnly={effectiveReadOnly} />;
   return (
