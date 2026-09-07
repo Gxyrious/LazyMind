@@ -191,6 +191,7 @@ ALTER TABLE conversations
 ALTER TABLE plugin_sessions ADD COLUMN IF NOT EXISTS origin_host VARCHAR(32) NOT NULL DEFAULT 'lazymind';
 ALTER TABLE plugin_sessions ADD COLUMN IF NOT EXISTS origin_ref VARCHAR(255) NOT NULL DEFAULT '';
 ALTER TABLE plugin_sessions ADD COLUMN IF NOT EXISTS controller_host VARCHAR(32) NOT NULL DEFAULT 'lazymind';
+ALTER TABLE plugin_sessions ADD COLUMN IF NOT EXISTS workflow_mode VARCHAR(16) NOT NULL DEFAULT 'dynamic';
 CREATE INDEX IF NOT EXISTS idx_plugin_sessions_origin ON plugin_sessions(origin_host, origin_ref);
 
 -- +migrate Dialect sqlite
@@ -283,6 +284,7 @@ ALTER TABLE conversations
 ALTER TABLE plugin_sessions ADD COLUMN origin_host varchar(32) NOT NULL DEFAULT 'lazymind';
 ALTER TABLE plugin_sessions ADD COLUMN origin_ref varchar(255) NOT NULL DEFAULT '';
 ALTER TABLE plugin_sessions ADD COLUMN controller_host varchar(32) NOT NULL DEFAULT 'lazymind';
+ALTER TABLE plugin_sessions ADD COLUMN workflow_mode varchar(16) NOT NULL DEFAULT 'dynamic';
 CREATE INDEX IF NOT EXISTS idx_plugin_sessions_origin ON plugin_sessions(origin_host, origin_ref);
 
 -- +migrate Dialect postgres
@@ -1414,6 +1416,28 @@ DROP INDEX IF EXISTS uk_skills_owner_relative_root;
 CREATE UNIQUE INDEX uk_skills_owner_relative_root
     ON skills(owner_user_id, relative_root)
     WHERE deleted_at IS NULL;
+
+-- +migrate Dialect postgres
+CREATE TABLE IF NOT EXISTS public.workflow_approval_preferences (
+    user_id VARCHAR(255) NOT NULL,
+    workflow_id VARCHAR(64) NOT NULL,
+    step_id VARCHAR(64) NOT NULL,
+    approval_required BOOLEAN NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    PRIMARY KEY (user_id, workflow_id, step_id)
+);
+
+-- +migrate Dialect sqlite
+CREATE TABLE IF NOT EXISTS workflow_approval_preferences (
+    user_id VARCHAR(255) NOT NULL,
+    workflow_id VARCHAR(64) NOT NULL,
+    step_id VARCHAR(64) NOT NULL,
+    approval_required BOOLEAN NOT NULL,
+    created_at DATETIME NOT NULL,
+    updated_at DATETIME NOT NULL,
+    PRIMARY KEY (user_id, workflow_id, step_id)
+);
 
 -- +migrate Dialect postgres
 ALTER TABLE public.resource_update_tasks
