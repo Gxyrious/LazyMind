@@ -507,6 +507,68 @@ describe('WriterIRDocumentEditor cross-reference menu', () => {
     });
   });
 
+  it.each(['1.1', '3.2'])('displays independent heading number %s and preserves the reference target', async (label) => {
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+      configurable: true,
+      value: vi.fn(),
+    });
+    const onCrossReferenceApplied = vi.fn();
+    const { container } = render(
+      <WriterIRDocumentEditor
+        document={{
+          ...document,
+          blocks: document.blocks.map((block) => block.type === 'heading'
+            ? { ...block, content: 'Target section' }
+            : block),
+        }}
+        numbering={{ entries: { 'sec-1': { label } } }}
+        ariaLabel='Writer document'
+        onChange={vi.fn()}
+        onCrossReferenceApplied={onCrossReferenceApplied}
+        onFocus={vi.fn()}
+        onBlur={vi.fn()}
+      />,
+    );
+    const paragraph = container.querySelector<HTMLElement>(
+      '[data-node-id="p-1"] [data-writer-block-content]',
+    );
+    const textNode = paragraph?.firstChild;
+    expect(paragraph).not.toBeNull();
+    expect(textNode).not.toBeNull();
+
+    const range = window.document.createRange();
+    range.setStart(textNode!, 0);
+    range.setEnd(textNode!, 5);
+    Object.defineProperty(range, 'getBoundingClientRect', { value: selectionRect });
+    Object.defineProperty(range, 'getClientRects', { value: () => [selectionRect()] });
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    fireEvent.mouseUp(paragraph!);
+
+    const trigger = await screen.findByRole('button', {
+      name: 'chat.writerIR.crossReference',
+    });
+    expect((trigger as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.mouseDown(trigger);
+    fireEvent.click(trigger);
+
+    expect(screen.getByTestId('selection-highlight').getAttribute('data-active')).toBe('true');
+    fireEvent.click(screen.getByTitle(`${label} Target section`));
+
+    expect(onCrossReferenceApplied).toHaveBeenCalledTimes(1);
+    const updated = onCrossReferenceApplied.mock.calls[0][0] as WriterDocument;
+    const paragraphBlock = updated.blocks.find((block) => block.node_id === 'p-1');
+    expect(paragraphBlock?.spans?.map((span) => span.text).join('')).toBe('Alpha beta gamma');
+    expect(getWriterInternalReference(paragraphBlock?.spans?.[0] ?? { text: '' })).toMatchObject({
+      targetNodeId: 'sec-1',
+      displayText: 'Alpha',
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId('selection-highlight').getAttribute('data-active')).toBe('false');
+    });
+  });
+
   it('applies a cross-reference to an image target without changing the selected wording', async () => {
     const onCrossReferenceApplied = vi.fn();
     const { container } = render(
