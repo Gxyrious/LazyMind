@@ -241,7 +241,7 @@ export interface WriteBackWriterDocumentResult {
   write_result?: Record<string, unknown>;
 }
 
-export type WriterWriteBackProvider = 'feishu' | 'notion' | 'github' | 'wechat';
+export type WriterWriteBackProvider = 'feishu' | 'notion' | 'github' | 'wechat' | 'obsidian';
 
 export interface WriteBackWriterDocumentRequest {
   base_revision: number;

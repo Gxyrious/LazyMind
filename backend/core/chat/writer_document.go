@@ -18,6 +18,7 @@ import (
 	"lazymind/core/common/orm"
 	"lazymind/core/doc"
 	"lazymind/core/log"
+	"lazymind/core/modelconfig"
 	"lazymind/core/store"
 	"lazymind/core/workflow"
 
@@ -110,9 +111,13 @@ func writerProviderToolConfig(toolConfig map[string]any, provider string) (map[s
 	return map[string]any{provider: credential}, true
 }
 
+func writerProviderRequiresToolConfig(provider string) bool {
+	return modelconfig.IsCloudToolProvider(canonicalWriterProvider(provider))
+}
+
 func writerDocumentProviderSupported(provider string) bool {
 	switch canonicalWriterProvider(provider) {
-	case "feishu", "notion", "wechat", "github":
+	case "feishu", "notion", "wechat", "github", "obsidian":
 		return true
 	default:
 		return false
@@ -206,17 +211,23 @@ func SyncWriterDocument(w http.ResponseWriter, r *http.Request) {
 		}, http.StatusConflict)
 		return
 	}
-	toolConfig, err := loadChatToolConfig(ctx, db, userID)
-	if err != nil {
-		common.ReplyErr(w, "load cloud document authorization failed", http.StatusBadGateway)
-		return
-	}
-	providerConfig, ok := writerProviderToolConfig(toolConfig, provider)
-	if !ok {
-		common.ReplyErrWithData(w, "cloud document authorization required", map[string]any{
-			"status": provider + "_configuration_required", "provider": provider,
-		}, http.StatusUnauthorized)
-		return
+	var (
+		providerConfig map[string]any
+		ok             bool
+	)
+	if writerProviderRequiresToolConfig(provider) {
+		toolConfig, err := loadChatToolConfig(ctx, db, userID)
+		if err != nil {
+			common.ReplyErr(w, "load cloud document authorization failed", http.StatusBadGateway)
+			return
+		}
+		providerConfig, ok = writerProviderToolConfig(toolConfig, provider)
+		if !ok {
+			common.ReplyErrWithData(w, "cloud document authorization required", map[string]any{
+				"status": provider + "_configuration_required", "provider": provider,
+			}, http.StatusUnauthorized)
+			return
+		}
 	}
 	result, status, err := algo.SyncWriterDocument(ctx, algo.WriterDocumentSyncRequest{
 		WorkflowID: session.WorkflowID, RevisionID: session.WorkflowRevisionID,
@@ -757,17 +768,20 @@ func WriteBackWriterDocument(w http.ResponseWriter, r *http.Request) {
 		syncRequest.TargetDocument = nil
 	}
 	syncRequest.Adapter = provider
-	toolConfig, err := loadChatToolConfig(ctx, db, userID)
-	if err != nil {
-		common.ReplyErr(w, "load cloud document authorization failed", http.StatusBadGateway)
-		return
-	}
-	providerConfig, ok := writerProviderToolConfig(toolConfig, provider)
-	if !ok {
-		common.ReplyErrWithData(w, "cloud document authorization required", map[string]any{
-			"status": provider + "_configuration_required", "provider": provider,
-		}, http.StatusBadRequest)
-		return
+	var providerConfig map[string]any
+	if writerProviderRequiresToolConfig(provider) {
+		toolConfig, err := loadChatToolConfig(ctx, db, userID)
+		if err != nil {
+			common.ReplyErr(w, "load cloud document authorization failed", http.StatusBadGateway)
+			return
+		}
+		providerConfig, ok = writerProviderToolConfig(toolConfig, provider)
+		if !ok {
+			common.ReplyErrWithData(w, "cloud document authorization required", map[string]any{
+				"status": provider + "_configuration_required", "provider": provider,
+			}, http.StatusBadRequest)
+			return
+		}
 	}
 	syncRequest.ToolConfig = providerConfig
 	result, status, err := algo.SyncWriterDocument(ctx, syncRequest)
@@ -1548,13 +1562,19 @@ func loadWriterWriteBackArtifact(value json.RawMessage) (*writerWriteBackArtifac
 		if strings.TrimSpace(string(content)) == "" {
 			return nil, fmt.Errorf("active draft_document Markdown is empty")
 		}
-		filename := record.Filename
+		filename := strings.TrimSpace(record.Filename)
 		if filename == "" {
 			filename = filepath.Base(cleanPath)
 		}
+		title := strings.TrimSpace(record.Meta.Title)
+		normalizedFilename := strings.ToLower(filepath.Base(filename))
+		if title == "" && normalizedFilename != "draft_document.md" &&
+			normalizedFilename != "flat_draft_document.md" {
+			title = strings.TrimSuffix(filename, filepath.Ext(filename))
+		}
 		return &writerWriteBackArtifact{
 			Format: "markdown", Markdown: string(content),
-			Title: strings.TrimSuffix(filename, filepath.Ext(filename)),
+			Title: title,
 		}, nil
 	case ".lmd":
 		document, dataErr := writerArtifactData(content, false)
