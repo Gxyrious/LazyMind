@@ -26,6 +26,8 @@ def test_v1_registry_has_exact_actions_phases_and_immutable_specs():
         for reference, phases in specs.items()
     } == {
         "builtin:document.rewrite_selection.v1": {"preview", "execute"},
+        "builtin:document.list_cross_reference_targets.v1": {"preview"},
+        "builtin:document.update_cross_reference.v1": {"preview", "execute"},
         "builtin:document.render_document.v1": {"preview", "execute"},
         "builtin:document.save_document.v1": {"execute"},
         "builtin:document.sync_document.v1": {"execute"},
@@ -179,6 +181,107 @@ def test_rewrite_execute_uses_exact_preview_without_second_model_call(
         )
     assert stale.value.error_code == "SELECTION_STALE"
     assert stale.value.status_code == 409
+
+
+def test_markdown_cross_reference_actions_add_retarget_and_remove(tmp_path):
+    source = (
+        '# Document\n\n'
+        '<a id="block-first"></a>\n## First\n\n'
+        '<a id="block-second"></a>\n## Second\n\n'
+        '<a id="block-diagram"></a>\n![Diagram](diagram.png)\n\n'
+        'See this section and [old text](#block-deleted).\n'
+    )
+    listed = invoke_document_action(
+        'builtin:document.list_cross_reference_targets.v1',
+        'preview', {}, artifact=source,
+    )
+    assert [target['target_id'] for target in listed['targets']] == [
+        'first', 'second', 'diagram',
+    ]
+    assert [target['type'] for target in listed['targets']] == [
+        'heading', 'heading', 'image',
+    ]
+    assert listed['invalid_references'] == [{'target_id': 'deleted'}]
+
+    added = invoke_document_action(
+        'builtin:document.update_cross_reference.v1',
+        'preview',
+        {
+            'operation': 'add',
+            'selection': {'type': 'markdown', 'selected_text': 'this section'},
+            'target_id': 'first',
+        },
+        artifact=source,
+        artifact_store=str(tmp_path),
+    )
+    added_document = added['artifact']['value']
+    assert '[this section](#block-first)' in added_document
+    executed = invoke_document_action(
+        'builtin:document.update_cross_reference.v1',
+        'execute',
+        {'commit_token': added['commit']['token']},
+        artifact=source,
+        artifact_store=str(tmp_path),
+    )
+    assert executed['artifact']['value'] == added_document
+
+    retargeted = invoke_document_action(
+        'builtin:document.update_cross_reference.v1',
+        'preview',
+        {
+            'operation': 'retarget',
+            'selection': {'type': 'markdown', 'selected_text': 'this section'},
+            'target_id': 'second',
+        },
+        artifact=executed['artifact']['value'],
+        artifact_store=str(tmp_path),
+    )
+    retargeted_document = retargeted['artifact']['value']
+    assert '[this section](#block-second)' in retargeted_document
+
+    removed = invoke_document_action(
+        'builtin:document.update_cross_reference.v1',
+        'preview',
+        {
+            'operation': 'remove',
+            'selection': {'type': 'markdown', 'selected_text': 'this section'},
+        },
+        artifact=retargeted_document,
+        artifact_store=str(tmp_path),
+    )
+    assert 'See this section and' in removed['artifact']['value']
+    assert '#block-second' not in removed['artifact']['value']
+
+
+def test_ir_cross_reference_action_uses_existing_internal_ref_spans(tmp_path):
+    source = {
+        'document_id': 'document-1',
+        'blocks': [
+            {'node_id': 'target', 'type': 'heading', 'content': 'Target'},
+            {'node_id': 'body', 'type': 'paragraph', 'content': 'See target'},
+        ],
+    }
+    preview = invoke_document_action(
+        'builtin:document.update_cross_reference.v1',
+        'preview',
+        {
+            'operation': 'add',
+            'selection': {
+                'type': 'ir', 'node_id': 'body', 'selected_text': 'target',
+            },
+            'target_id': 'target',
+        },
+        artifact=source,
+        artifact_store=str(tmp_path),
+    )
+
+    spans = preview['artifact']['value']['blocks'][1]['spans']
+    assert spans[1] == {
+        'text': 'target',
+        'style': {
+            'link': {'type': 'internal_ref', 'target_node_id': 'target'},
+        },
+    }
 
 
 def test_invalid_handler_result_is_an_upstream_failure(monkeypatch):
