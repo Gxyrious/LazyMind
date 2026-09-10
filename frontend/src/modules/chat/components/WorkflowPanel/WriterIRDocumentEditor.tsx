@@ -1806,8 +1806,16 @@ export function WriterIRDocumentEditor({
   );
   const referenceTargets = useMemo(
     () => collectWriterReferenceTargets(document.blocks)
-      .filter((target) => target.nodeId !== activeBlock?.node_id),
-    [activeBlock?.node_id, document.blocks],
+      .filter((target) => target.nodeId !== activeBlock?.node_id)
+      .map((target) => {
+        const numberingLabel = target.type === 'heading'
+          ? numbering?.entries[target.nodeId]?.label
+          : undefined;
+        return numberingLabel
+          ? { ...target, label: `${numberingLabel} ${target.label}` }
+          : target;
+      }),
+    [activeBlock?.node_id, document.blocks, numbering],
   );
 
   const updateFormatToolbarPosition = useCallback(() => {

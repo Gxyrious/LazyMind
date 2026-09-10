@@ -2691,7 +2691,6 @@ function isWriterWriteBackDisabled(
 export type { WriterWriteBackProvider } from '@/modules/chat/utils/request';
 
 const writerWriteBackProviders = ['feishu', 'notion', 'github', 'wechat', 'obsidian'] as const;
-const futureWriterProviders = ['yuque'] as const;
 const obsidianLogoUrl = 'https://obsidian.md/images/obsidian-logo-gradient.svg';
 
 function ObsidianWriterProviderIcon() {
@@ -2762,17 +2761,6 @@ export function WriterProviderChoice({
             </Radio>
           );
         })}
-        {futureWriterProviders.map((item) => (
-          <Radio key={item} value={item} disabled>
-            <span className='workflow-writer-provider-picker__option'>
-              <span className='workflow-writer-provider-picker__fallback-icon' aria-hidden='true'>
-                ◇
-              </span>
-              <span>{tr(`chat.writerIR.providers.${item}`)}</span>
-              <small>{tr('chat.writerIR.comingSoon')}</small>
-            </span>
-          </Radio>
-        ))}
       </Radio.Group>
     </div>
   );
