@@ -167,7 +167,7 @@ def test_document_provider_projection_matches_registered_adapters():
     providers = {provider['id']: provider['capabilities']
                  for provider in list_document_providers()}
 
-    assert set(providers) == {'feishu', 'github', 'notion', 'wechat'}
+    assert set(providers) == {'feishu', 'github', 'notion', 'obsidian', 'wechat'}
     assert 'append' in providers['github']
     assert 'append' not in providers['wechat']
 
@@ -516,6 +516,100 @@ def test_write_consumes_conversion_without_converting_again(monkeypatch):
         target_document_json=json.dumps({"adapter": "fake", "doc_id": "remote-1"}),
     ))
     assert serialized["publish_result"]["persisted_document"]["document_id"] == "local-1"
+
+
+def test_write_uses_provider_supplied_empty_published_link(monkeypatch):
+    source = WriterDocument(
+        document_id="local-1",
+        title="Draft",
+        stage="final",
+        blocks=[WriterBlock(node_id="body", type="paragraph", content="content")],
+    )
+    converted = WriterProviderDocument(
+        provider="obsidian",
+        format="markdown",
+        content="# Draft\n",
+        source_document=source,
+    )
+
+    class FakeProvider:
+        def require_capability(self, _capability):
+            pass
+
+        def write_document(self, _document, _target, **_kwargs):
+            return {
+                "doc_id": "vlt_test:Draft.md",
+                "adapter": "obsidian",
+                "locator": "obsidian://vlt_test/Draft.md",
+                "persisted_document": "# Draft\n",
+                "representation": "markdown",
+                "published_link": "",
+            }
+
+    monkeypatch.setattr(
+        document_resources, "get_writer_provider", lambda _provider: FakeProvider()
+    )
+
+    result = document_resources.write_document(
+        converted.model_dump(),
+        target_document={
+            "adapter": "obsidian",
+            "uri": "obsidian://vlt_test/Draft.md",
+        },
+    )
+
+    assert "published_link" not in result
+    serialized = json.loads(WriterResourceCapabilities().write_document(
+        converted_document_json=converted.model_dump_json(),
+        target_document_json=json.dumps({
+            "adapter": "obsidian",
+            "uri": "obsidian://vlt_test/Draft.md",
+        }),
+    ))
+    assert serialized["published_link"] == ""
+
+
+def test_write_strips_provider_supplied_published_link(monkeypatch):
+    source = WriterDocument(
+        document_id="local-1",
+        title="Draft",
+        stage="final",
+        blocks=[WriterBlock(node_id="body", type="paragraph", content="content")],
+    )
+    converted = WriterProviderDocument(
+        provider="obsidian",
+        format="markdown",
+        content="# Draft\n",
+        source_document=source,
+    )
+
+    class FakeProvider:
+        def require_capability(self, _capability):
+            pass
+
+        def write_document(self, _document, _target, **_kwargs):
+            return {
+                "doc_id": "vlt_test:Draft.md",
+                "adapter": "obsidian",
+                "locator": "obsidian://vlt_test/Draft.md",
+                "persisted_document": "# Draft\n",
+                "representation": "markdown",
+                "published_link": "  https://example.test/doc  ",
+            }
+
+    monkeypatch.setattr(
+        document_resources, "get_writer_provider", lambda _provider: FakeProvider()
+    )
+
+    serialized = json.loads(WriterResourceCapabilities().write_document(
+        converted_document_json=converted.model_dump_json(),
+        target_document_json=json.dumps({
+            "adapter": "obsidian",
+            "uri": "obsidian://vlt_test/Draft.md",
+        }),
+    ))
+
+    assert serialized["published_link"] == "https://example.test/doc"
 
 
 def test_write_keeps_local_image_reference_after_provider_readback(monkeypatch):

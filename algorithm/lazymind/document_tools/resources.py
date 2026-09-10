@@ -637,12 +637,18 @@ class WriterResourceCapabilities:
             mode=mode,
         )
         target = TargetDocument.model_validate(payload['target_document'])
+        write_result = payload.get('write_result')
+        published_link = (
+            str(write_result.get('published_link') or '').strip()
+            if isinstance(write_result, Mapping) and 'published_link' in write_result
+            else _published_link(target)
+        )
         return _json_dumps({
             'publish_result': payload['write_result'],
             'draft_document': payload['persisted_document'],
             'representation': payload['representation'],
             'provider': payload['provider'],
-            'published_link': _published_link(target),
+            'published_link': published_link,
             'target_document': payload['target_document'],
         })
 
