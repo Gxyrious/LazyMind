@@ -1,6 +1,13 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, cleanup } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import { ArtifactRewriteDialog, type ArtifactRewriteSelection } from './ArtifactRewriteDialog';
+import { ArtifactRewriteDialog, ArtifactRewriteInlineDiff, type ArtifactRewriteSelection } from './ArtifactRewriteDialog';
+
+const previewApi = vi.hoisted(() => vi.fn());
+const executeApi = vi.hoisted(() => vi.fn());
+vi.mock('@/modules/chat/utils/request', async (original) => ({
+  ...await original<typeof import('@/modules/chat/utils/request')>(),
+  WorkflowSessionApi: () => ({ previewRewriteSelection: previewApi, executeArtifactAction: executeApi }),
+}));
 
 vi.mock('react-i18next', async (importOriginal) => {
   const actual = await importOriginal<typeof import('react-i18next')>();
@@ -36,6 +43,55 @@ function renderDialog(requestPreview = vi.fn()) {
 }
 
 describe('ArtifactRewriteDialog', () => {
+  it('accepts the single paragraph with the preview commit token', async () => {
+    const target = document.createElement('p');
+    target.textContent = 'Original';
+    const layer = document.createElement('div');
+    document.body.append(target, layer);
+    executeApi.mockResolvedValue({ data: { code: 0, data: { status: 'applied', revision: 5 } } });
+    const onApplied = vi.fn();
+    try {
+      render(<ArtifactRewriteInlineDiff target={target} layer={layer} sessionId='session'
+        slotId='draft_document' listIndex={-1} onApplied={onApplied} onReject={vi.fn()}
+        preview={{ status: 'ready', action: 'rewrite_selection', base_revision: 4,
+          representation: 'markdown', target: { type: 'block', block_type: 'paragraph' },
+          preview: { old_text: 'Original', new_text: 'Polished' },
+          patch: { type: 'string_replace_set', payload: {} },
+          artifact: { content_type: 'text', value: 'Polished' }, commit: { token: 'preview-token' } }} />);
+      fireEvent.click(screen.getByRole('button', { name: 'chat.artifactRewrite.apply' }));
+      await waitFor(() => expect(onApplied).toHaveBeenCalledWith(5));
+      expect(executeApi).toHaveBeenCalledWith('session', 'draft_document', -1, {
+        action: 'rewrite_selection', base_revision: 4, input: { commit_token: 'preview-token' },
+      });
+    } finally {
+      cleanup();
+      target.remove();
+      layer.remove();
+    }
+  });
+  it.each(['ir', 'markdown'] as const)('sends %s type once with one selected paragraph', async (type) => {
+    const selected = type === 'ir'
+      ? { type, node_id: 'p1', selectedText: 'Selected text' }
+      : selection;
+    previewApi.mockResolvedValue({ data: { data: {
+      status: 'ready', action: 'rewrite_selection', base_revision: 1, representation: type,
+      target: { type: 'block', block_type: 'paragraph' },
+      preview: { old_text: 'Full paragraph', new_text: 'Polished paragraph' },
+      patch: { type: type === 'ir' ? 'writer_ir_patch' : 'string_replace_set', payload: {} },
+      artifact: { content_type: 'text', value: 'Polished paragraph' },
+    } } });
+    const onPreviewReady = vi.fn();
+    render(<ArtifactRewriteDialog open sessionId='session' slotId='draft_document' listIndex={-1}
+      baseRevision={1} selection={selected} onClose={vi.fn()} onApplied={vi.fn()}
+      onPreviewReady={onPreviewReady} />);
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Polish' } });
+    fireEvent.click(screen.getByRole('button', { name: 'chat.artifactRewrite.preview' }));
+    await waitFor(() => expect(onPreviewReady).toHaveBeenCalled());
+    expect(previewApi.mock.lastCall?.[3].input).toEqual({
+      type, instruction: 'Polish', selection_ranges: [type === 'ir'
+        ? { node_id: 'p1', selected_text: 'Selected text' } : { selected_text: 'Selected text' }],
+    });
+  });
   it('does not submit an empty or whitespace-only instruction', () => {
     const requestPreview = renderDialog();
     const input = screen.getByRole('textbox');

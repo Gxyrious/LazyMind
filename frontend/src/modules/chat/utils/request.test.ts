@@ -67,6 +67,48 @@ describe('WorkflowSessionApi.saveWriterDocument', () => {
   });
 });
 
+describe('WorkflowSessionApi single-paragraph rewrite adapter', () => {
+  const paragraph = {
+    target: { type: 'block', block_type: 'paragraph', node_id: 'p1' },
+    preview: { old_text: 'Whole paragraph.', new_text: 'Polished paragraph.' },
+    patch: { type: 'writer_ir_patch', payload: { hunks: [] } },
+  };
+  const shared = {
+    status: 'ready', action: 'rewrite_selection', base_revision: 4, representation: 'ir',
+    artifact: { content_type: 'json', value: { document_id: 'doc' } },
+    commit: { token: 'preview-token' },
+  };
+
+  it('unwraps one result without losing the full candidate or commit token', async () => {
+    postMock.mockResolvedValue({ data: { code: 0, data: { ...shared, results: [paragraph] } } });
+    const payload = { action: 'rewrite_selection' as const, base_revision: 4,
+      input: { type: 'ir' as const, instruction: 'Polish', selection_ranges: [{ node_id: 'p1' }] } };
+    const response = await WorkflowSessionApi().previewRewriteSelection('session', 'draft_document', -1, payload);
+    expect(postMock).toHaveBeenLastCalledWith(
+      '/api/core/workflow-sessions/session/slots/draft_document/items/idx/-1:action-preview', payload, undefined,
+    );
+    expect(response.data.data).toEqual({ ...shared, ...paragraph });
+  });
+
+  it.each([{ results: [] }, { results: [paragraph, paragraph] }])('rejects a non-single result', async ({ results }) => {
+    postMock.mockResolvedValue({ data: { data: { ...shared, results } } });
+    await expect(WorkflowSessionApi().previewRewriteSelection('session', 'draft_document', -1, {
+      action: 'rewrite_selection', base_revision: 4,
+      input: { type: 'markdown', instruction: 'Polish', selection_ranges: [{ selected_text: 'quote' }] },
+    })).rejects.toThrow('Expected one paragraph');
+  });
+
+  it('leaves the unrelated PPT protocol unchanged', async () => {
+    const ppt = { ...shared, ...paragraph, representation: 'ppt_html' };
+    postMock.mockResolvedValue({ data: { data: ppt } });
+    const response = await WorkflowSessionApi().previewRewriteSelection('session', 'slides', 0, {
+      action: 'rewrite_selection', base_revision: 4,
+      input: { instruction: 'Polish', selection: { type: 'ppt_html', page: 1, el: 'title' } },
+    });
+    expect(response.data.data).toEqual(ppt);
+  });
+});
+
 describe('WorkflowSessionApi.writeBackWriterDocument', () => {
   beforeEach(() => {
     postMock.mockReset();

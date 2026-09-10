@@ -303,7 +303,7 @@ export interface SaveWriterDocumentResult extends RenderWriterDocumentResult {
 }
 
 export type RewriteSelection =
-  | { type: 'ir'; node_id: string }
+  | { type: 'ir'; node_id: string; selected_text?: string }
   | { type: 'markdown'; selected_text: string }
   | {
     type: 'ppt_html';
@@ -329,8 +329,11 @@ export interface RewriteSelectionPreviewRequest {
   base_revision: number;
   input: {
     instruction: string;
-    selection: RewriteSelection;
-  };
+  } & (
+    | { type: 'ir'; selection_ranges: Array<{ node_id: string; selected_text?: string }> }
+    | { type: 'markdown'; selection_ranges: Array<{ selected_text: string; start?: number; end?: number }> }
+    | { selection: Extract<RewriteSelection, { type: 'ppt_html' }> }
+  );
 }
 
 export interface RewriteSelectionPreview {
@@ -365,6 +368,11 @@ export interface RewriteSelectionPreview {
   layout_notes?: string[];
 }
 
+/** Wire response for Writer; the existing single-paragraph UI consumes one result. */
+export type DocumentRewriteSelectionPreview = Omit<RewriteSelectionPreview, 'target' | 'preview' | 'patch'> & {
+  results: Array<Pick<RewriteSelectionPreview, 'target' | 'preview' | 'patch'>>;
+};
+
 export type WriterCopyFormat = 'markdown' | 'latex' | 'text';
 
 export interface ConvertDocumentResult {
@@ -384,7 +392,7 @@ export interface ExecuteArtifactActionResult {
   action: 'rewrite_selection';
   base_revision: number;
   revision: number;
-  representation: 'ppt_html';
+  representation: 'ppt_html' | 'ir' | 'markdown';
   artifact: RewriteSelectionPreview['artifact'];
 }
 
@@ -498,22 +506,31 @@ export function WorkflowSessionApi() {
         { silentError: true } as RawAxiosRequestConfig,
       );
     },
-    previewRewriteSelection(
+    async previewRewriteSelection(
       sessionId: string,
       slotId: string,
       listIndex: number,
       payload: RewriteSelectionPreviewRequest,
       options?: RawAxiosRequestConfig,
     ) {
-      return axiosInstance.post<{
+      const response = await axiosInstance.post<{
         code: number;
         message: string;
-        data: RewriteSelectionPreview;
+        data: RewriteSelectionPreview | DocumentRewriteSelectionPreview;
       }>(
         `${coreApiBaseUrl}/workflow-sessions/${encodeURIComponent(sessionId)}/slots/${encodeURIComponent(slotId)}/items/idx/${listIndex}:action-preview`,
         payload,
         options,
       );
+      const result = response.data.data;
+      if ('type' in payload.input) {
+        if (!('results' in result) || !Array.isArray(result.results) || result.results.length !== 1) {
+          throw new Error('Expected one paragraph rewrite result');
+        }
+        const { results, ...preview } = result;
+        return { ...response, data: { ...response.data, data: { ...preview, ...results[0] } } };
+      }
+      return { ...response, data: { ...response.data, data: result as RewriteSelectionPreview } };
     },
     executeArtifactAction(
       sessionId: string,
@@ -994,14 +1011,12 @@ export function PromptServiceApi() {
         user_instruct: string;
         allow_empty: true;
         full_content?: string;
-        selection_start?: number;
-        selection_end?: number;
+        selection_ranges?: Array<{ start: number; end: number; content: string }>;
       },
       options?: RawAxiosRequestConfig,
     ) {
-      return axiosInstance.post<PromptPolishOpenAPIResponse & {
-        target_start?: number;
-        target_end?: number;
+      return axiosInstance.post<{
+        results: Array<{ content: string; old_content: string; target_start: number; target_end: number }>;
       }>(
         `${coreApiBaseUrl}/prompts:polish`,
         payload,
