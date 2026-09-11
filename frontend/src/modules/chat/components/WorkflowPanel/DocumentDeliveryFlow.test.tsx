@@ -22,6 +22,7 @@ vi.mock('@mdxeditor/editor', async () => {
     }} />;
   });
   return { MDXEditor, BlockTypeSelect: control, BoldItalicUnderlineToggles: control, ListsToggle: control, GenericJsxEditor: control,
+    realmPlugin: () => plugin,
     codeBlockPlugin: plugin, codeMirrorPlugin: plugin, frontmatterPlugin: plugin, headingsPlugin: plugin, imagePlugin: plugin,
     jsxPlugin: plugin, linkDialogPlugin: plugin, linkPlugin: plugin, listsPlugin: plugin, markdownShortcutPlugin: plugin,
     quotePlugin: plugin, tablePlugin: plugin, thematicBreakPlugin: plugin, toolbarPlugin: plugin };

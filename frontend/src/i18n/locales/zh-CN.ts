@@ -2456,6 +2456,14 @@ const zhCN = {
     writerMarkdown: {
       documentRegion: "Markdown 文档",
       readOnly: "只读",
+      headingPlaceholders: {
+        h1: "输入一级标题…",
+        h2: "输入二级标题…",
+        h3: "输入三级标题…",
+        h4: "输入四级标题…",
+        h5: "输入五级标题…",
+        h6: "输入六级标题…",
+      },
       blockTypes: {
         paragraph: "正文",
         quote: "引用",
