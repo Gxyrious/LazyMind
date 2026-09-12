@@ -497,7 +497,7 @@ interface MarkdownArtifactEditorProps {
   rewriteUnavailableReason?: string;
   rewriteDialogOpen?: boolean;
   rewritePreview?: MarkdownRewritePreview | null;
-  onRewritePreviewApplied?: (revision?: number) => void;
+  onRewritePreviewApplied?: (revision?: number, draftVersion?: number) => void;
   onRewritePreviewRejected?: () => void;
 }
 

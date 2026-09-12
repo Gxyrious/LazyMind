@@ -137,7 +137,7 @@ interface WriterIRDocumentEditorProps {
   rewriteDialogOpen?: boolean;
   onRewriteSelection?: (selection: WriterIRRewriteSelection) => void;
   rewritePreview?: WriterIRRewritePreview | null;
-  onRewritePreviewApplied?: (revision?: number) => void;
+  onRewritePreviewApplied?: (revision?: number, draftVersion?: number) => void;
   onRewritePreviewRejected?: () => void;
 }
 
@@ -148,6 +148,7 @@ interface WriterNumberingMenuState {
 }
 
 export interface WriterIRRewritePreview {
+  applyPreview?: () => Promise<number | undefined>;
   nodeId: string;
   sessionId: string;
   slotId: string;
@@ -2944,6 +2945,7 @@ export function WriterIRDocumentEditor({
           slotId={rewritePreview.slotId}
           listIndex={rewritePreview.listIndex}
           preview={rewritePreview.preview}
+          applyPreview={rewritePreview.applyPreview}
           onApplied={onRewritePreviewApplied}
           onReject={onRewritePreviewRejected}
         />

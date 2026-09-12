@@ -1,13 +1,21 @@
 import { fireEvent, render, screen, waitFor, cleanup } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
-import { ArtifactRewriteDialog, ArtifactRewriteInlineDiff, type ArtifactRewriteSelection } from './ArtifactRewriteDialog';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const previewApi = vi.hoisted(() => vi.fn());
-const executeApi = vi.hoisted(() => vi.fn());
-vi.mock('@/modules/chat/utils/request', async (original) => ({
-  ...await original<typeof import('@/modules/chat/utils/request')>(),
-  WorkflowSessionApi: () => ({ previewRewriteSelection: previewApi, executeArtifactAction: executeApi }),
+const workflowApi = vi.hoisted(() => ({ patchSlotItem: vi.fn(), previewRewriteSelection: vi.fn(), executeArtifactAction: vi.fn() }));
+
+vi.mock('@/modules/chat/utils/request', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/modules/chat/utils/request')>(),
+  WorkflowSessionApi: () => workflowApi,
 }));
+
+import {
+  ArtifactRewriteDialog,
+  ArtifactRewriteInlineDiff,
+  type ArtifactRewriteSelection,
+} from './ArtifactRewriteDialog';
+
+const previewApi = workflowApi.previewRewriteSelection;
+const executeApi = workflowApi.executeArtifactAction;
 
 vi.mock('react-i18next', async (importOriginal) => {
   const actual = await importOriginal<typeof import('react-i18next')>();
@@ -43,25 +51,35 @@ function renderDialog(requestPreview = vi.fn()) {
 }
 
 describe('ArtifactRewriteDialog', () => {
-  it('accepts the single paragraph with the preview commit token', async () => {
+  beforeEach(() => {
+    workflowApi.patchSlotItem.mockReset();
+    previewApi.mockReset();
+    executeApi.mockReset();
+  });
+
+  it.each([
+    ['ir', 6], ['markdown', 6], ['ir', undefined], ['markdown', undefined],
+  ] as const)('accepts the single paragraph with the preview commit token (%s, draft %s)', async (representation, draftVersion) => {
     const target = document.createElement('p');
     target.textContent = 'Original';
     const layer = document.createElement('div');
     document.body.append(target, layer);
-    executeApi.mockResolvedValue({ data: { code: 0, data: { status: 'applied', revision: 5 } } });
+    executeApi.mockResolvedValue({ data: { code: 0, data: { status: 'applied', revision: 5, draft_version: 1 } } });
     const onApplied = vi.fn();
     try {
       render(<ArtifactRewriteInlineDiff target={target} layer={layer} sessionId='session'
         slotId='draft_document' listIndex={-1} onApplied={onApplied} onReject={vi.fn()}
         preview={{ status: 'ready', action: 'rewrite_selection', base_revision: 4,
-          representation: 'markdown', target: { type: 'block', block_type: 'paragraph' },
+          base_draft_version: draftVersion, representation, target: { type: 'block', block_type: 'paragraph' },
           preview: { old_text: 'Original', new_text: 'Polished' },
           patch: { type: 'string_replace_set', payload: {} },
           artifact: { content_type: 'text', value: 'Polished' }, commit: { token: 'preview-token' } }} />);
       fireEvent.click(screen.getByRole('button', { name: 'chat.artifactRewrite.apply' }));
-      await waitFor(() => expect(onApplied).toHaveBeenCalledWith(5));
+      await waitFor(() => expect(onApplied).toHaveBeenCalledWith(5, 1));
       expect(executeApi).toHaveBeenCalledWith('session', 'draft_document', -1, {
-        action: 'rewrite_selection', base_revision: 4, input: { commit_token: 'preview-token' },
+        action: 'rewrite_selection', base_revision: 4,
+        ...(draftVersion !== undefined ? { base_draft_version: draftVersion } : {}),
+        input: { commit_token: 'preview-token' },
       });
     } finally {
       cleanup();
@@ -128,5 +146,45 @@ describe('ArtifactRewriteDialog', () => {
     await waitFor(() => {
       expect(requestPreview).toHaveBeenCalledWith('Make it clearer', selection);
     });
+  });
+
+  it('returns both revision baselines after applying a preview', async () => {
+    workflowApi.patchSlotItem.mockResolvedValue({
+      data: {
+        code: 0,
+        data: { type: 'slot_item_patched', revision: 3, draft_version: 7 },
+      },
+    });
+    const target = document.createElement('p');
+    target.textContent = 'Selected text';
+    const layer = document.createElement('div');
+    document.body.append(target, layer);
+    const onApplied = vi.fn();
+
+    render(
+      <ArtifactRewriteInlineDiff
+        target={target}
+        layer={layer}
+        sessionId='session-1'
+        slotId='draft_document'
+        listIndex={-1}
+        preview={{
+          status: 'ready',
+          action: 'rewrite_selection',
+          base_revision: 3,
+          base_draft_version: 6,
+          representation: 'markdown',
+          target: { type: 'block', block_type: 'paragraph' },
+          preview: { old_text: 'Selected text', new_text: 'Rewritten text' },
+          patch: { type: 'string_replace_set', payload: {} },
+          artifact: { content_type: 'text/markdown', value: 'Rewritten text' },
+        }}
+        onApplied={onApplied}
+        onReject={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole('button', { name: 'chat.artifactRewrite.apply' }));
+    await waitFor(() => expect(onApplied).toHaveBeenCalledWith(3, 7));
   });
 });

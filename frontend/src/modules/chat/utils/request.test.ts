@@ -31,6 +31,7 @@ describe('WorkflowSessionApi.saveWriterDocument', () => {
     WorkflowSessionApi().saveWriterDocument(
       'ps-1',
       12,
+      4,
       '# Draft',
       'draft_document',
       'draft',
@@ -38,7 +39,7 @@ describe('WorkflowSessionApi.saveWriterDocument', () => {
 
     expect(postMock).toHaveBeenCalledWith(
       '/api/core/workflow-sessions/ps-1/writer-document:save',
-      { base_revision: 12, document: '# Draft', mode: 'draft' },
+      { base_revision: 12, base_draft_version: 4, document: '# Draft', mode: 'draft' },
       undefined,
     );
   });
@@ -47,6 +48,7 @@ describe('WorkflowSessionApi.saveWriterDocument', () => {
     WorkflowSessionApi().saveWriterDocument(
       'ps-1',
       3,
+      undefined,
       '# Outline',
       'outline_document',
       'checkpoint',
@@ -61,6 +63,30 @@ describe('WorkflowSessionApi.saveWriterDocument', () => {
         mode: 'checkpoint',
         slot: 'outline_document',
         numbering_update: { type: 'heading', target_id: 'section-2', restart: true },
+      },
+      undefined,
+    );
+  });
+});
+
+describe('WorkflowSessionApi.patchSlotItem', () => {
+  beforeEach(() => {
+    patchMock.mockReset();
+  });
+
+  it('sends both slot revision and mutable draft version baselines', () => {
+    WorkflowSessionApi().patchSlotItem(
+      'ps-1', 'draft_document', -1, { text: '# Draft' }, 'text', 'draft', 7, 3,
+    );
+
+    expect(patchMock).toHaveBeenCalledWith(
+      '/api/core/workflow-sessions/ps-1/slots/draft_document/items/idx/-1',
+      {
+        value: { text: '# Draft' },
+        content_type: 'text',
+        mode: 'draft',
+        base_revision: 7,
+        base_draft_version: 3,
       },
       undefined,
     );
@@ -118,6 +144,7 @@ describe('WorkflowSessionApi.writeBackWriterDocument', () => {
     WorkflowSessionApi().writeBackWriterDocument(
       'ps-github',
       7,
+      2,
       undefined,
       undefined,
       'draft_document',
@@ -126,7 +153,7 @@ describe('WorkflowSessionApi.writeBackWriterDocument', () => {
 
     expect(postMock).toHaveBeenCalledWith(
       '/api/core/workflow-sessions/ps-github/writer-document:write-back',
-      { base_revision: 7, provider: 'github' },
+      { base_revision: 7, base_draft_version: 2, provider: 'github' },
       undefined,
     );
   });
@@ -135,6 +162,7 @@ describe('WorkflowSessionApi.writeBackWriterDocument', () => {
     WorkflowSessionApi().writeBackWriterDocument(
       'ps-wechat',
       8,
+      3,
       undefined,
       undefined,
       'draft_document',
@@ -144,7 +172,7 @@ describe('WorkflowSessionApi.writeBackWriterDocument', () => {
 
     expect(postMock).toHaveBeenCalledWith(
       '/api/core/workflow-sessions/ps-wechat/writer-document:write-back',
-      { base_revision: 8, provider: 'wechat', template: 'clean' },
+      { base_revision: 8, base_draft_version: 3, provider: 'wechat', template: 'clean' },
       undefined,
     );
   });
