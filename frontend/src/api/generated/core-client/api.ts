@@ -1757,6 +1757,8 @@ export const DocumentActionErrorOpenAPIDataCodeEnum = {
     SelectionAmbiguous: 'SELECTION_AMBIGUOUS',
     ArtifactInUse: 'ARTIFACT_IN_USE',
     DocumentActionFailed: 'DOCUMENT_ACTION_FAILED',
+    DocumentConversionFailed: 'DOCUMENT_CONVERSION_FAILED',
+    DocumentProvidersUnavailable: 'DOCUMENT_PROVIDERS_UNAVAILABLE',
     DocumentActionResultInvalid: 'DOCUMENT_ACTION_RESULT_INVALID',
     DocumentActionSaveFailed: 'DOCUMENT_ACTION_SAVE_FAILED',
     CrossReferenceSelectionInvalid: 'CROSS_REFERENCE_SELECTION_INVALID',
@@ -9563,6 +9565,35 @@ export const DefaultApiAxiosParamCreator = function (configuration?: Configurati
         },
         /**
          *
+         * @summary GET /admin
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        apiCoreAdminGet: async (options: RawAxiosRequestConfig = {}): Promise<RequestArgs> => {
+            const localVarPath = `/api/core/admin`;
+            // use dummy base URL string because the URL constructor only accepts absolute URLs.
+            const localVarUrlObj = new URL(localVarPath, DUMMY_BASE_URL);
+            let baseOptions;
+            if (configuration) {
+                baseOptions = configuration.baseOptions;
+            }
+
+            const localVarRequestOptions = { method: 'GET', ...baseOptions, ...options};
+            const localVarHeaderParameter = {} as any;
+            const localVarQueryParameter = {} as any;
+
+
+            setSearchParams(localVarUrlObj, localVarQueryParameter);
+            let headersFromBaseOptions = baseOptions && baseOptions.headers ? baseOptions.headers : {};
+            localVarRequestOptions.headers = {...localVarHeaderParameter, ...headersFromBaseOptions, ...options.headers};
+
+            return {
+                url: toPathString(localVarUrlObj),
+                options: localVarRequestOptions,
+            };
+        },
+        /**
+         *
          * @summary GET /agent-invocations
          * @param {*} [options] Override http request option.
          * @throws {RequiredError}
@@ -12784,6 +12815,64 @@ export const DefaultApiAxiosParamCreator = function (configuration?: Configurati
             }
 
             const localVarRequestOptions = { method: 'POST', ...baseOptions, ...options};
+            const localVarHeaderParameter = {} as any;
+            const localVarQueryParameter = {} as any;
+
+
+            setSearchParams(localVarUrlObj, localVarQueryParameter);
+            let headersFromBaseOptions = baseOptions && baseOptions.headers ? baseOptions.headers : {};
+            localVarRequestOptions.headers = {...localVarHeaderParameter, ...headersFromBaseOptions, ...options.headers};
+
+            return {
+                url: toPathString(localVarUrlObj),
+                options: localVarRequestOptions,
+            };
+        },
+        /**
+         *
+         * @summary GET /health
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        apiCoreHealthGet: async (options: RawAxiosRequestConfig = {}): Promise<RequestArgs> => {
+            const localVarPath = `/api/core/health`;
+            // use dummy base URL string because the URL constructor only accepts absolute URLs.
+            const localVarUrlObj = new URL(localVarPath, DUMMY_BASE_URL);
+            let baseOptions;
+            if (configuration) {
+                baseOptions = configuration.baseOptions;
+            }
+
+            const localVarRequestOptions = { method: 'GET', ...baseOptions, ...options};
+            const localVarHeaderParameter = {} as any;
+            const localVarQueryParameter = {} as any;
+
+
+            setSearchParams(localVarUrlObj, localVarQueryParameter);
+            let headersFromBaseOptions = baseOptions && baseOptions.headers ? baseOptions.headers : {};
+            localVarRequestOptions.headers = {...localVarHeaderParameter, ...headersFromBaseOptions, ...options.headers};
+
+            return {
+                url: toPathString(localVarUrlObj),
+                options: localVarRequestOptions,
+            };
+        },
+        /**
+         *
+         * @summary GET /hello
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        apiCoreHelloGet: async (options: RawAxiosRequestConfig = {}): Promise<RequestArgs> => {
+            const localVarPath = `/api/core/hello`;
+            // use dummy base URL string because the URL constructor only accepts absolute URLs.
+            const localVarUrlObj = new URL(localVarPath, DUMMY_BASE_URL);
+            let baseOptions;
+            if (configuration) {
+                baseOptions = configuration.baseOptions;
+            }
+
+            const localVarRequestOptions = { method: 'GET', ...baseOptions, ...options};
             const localVarHeaderParameter = {} as any;
             const localVarQueryParameter = {} as any;
 
@@ -17662,6 +17751,18 @@ export const DefaultApiFp = function(configuration?: Configuration) {
         },
         /**
          *
+         * @summary GET /admin
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        async apiCoreAdminGet(options?: RawAxiosRequestConfig): Promise<(axios?: AxiosInstance, basePath?: string) => AxiosPromise<void>> {
+            const localVarAxiosArgs = await localVarAxiosParamCreator.apiCoreAdminGet(options);
+            const localVarOperationServerIndex = configuration?.serverIndex ?? 0;
+            const localVarOperationServerBasePath = operationServerMap['DefaultApi.apiCoreAdminGet']?.[localVarOperationServerIndex]?.url;
+            return (axios, basePath) => createRequestFunction(localVarAxiosArgs, globalAxios, BASE_PATH, configuration)(axios, localVarOperationServerBasePath || basePath);
+        },
+        /**
+         *
          * @summary GET /agent-invocations
          * @param {*} [options] Override http request option.
          * @throws {RequiredError}
@@ -18871,6 +18972,30 @@ export const DefaultApiFp = function(configuration?: Configuration) {
             const localVarAxiosArgs = await localVarAxiosParamCreator.apiCoreExternalChatRunsRunIdHeartbeatPost(runId, options);
             const localVarOperationServerIndex = configuration?.serverIndex ?? 0;
             const localVarOperationServerBasePath = operationServerMap['DefaultApi.apiCoreExternalChatRunsRunIdHeartbeatPost']?.[localVarOperationServerIndex]?.url;
+            return (axios, basePath) => createRequestFunction(localVarAxiosArgs, globalAxios, BASE_PATH, configuration)(axios, localVarOperationServerBasePath || basePath);
+        },
+        /**
+         *
+         * @summary GET /health
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        async apiCoreHealthGet(options?: RawAxiosRequestConfig): Promise<(axios?: AxiosInstance, basePath?: string) => AxiosPromise<void>> {
+            const localVarAxiosArgs = await localVarAxiosParamCreator.apiCoreHealthGet(options);
+            const localVarOperationServerIndex = configuration?.serverIndex ?? 0;
+            const localVarOperationServerBasePath = operationServerMap['DefaultApi.apiCoreHealthGet']?.[localVarOperationServerIndex]?.url;
+            return (axios, basePath) => createRequestFunction(localVarAxiosArgs, globalAxios, BASE_PATH, configuration)(axios, localVarOperationServerBasePath || basePath);
+        },
+        /**
+         *
+         * @summary GET /hello
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        async apiCoreHelloGet(options?: RawAxiosRequestConfig): Promise<(axios?: AxiosInstance, basePath?: string) => AxiosPromise<void>> {
+            const localVarAxiosArgs = await localVarAxiosParamCreator.apiCoreHelloGet(options);
+            const localVarOperationServerIndex = configuration?.serverIndex ?? 0;
+            const localVarOperationServerBasePath = operationServerMap['DefaultApi.apiCoreHelloGet']?.[localVarOperationServerIndex]?.url;
             return (axios, basePath) => createRequestFunction(localVarAxiosArgs, globalAxios, BASE_PATH, configuration)(axios, localVarOperationServerBasePath || basePath);
         },
         /**
@@ -20766,6 +20891,15 @@ export const DefaultApiFactory = function (configuration?: Configuration, basePa
         },
         /**
          *
+         * @summary GET /admin
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        apiCoreAdminGet(options?: RawAxiosRequestConfig): AxiosPromise<void> {
+            return localVarFp.apiCoreAdminGet(options).then((request) => request(axios, basePath));
+        },
+        /**
+         *
          * @summary GET /agent-invocations
          * @param {*} [options] Override http request option.
          * @throws {RequiredError}
@@ -21655,6 +21789,24 @@ export const DefaultApiFactory = function (configuration?: Configuration, basePa
          */
         apiCoreExternalChatRunsRunIdHeartbeatPost(requestParameters: DefaultApiApiCoreExternalChatRunsRunIdHeartbeatPostRequest, options?: RawAxiosRequestConfig): AxiosPromise<void> {
             return localVarFp.apiCoreExternalChatRunsRunIdHeartbeatPost(requestParameters.runId, options).then((request) => request(axios, basePath));
+        },
+        /**
+         *
+         * @summary GET /health
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        apiCoreHealthGet(options?: RawAxiosRequestConfig): AxiosPromise<void> {
+            return localVarFp.apiCoreHealthGet(options).then((request) => request(axios, basePath));
+        },
+        /**
+         *
+         * @summary GET /hello
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        apiCoreHelloGet(options?: RawAxiosRequestConfig): AxiosPromise<void> {
+            return localVarFp.apiCoreHelloGet(options).then((request) => request(axios, basePath));
         },
         /**
          *
@@ -24480,6 +24632,16 @@ export class DefaultApi extends BaseAPI {
 
     /**
      *
+     * @summary GET /admin
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     */
+    public apiCoreAdminGet(options?: RawAxiosRequestConfig) {
+        return DefaultApiFp(this.configuration).apiCoreAdminGet(options).then((request) => request(this.axios, this.basePath));
+    }
+
+    /**
+     *
      * @summary GET /agent-invocations
      * @param {*} [options] Override http request option.
      * @throws {RequiredError}
@@ -25459,6 +25621,26 @@ export class DefaultApi extends BaseAPI {
      */
     public apiCoreExternalChatRunsRunIdHeartbeatPost(requestParameters: DefaultApiApiCoreExternalChatRunsRunIdHeartbeatPostRequest, options?: RawAxiosRequestConfig) {
         return DefaultApiFp(this.configuration).apiCoreExternalChatRunsRunIdHeartbeatPost(requestParameters.runId, options).then((request) => request(this.axios, this.basePath));
+    }
+
+    /**
+     *
+     * @summary GET /health
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     */
+    public apiCoreHealthGet(options?: RawAxiosRequestConfig) {
+        return DefaultApiFp(this.configuration).apiCoreHealthGet(options).then((request) => request(this.axios, this.basePath));
+    }
+
+    /**
+     *
+     * @summary GET /hello
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     */
+    public apiCoreHelloGet(options?: RawAxiosRequestConfig) {
+        return DefaultApiFp(this.configuration).apiCoreHelloGet(options).then((request) => request(this.axios, this.basePath));
     }
 
     /**

@@ -6910,6 +6910,8 @@ components:
                         - SELECTION_AMBIGUOUS
                         - ARTIFACT_IN_USE
                         - DOCUMENT_ACTION_FAILED
+                        - DOCUMENT_CONVERSION_FAILED
+                        - DOCUMENT_PROVIDERS_UNAVAILABLE
                         - DOCUMENT_ACTION_RESULT_INVALID
                         - DOCUMENT_ACTION_SAVE_FAILED
                         - CROSS_REFERENCE_SELECTION_INVALID
@@ -9920,6 +9922,12 @@ paths:
                 "200":
                     description: OK
             summary: POST /add_files_to_group
+    /api/core/admin:
+        get:
+            responses:
+                "200":
+                    description: OK
+            summary: GET /admin
     /api/core/admin/skill-market:
         post:
             requestBody:
@@ -14164,6 +14172,18 @@ paths:
                 "200":
                     description: OK
             summary: POST /external-chat/runs/{run_id}:heartbeat
+    /api/core/health:
+        get:
+            responses:
+                "200":
+                    description: OK
+            summary: GET /health
+    /api/core/hello:
+        get:
+            responses:
+                "200":
+                    description: OK
+            summary: GET /hello
     /api/core/inner/word_group:apply:
         post:
             requestBody:

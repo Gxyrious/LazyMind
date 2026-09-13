@@ -13,6 +13,7 @@ import { ArtifactRewriteDialog, type ArtifactRewriteSelection } from './Artifact
 import { useDocumentCopy } from './useDocumentCopy';
 import { WriterDownloadFormatDialog, writerDownloadFilename, writerDownloadCacheKey } from './WriterDownloadFormat';
 import { WriterProviderChoice } from './DocumentProviderChoice';
+import { documentPublicationErrorMessage } from './documentPublicationError';
 
 function unwrap(value: unknown): unknown {
   while (value && typeof value === 'object') {
@@ -86,7 +87,7 @@ export function DocumentArtifactEditor({ slot, sessionId, readOnly, onRefresh }:
     let canceled = false;
     void WorkflowSessionApi().listDocumentProviders().then((response) => {
       if (!canceled) setProviders(response.data.data.providers);
-    }).catch(() => { if (!canceled) setError(String(i18n.t('chat.writerIR.writeBackFailed'))); });
+    }).catch(() => { if (!canceled) setError(documentPublicationErrorMessage('DOCUMENT_PROVIDERS_UNAVAILABLE')); });
     return () => { canceled = true; };
   }, [descriptor.capabilities, writable]);
 
@@ -130,7 +131,7 @@ export function DocumentArtifactEditor({ slot, sessionId, readOnly, onRefresh }:
     revision: version, document: value as string | WriterDocument });
   useEffect(() => {
     if (!active || !loaded || !descriptor.capabilities.includes('convert_document')) return;
-    return registerFooterAction(`${editingKey}:download`, { label: String(i18n.t('common.download')), icon: 'download', onClick: () => setDownload(true) });
+    return registerFooterAction(`${editingKey}:download`, { label: String(i18n.t('chat.slots.download')), icon: 'download', onClick: () => setDownload(true) });
   }, [active, loaded, descriptor.capabilities, registerFooterAction, editingKey]);
   const convert = async (format: 'markdown' | 'latex') => {
     const current = latest.current;
@@ -157,7 +158,7 @@ export function DocumentArtifactEditor({ slot, sessionId, readOnly, onRefresh }:
     const current = latest.current;
     const fingerprint = JSON.stringify([current.id, current.revision, current.draft, provider]);
     if (attempt.current?.uncertain && attempt.current.fingerprint !== fingerprint) {
-      setError(String(i18n.t('chat.writerIR.writeBackFailed'))); return;
+      setError(documentPublicationErrorMessage('PUBLICATION_OUTCOME_UNKNOWN', provider)); return;
     }
     if (!attempt.current || attempt.current.fingerprint !== fingerprint) {
       attempt.current = { fingerprint, id: current.id, uncertain: false, body: { action: 'publish_document',
@@ -175,10 +176,10 @@ export function DocumentArtifactEditor({ slot, sessionId, readOnly, onRefresh }:
     } catch (failure) {
       const code = responseCode(failure);
       const beforeWrite = ['DOCUMENT_ACTION_INVALID', 'REVISION_CONFLICT', 'DRAFT_VERSION_CONFLICT', 'ARTIFACT_IN_USE',
-        'DOCUMENT_ACTION_UNSUPPORTED', 'DOCUMENT_PROVIDERS_UNAVAILABLE', 'PROVIDER_CREDENTIALS_UNAVAILABLE'];
+        'DOCUMENT_ACTION_UNSUPPORTED', 'DOCUMENT_PROVIDERS_UNAVAILABLE', 'PROVIDER_CREDENTIALS_UNAVAILABLE', 'DOCUMENT_CONVERSION_FAILED'];
       if (code && beforeWrite.includes(code)) attempt.current = undefined;
       else request.uncertain = true;
-      setError(String(i18n.t('chat.writerIR.writeBackFailed')));
+      setError(documentPublicationErrorMessage(code, provider));
     } finally { setBusy(false); }
   }, [accept, busy, onRefresh]);
   const publishRef = useRef(publish); publishRef.current = publish;
@@ -202,8 +203,9 @@ export function DocumentArtifactEditor({ slot, sessionId, readOnly, onRefresh }:
   }, [active, writable, descriptor.capabilities, registerFooterAction, editingKey, loaded, providers.length, busy, error, slot.provider]);
 
   if (!loaded) return <div role='status'>{error || '…'}</div>;
-  return <div className='workflow-slot'>
+  return <div className='workflow-slot workflow-slot--artifact'>
     {error && <div role='alert'>{error}</div>}
+    <div className={`workflow-slot__artifact-body${descriptor.representation === 'markdown' ? ' workflow-slot__artifact-body--markdown' : ''}`}>
     {descriptor.representation === 'markdown' && typeof value === 'string'
       ? <MarkdownArtifactEditor markdown={value} sourceRevision={version} editingKey={editingKey} readOnly={!writable}
         resolveImageUrl={resolveMarkdownImageUrlAsync} onContentChange={edit} numbering={numbering}
@@ -223,6 +225,7 @@ export function DocumentArtifactEditor({ slot, sessionId, readOnly, onRefresh }:
           const saved = await save(revised, Number(revision ?? latest.current.revision), mode, numbering);
           return { document: saved.value as WriterDocument, sourceRevision: saved.revision, draftVersion: saved.draft };
         }} /> : <div role='alert'>{String(i18n.t('chat.writerIR.saveFailed'))}</div>}
+    </div>
     <ArtifactRewriteDialog open={selection !== null} sessionId={sessionId} slotId={slot.slot_id} listIndex={slot.list_index ?? -1}
       baseRevision={latest.current.revision} baseDraftVersion={latest.current.draft} selection={selection}
       onClose={() => setSelection(null)} onApplied={() => { setPreview(null); onRefresh?.(); }}

@@ -2346,6 +2346,13 @@ const enUS = {
       writingToCloudDocument: "Writing...",
       writeBackSuccess: "Written back to cloud document",
       writeBackFailed: "Write-back failed. Please retry.",
+      publicationPreparationFailed: "Content validation failed before writing to {{provider}}. Refresh and check the document version and save status.",
+      publicationProvidersFailed: "Provider loading failed. Check the service connection and retry; no document write was started.",
+      publicationAuthorizationFailed: "{{provider}} authorization check failed; this write has been paused. Connect or authorize the account manually in Cloud Documents, then return to continue.",
+      publicationConversionFailed: "Document conversion failed for {{provider}} before writing. Check the document format, images, and cross-references.",
+      publicationUnsupported: "{{provider}} capability check failed: this provider does not support the requested write operation.",
+      publicationLocalSaveFailed: "The document was written to {{provider}}, but saving the local result failed. Check the target document; do not write it again.",
+      publicationUnknown: "The write result for {{provider}} is unconfirmed. Check the target document and operation status before retrying.",
       feishuConfigurationRequired:
         "No usable Feishu authorization is available. Your content has been preserved. Check the Feishu configuration and try again.",
       providerConfigurationRequired:
