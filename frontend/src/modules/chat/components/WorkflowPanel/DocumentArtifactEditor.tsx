@@ -1,6 +1,6 @@
 import { useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { Modal } from 'antd';
-import type { DocumentProvider, DocumentPublishRequest, DocumentRewritePreviewResult, DocumentNumberingResult, DocumentConvertResult } from '@/api/generated/core-client';
+import type { DocumentProvider, DocumentPublishRequest, DocumentNumberingResult, DocumentConvertResult } from '@/api/generated/core-client';
 import type { SlotRevision } from '@/modules/chat/store/workflowPanel';
 import { WorkflowSessionApi, type RewriteSelectionPreview, type WriterNumberingState, type WriterNumberingUpdate } from '@/modules/chat/utils/request';
 import { resolveCoreAssetUrl, resolveMarkdownImageUrlAsync } from '@/modules/knowledge/utils/imageUrl';
@@ -13,6 +13,7 @@ import { ArtifactRewriteDialog, type ArtifactRewriteSelection } from './Artifact
 import { useDocumentCopy } from './useDocumentCopy';
 import { WriterDownloadFormatDialog, writerDownloadFilename, writerDownloadCacheKey } from './WriterDownloadFormat';
 import { WriterProviderChoice } from './DocumentProviderChoice';
+import { documentRewritePreview } from './documentRewritePreview';
 import { documentPublicationErrorMessage } from './documentPublicationError';
 
 function unwrap(value: unknown): unknown {
@@ -207,9 +208,9 @@ export function DocumentArtifactEditor({ slot, sessionId, readOnly, onRefresh }:
     {error && <div role='alert'>{error}</div>}
     <div className={`workflow-slot__artifact-body${descriptor.representation === 'markdown' ? ' workflow-slot__artifact-body--markdown' : ''}`}>
     {descriptor.representation === 'markdown' && typeof value === 'string'
-      ? <MarkdownArtifactEditor markdown={value} sourceRevision={version} editingKey={editingKey} readOnly={!writable}
+      ? <MarkdownArtifactEditor renderContext={descriptor.render_context} markdown={value} sourceRevision={version} editingKey={editingKey} readOnly={!writable}
         resolveImageUrl={resolveMarkdownImageUrlAsync} onContentChange={edit} numbering={numbering}
-        onRewriteSelection={canRewrite ? (picked) => { if (picked.supported) setSelection({ type: 'markdown', selected_text: picked.text, selectedText: picked.text, paragraph: picked.paragraph, startOffset: picked.startOffset, anchor: picked.anchor }); } : undefined}
+        onRewriteSelection={canRewrite ? (picked) => { if (picked.supported) setSelection({ type: 'markdown', selected_text: picked.text, selectedText: picked.text, paragraph: picked.paragraph, startOffset: picked.startOffset, sourceRange: picked.sourceRange, anchor: picked.anchor }); } : undefined}
         rewriteDialogOpen={selection !== null}
         rewritePreview={preview?.selection.paragraph ? { paragraph: preview.selection.paragraph, startOffset: preview.selection.startOffset,
           sessionId, slotId: slot.slot_id, listIndex: slot.list_index ?? -1, preview: preview.value, applyPreview } : null}
@@ -234,8 +235,8 @@ export function DocumentArtifactEditor({ slot, sessionId, readOnly, onRefresh }:
         if (picked.type === 'ppt_html') throw new Error('unsupported document selection');
         const response = await WorkflowSessionApi().previewDocumentAction(current.id, { action: 'rewrite_selection',
           base_revision: current.revision, base_draft_version: current.draft,
-          input: { instruction, selection: picked.type === 'ir' ? { type: 'ir', node_id: picked.node_id } : { type: 'markdown', selected_text: picked.selected_text } } });
-        return { ...(response.data.data as DocumentRewritePreviewResult), status: 'ready', action: 'rewrite_selection', base_revision: current.revision, base_draft_version: current.draft } as RewriteSelectionPreview;
+          input: picked.type === 'ir' ? { instruction, type: 'ir', selection_ranges: [{ node_id: picked.node_id, ...(picked.selectedText ? { selected_text: picked.selectedText } : {}) }] } : { instruction, type: 'markdown', selection_ranges: [picked.sourceRange ?? { selected_text: picked.selected_text }] } });
+        return documentRewritePreview(response.data.data, current.revision, current.draft);
       }} onPreviewReady={(result) => { if (selection && previewSource.current) setPreview({ id: previewSource.current.id, selection, value: result }); }} />
     {download && <WriterDownloadFormatDialog open={download} onOpenChange={setDownload}
       markdown={{ filename: writerDownloadFilename('', 'md'), content: () => convert('markdown') }}

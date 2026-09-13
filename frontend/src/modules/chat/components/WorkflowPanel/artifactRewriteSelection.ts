@@ -63,6 +63,7 @@ export function floatingToolbarAnchor({
 }
 
 export interface MarkdownSelection {
+  sourceRange?: { selected_text: string; start: number; end: number };
   text: string;
   anchor: SelectionActionAnchor;
   supported: boolean;

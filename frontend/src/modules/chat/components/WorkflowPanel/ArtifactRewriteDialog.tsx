@@ -22,6 +22,7 @@ import './ArtifactRewriteSelectionHighlight.scss';
 
 export type ArtifactRewriteSelection = RewriteSelection & {
   selectedText: string;
+  sourceRange?: { selected_text: string; start: number; end: number };
   anchor?: SelectionActionAnchor;
   paragraph?: HTMLElement;
   startOffset?: number;
@@ -248,7 +249,7 @@ export function ArtifactRewriteDialog({
                 } }
               : selection.type === 'ir'
                 ? { type: 'ir', selection_ranges: [{ node_id: selection.node_id, selected_text: selection.selectedText }] }
-                : { type: 'markdown', selection_ranges: [{ selected_text: selection.selected_text }] }),
+                : { type: 'markdown', selection_ranges: [selection.sourceRange ?? { selected_text: selection.selected_text }] }),
           },
         },
         { silentError: true } as never,

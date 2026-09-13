@@ -2295,6 +2295,8 @@ components:
                     type: array
                 editable:
                     type: boolean
+                render_context:
+                    $ref: '#/components/schemas/DocumentRenderContext'
                 representation:
                     type: string
                 schema:
@@ -2418,6 +2420,19 @@ components:
             required:
                 - content_type
                 - value
+            type: object
+        DocumentCodeFenceDisplay:
+            properties:
+                end:
+                    type: integer
+                language:
+                    type: string
+                start:
+                    type: integer
+            required:
+                - end
+                - language
+                - start
             type: object
         DocumentConvertPreviewInput:
             properties:
@@ -2778,6 +2793,21 @@ components:
                 - representation
                 - targets
             type: object
+        DocumentImageDisplay:
+            properties:
+                end:
+                    type: integer
+                height:
+                    type: integer
+                start:
+                    type: integer
+                width:
+                    type: integer
+            required:
+                - end
+                - start
+                - width
+            type: object
         DocumentInvalidCrossReference:
             properties:
                 target_id:
@@ -3051,6 +3081,23 @@ components:
                 - revision
                 - status
             type: object
+        DocumentRenderContext:
+            properties:
+                code_fences:
+                    items:
+                        $ref: '#/components/schemas/DocumentCodeFenceDisplay'
+                    type: array
+                images:
+                    items:
+                        $ref: '#/components/schemas/DocumentImageDisplay'
+                    type: array
+                source_hash:
+                    type: string
+            required:
+                - code_fences
+                - images
+                - source_hash
+            type: object
         DocumentRewriteCommit:
             properties:
                 token:
@@ -3119,44 +3166,6 @@ components:
                 - new_text
                 - old_text
             type: object
-        DocumentRewritePreviewInput:
-            properties:
-                instruction:
-                    type: string
-                selection:
-                    discriminator:
-                        propertyName: type
-                    oneOf:
-                        - additionalProperties: false
-                          properties:
-                            selected_text:
-                                minLength: 1
-                                type: string
-                            type:
-                                enum:
-                                    - markdown
-                                type: string
-                          required:
-                            - type
-                            - selected_text
-                          type: object
-                        - additionalProperties: false
-                          properties:
-                            node_id:
-                                minLength: 1
-                                type: string
-                            type:
-                                enum:
-                                    - ir
-                                type: string
-                          required:
-                            - type
-                            - node_id
-                          type: object
-            required:
-                - instruction
-                - selection
-            type: object
         DocumentRewritePreviewRequest:
             properties:
                 action:
@@ -3169,7 +3178,120 @@ components:
                 base_revision:
                     type: integer
                 input:
-                    $ref: '#/components/schemas/DocumentRewritePreviewInput'
+                    oneOf:
+                        - additionalProperties: false
+                          properties:
+                            instruction:
+                                minLength: 1
+                                type: string
+                            selection:
+                                discriminator:
+                                    propertyName: type
+                                oneOf:
+                                    - additionalProperties: false
+                                      properties:
+                                        selected_text:
+                                            minLength: 1
+                                            type: string
+                                        type:
+                                            enum:
+                                                - markdown
+                                            type: string
+                                      required:
+                                        - type
+                                        - selected_text
+                                      type: object
+                                    - additionalProperties: false
+                                      properties:
+                                        node_id:
+                                            minLength: 1
+                                            type: string
+                                        type:
+                                            enum:
+                                                - ir
+                                            type: string
+                                      required:
+                                        - type
+                                        - node_id
+                                      type: object
+                          required:
+                            - instruction
+                            - selection
+                          type: object
+                        - additionalProperties: false
+                          properties:
+                            instruction:
+                                minLength: 1
+                                type: string
+                            selection_ranges:
+                                items:
+                                    oneOf:
+                                        - additionalProperties: false
+                                          properties:
+                                            selected_text:
+                                                minLength: 1
+                                                type: string
+                                          required:
+                                            - selected_text
+                                          type: object
+                                        - additionalProperties: false
+                                          properties:
+                                            end:
+                                                minimum: 1
+                                                type: integer
+                                            selected_text:
+                                                minLength: 1
+                                                type: string
+                                            start:
+                                                minimum: 0
+                                                type: integer
+                                          required:
+                                            - selected_text
+                                            - start
+                                            - end
+                                          type: object
+                                maxItems: 1
+                                minItems: 1
+                                type: array
+                            type:
+                                enum:
+                                    - markdown
+                                type: string
+                          required:
+                            - instruction
+                            - type
+                            - selection_ranges
+                          type: object
+                        - additionalProperties: false
+                          properties:
+                            instruction:
+                                minLength: 1
+                                type: string
+                            selection_ranges:
+                                items:
+                                    additionalProperties: false
+                                    properties:
+                                        node_id:
+                                            minLength: 1
+                                            type: string
+                                        selected_text:
+                                            minLength: 1
+                                            type: string
+                                    required:
+                                        - node_id
+                                    type: object
+                                maxItems: 1
+                                minItems: 1
+                                type: array
+                            type:
+                                enum:
+                                    - ir
+                                type: string
+                          required:
+                            - instruction
+                            - type
+                            - selection_ranges
+                          type: object
             required:
                 - action
                 - base_revision
@@ -3196,6 +3318,55 @@ components:
                 - preview
                 - representation
                 - target
+            type: object
+        DocumentRewriteRangeResult:
+            properties:
+                patch:
+                    $ref: '#/components/schemas/DocumentRewritePatch'
+                preview:
+                    $ref: '#/components/schemas/DocumentRewritePreview'
+                target:
+                    $ref: '#/components/schemas/DocumentRewriteRangeTarget'
+            required:
+                - patch
+                - preview
+                - target
+            type: object
+        DocumentRewriteRangeTarget:
+            properties:
+                block_type:
+                    type: string
+                node_id:
+                    type: string
+                target_end:
+                    type: integer
+                target_start:
+                    type: integer
+                type:
+                    enum:
+                        - block
+                    type: string
+            required:
+                - block_type
+                - type
+            type: object
+        DocumentRewriteRangesResult:
+            properties:
+                artifact:
+                    $ref: '#/components/schemas/DocumentActionArtifact'
+                commit:
+                    $ref: '#/components/schemas/DocumentRewriteCommit'
+                representation:
+                    type: string
+                results:
+                    items:
+                        $ref: '#/components/schemas/DocumentRewriteRangeResult'
+                    type: array
+            required:
+                - artifact
+                - commit
+                - representation
+                - results
             type: object
         DocumentRewriteTarget:
             properties:
@@ -6958,6 +7129,7 @@ components:
                 data:
                     oneOf:
                         - $ref: '#/components/schemas/DocumentRewritePreviewResult'
+                        - $ref: '#/components/schemas/DocumentRewriteRangesResult'
                         - $ref: '#/components/schemas/DocumentConvertResult'
                         - $ref: '#/components/schemas/DocumentNumberingResult'
                         - $ref: '#/components/schemas/DocumentCrossReferenceTargetsResult'

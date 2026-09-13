@@ -352,6 +352,8 @@ export interface RewriteSelectionPreview {
     type: 'block';
     block_type: string;
     node_id?: string;
+    target_start?: number;
+    target_end?: number;
     el?: string;
     index?: number;
     group?: string;

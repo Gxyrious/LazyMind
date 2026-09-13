@@ -678,7 +678,8 @@ function renderBlock(
     return `<div ${attributes}>${dragHandle}<hr data-writer-block-content="true" class="writer-ir__divider"></div>`;
   }
   if (block.type === 'list_item') {
-    return `<li ${attributes}>${dragHandle}<span data-writer-block-content="true">${text}</span>${children}</li>`;
+    const task = block.numbering?.task ? `<input type="checkbox" data-writer-task="true" aria-label="${escapeHtmlAttribute(block.content ?? '')}"${block.numbering.checked ? ' checked' : ''}${block.editable === false ? ' disabled' : ''}>` : '';
+    return `<li ${attributes}>${dragHandle}${task}<span data-writer-block-content="true">${text}</span>${children}</li>`;
   }
   if (block.type === 'image') {
     const source = imageReferencePath(block);
@@ -914,7 +915,7 @@ function parseEditorDocument(editor: HTMLElement, source: WriterDocument): Write
           || 2,
       }
       : type === 'list_item'
-        ? { ...(template.numbering ?? {}), ordered: Boolean(ordered) }
+        ? { ...(template.numbering ?? {}), ordered: Boolean(ordered), ...(template.numbering?.task ? { checked: element.querySelector<HTMLInputElement>('[data-writer-task]')?.checked ?? Boolean(template.numbering.checked) } : {}) }
         : template.numbering;
 
     return {

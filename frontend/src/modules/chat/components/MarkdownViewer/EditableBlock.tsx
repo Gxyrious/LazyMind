@@ -1,3 +1,4 @@
+import { markdownSelectionRange } from '@/modules/chat/components/WorkflowPanel/writerMarkdownSource';
 import { useCallback, useMemo, useRef, useState } from "react";
 import { MarkdownArtifactEditor } from "@/modules/chat/components/WorkflowPanel/MarkdownArtifactEditor";
 import { ArtifactRewriteDialog } from "@/modules/chat/components/WorkflowPanel/ArtifactRewriteDialog";
@@ -30,30 +31,6 @@ interface EditableBlockProps {
   onCiteSelection?: (text: string) => void;
 }
 
-function resolveSelectionRange(markdown: string, selection: ArtifactRewriteSelection) {
-  const selectedText = selection.selectedText;
-  const paragraphText = selection.paragraph?.textContent ?? "";
-  const paragraphStart = paragraphText ? markdown.indexOf(paragraphText) : -1;
-  if (paragraphStart >= 0 && markdown.indexOf(paragraphText, paragraphStart + paragraphText.length) < 0) {
-    const localStart = selection.startOffset;
-    if (typeof localStart === "number") {
-      const start = paragraphStart + localStart;
-      if (markdown.slice(start, start + selectedText.length) === selectedText) {
-        return { start, end: start + selectedText.length, paragraphStart };
-      }
-    }
-  }
-  const start = markdown.indexOf(selectedText);
-  if (start < 0 || markdown.indexOf(selectedText, start + selectedText.length) >= 0) {
-    throw new Error("selected text is missing or ambiguous");
-  }
-  return { start, end: start + selectedText.length, paragraphStart: start };
-}
-
-function codePointOffset(value: string, jsOffset: number) {
-  return Array.from(value.slice(0, jsOffset)).length;
-}
-
 function jsOffsetFromCodePoints(value: string, offset: number) {
   return Array.from(value).slice(0, offset).join("").length;
 }
@@ -78,7 +55,7 @@ export default function EditableBlock({
 
   const save = useCallback(async (nextMarkdown: string, baseRevision: number) => {
     if (!conversationId || !historyId) throw new Error("editable message identity unavailable");
-    const response = await ChatServiceApi().patchEditableBlock({
+    await ChatServiceApi().patchEditableBlock({
       conversation_id: conversationId,
       history_id: historyId,
       base_content: persistedMarkdownRef.current,
@@ -99,6 +76,7 @@ export default function EditableBlock({
       anchor: selection.anchor,
       paragraph: selection.paragraph,
       startOffset: selection.startOffset,
+      sourceRange: selection.sourceRange,
     });
   }, []);
 
@@ -119,16 +97,17 @@ export default function EditableBlock({
     instruction: string,
     selection: ArtifactRewriteSelection,
   ): Promise<RewriteSelectionPreview> => {
-    const range = resolveSelectionRange(markdown, selection);
+    const sourceRange = selection.sourceRange ?? markdownSelectionRange(markdown, selection);
+    const range = { start: jsOffsetFromCodePoints(markdown, sourceRange.start), end: jsOffsetFromCodePoints(markdown, sourceRange.end) };
     const response = await PromptServiceApi().polishEditableSelection({
       content: selection.selectedText,
       user_instruct: instruction,
       allow_empty: true,
       full_content: markdown,
       selection_ranges: [{
-        start: codePointOffset(markdown, range.start),
-        end: codePointOffset(markdown, range.end),
-        content: selection.selectedText,
+        start: sourceRange.start,
+        end: sourceRange.end,
+        content: sourceRange.selected_text,
       }],
     }, {
       timeout: 10 * 60 * 1_000,

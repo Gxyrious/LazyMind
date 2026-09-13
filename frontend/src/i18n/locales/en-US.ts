@@ -1762,6 +1762,27 @@ const enUS = {
 
   // Chat
   chat: {
+    writerSource: {
+      "mapPreviewFailed": "Cannot preview this map. Only area geometries are supported; check its format and size or view the source.",
+      "selectionMappingFailed": "Cannot locate this selection in the source. Save and select the text again.",
+      "zoomIn": "Zoom in",
+      "zoomOut": "Zoom out",
+      "reset": "Reset",
+      "map": "Interactive map; zoom and pan",
+      "model": "STL model",
+      "rotate": "Rotate",
+      "footnotes": "Footnotes",
+      "backToText": "Back to text",
+      "view": "Document view",
+      "rich": "Edit",
+      "preview": "Read",
+      "source": "Source",
+      "readingWidth": "Article reading width",
+      "retry": "Retry",
+      "loading": "Loading…",
+      "unavailable": "No available source address",
+      "previewFailed": "Preview unavailable. View the source or open the original."
+    },
     writerCopy: {
       copyContent: "Copy content",
       copyAs: "Copy {{format}}",

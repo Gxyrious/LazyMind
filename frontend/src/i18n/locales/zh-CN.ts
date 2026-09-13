@@ -1713,6 +1713,27 @@ const zhCN = {
   },
 
   chat: {
+    writerSource: {
+      "mapPreviewFailed": "无法预览此地图数据。当前仅支持面数据，请检查格式、大小或查看源码。",
+      "selectionMappingFailed": "无法准确定位到源文，请保存后重新选择。",
+      "zoomIn": "放大",
+      "zoomOut": "缩小",
+      "reset": "重置",
+      "map": "交互地图，可缩放和平移",
+      "model": "STL 三维模型",
+      "rotate": "旋转",
+      "footnotes": "脚注",
+      "backToText": "返回正文",
+      "view": "文档视图",
+      "rich": "编辑",
+      "preview": "阅读",
+      "source": "源码",
+      "readingWidth": "公众号阅读宽度",
+      "retry": "重试",
+      "loading": "正在加载…",
+      "unavailable": "暂无可用的打开地址",
+      "previewFailed": "暂时无法预览，请查看源码或打开来源。"
+    },
     writerCopy: {
       copyContent: "复制内容",
       copyAs: "复制 {{format}}",

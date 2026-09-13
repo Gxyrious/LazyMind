@@ -352,7 +352,7 @@ func (b *schemaBuilder) schemaForType(t reflect.Type) map[string]any {
 		return map[string]any{"oneOf": []any{b.schemaForType(reflect.TypeOf(workflow.DocumentRewritePreviewRequest{})), b.schemaForType(reflect.TypeOf(workflow.DocumentConvertPreviewRequest{})), b.schemaForType(reflect.TypeOf(workflow.DocumentNumberingPreviewRequest{})), b.schemaForType(reflect.TypeOf(workflow.DocumentCrossReferencePreviewRequest{}))}, "discriminator": map[string]any{"propertyName": "action"}}
 	}
 	if t == reflect.TypeOf(documentActionPreviewOpenAPIData{}) {
-		return map[string]any{"oneOf": []any{b.schemaForType(reflect.TypeOf(workflow.DocumentRewritePreviewResult{})), b.schemaForType(reflect.TypeOf(workflow.DocumentConvertResult{})), b.schemaForType(reflect.TypeOf(workflow.DocumentNumberingResult{})), b.schemaForType(reflect.TypeOf(workflow.DocumentCrossReferenceTargetsResult{})), b.schemaForType(reflect.TypeOf(workflow.DocumentCrossReferencePreviewResult{}))}}
+		return map[string]any{"oneOf": []any{b.schemaForType(reflect.TypeOf(workflow.DocumentRewritePreviewResult{})), b.schemaForType(reflect.TypeOf(workflow.DocumentRewriteRangesResult{})), b.schemaForType(reflect.TypeOf(workflow.DocumentConvertResult{})), b.schemaForType(reflect.TypeOf(workflow.DocumentNumberingResult{})), b.schemaForType(reflect.TypeOf(workflow.DocumentCrossReferenceTargetsResult{})), b.schemaForType(reflect.TypeOf(workflow.DocumentCrossReferencePreviewResult{}))}}
 	}
 	if t == nil {
 		return nil
@@ -484,6 +484,27 @@ func (b *schemaBuilder) inlineSchemaForType(t reflect.Type) map[string]any {
 }
 
 func inlineSpecialSchema(t reflect.Type) map[string]any {
+	if t == reflect.TypeOf(workflow.DocumentRewritePreviewInput{}) {
+		text := map[string]any{"type": "string", "minLength": 1}
+		branches := []any{map[string]any{"type": "object", "additionalProperties": false, "required": []string{"instruction", "selection"}, "properties": map[string]any{"instruction": text, "selection": inlineSpecialSchema(reflect.TypeOf(workflow.DocumentRewriteSelection{}))}}}
+		for _, kind := range []string{"markdown", "ir"} {
+			fields := map[string]any{"selected_text": text}
+			required := []string{"selected_text"}
+			if kind == "ir" {
+				fields["node_id"] = text
+				required = []string{"node_id"}
+			}
+			item := map[string]any{"type": "object", "additionalProperties": false, "properties": fields, "required": required}
+			var items any = item
+			if kind == "markdown" {
+				offsets := map[string]any{"selected_text": text, "start": map[string]any{"type": "integer", "minimum": 0}, "end": map[string]any{"type": "integer", "minimum": 1}}
+				items = map[string]any{"oneOf": []any{item, map[string]any{"type": "object", "additionalProperties": false, "properties": offsets, "required": []string{"selected_text", "start", "end"}}}}
+			}
+			branches = append(branches, map[string]any{"type": "object", "additionalProperties": false, "required": []string{"instruction", "type", "selection_ranges"}, "properties": map[string]any{"instruction": text, "type": map[string]any{"type": "string", "enum": []string{kind}}, "selection_ranges": map[string]any{"type": "array", "minItems": 1, "maxItems": 1, "items": items}}})
+		}
+		return map[string]any{"oneOf": branches}
+	}
+
 	if t == reflect.TypeOf(workflow.DocumentConvertSnapshot{}) {
 		return map[string]any{"oneOf": []any{map[string]any{"type": "string"}, map[string]any{"type": "object", "additionalProperties": true}}, "description": "Inline Markdown text or Writer IR object; never a file locator."}
 	}

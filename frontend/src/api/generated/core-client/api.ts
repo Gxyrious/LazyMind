@@ -1651,6 +1651,7 @@ export interface DeleteWordGroupResponse {
 export interface Descriptor {
     'capabilities': Array<string>;
     'editable': boolean;
+    'render_context'?: DocumentRenderContext;
     'representation': string;
     'schema': string;
 }
@@ -1790,7 +1791,7 @@ export interface DocumentActionPreviewOpenAPIResponse {
 /**
  * @type DocumentActionPreviewOpenAPIResponseData
  */
-export type DocumentActionPreviewOpenAPIResponseData = DocumentConvertResult | DocumentCrossReferencePreviewResult | DocumentCrossReferenceTargetsResult | DocumentNumberingResult | DocumentRewritePreviewResult;
+export type DocumentActionPreviewOpenAPIResponseData = DocumentConvertResult | DocumentCrossReferencePreviewResult | DocumentCrossReferenceTargetsResult | DocumentNumberingResult | DocumentRewritePreviewResult | DocumentRewriteRangesResult;
 
 export interface DocumentArtifactPatchRequest {
     'base_draft_version'?: number;
@@ -1810,6 +1811,11 @@ export const DocumentArtifactPatchRequestModeEnum = {
 
 export type DocumentArtifactPatchRequestModeEnum = typeof DocumentArtifactPatchRequestModeEnum[keyof typeof DocumentArtifactPatchRequestModeEnum];
 
+export interface DocumentCodeFenceDisplay {
+    'end': number;
+    'language': string;
+    'start': number;
+}
 export interface DocumentConvertPreviewInput {
     'document'?: DocumentConvertPreviewInputDocument;
     'output_format': DocumentConvertPreviewInputOutputFormatEnum;
@@ -2015,6 +2021,12 @@ export const DocumentCrossReferenceTargetsResultRepresentationEnum = {
 
 export type DocumentCrossReferenceTargetsResultRepresentationEnum = typeof DocumentCrossReferenceTargetsResultRepresentationEnum[keyof typeof DocumentCrossReferenceTargetsResultRepresentationEnum];
 
+export interface DocumentImageDisplay {
+    'end': number;
+    'height'?: number;
+    'start': number;
+    'width': number;
+}
 export interface DocumentInvalidCrossReference {
     'target_id': string;
 }
@@ -2224,6 +2236,11 @@ export interface DocumentPublishResult {
     'status': string;
     'target_document'?: any;
 }
+export interface DocumentRenderContext {
+    'code_fences': Array<DocumentCodeFenceDisplay>;
+    'images': Array<DocumentImageDisplay>;
+    'source_hash': string;
+}
 export interface DocumentRewriteCommit {
     'token': string;
 }
@@ -2266,31 +2283,11 @@ export interface DocumentRewritePreview {
     'new_text': string;
     'old_text': string;
 }
-export interface DocumentRewritePreviewInput {
-    'instruction': string;
-    'selection': DocumentRewritePreviewInputSelection;
-}
-/**
- * @type DocumentRewritePreviewInputSelection
- */
-export type DocumentRewritePreviewInputSelection = DocumentCrossReferencePreviewInputOneOf1SelectionOneOf | DocumentRewritePreviewInputSelectionOneOf;
-
-export interface DocumentRewritePreviewInputSelectionOneOf {
-    'node_id': string;
-    'type': DocumentRewritePreviewInputSelectionOneOfTypeEnum;
-}
-
-export const DocumentRewritePreviewInputSelectionOneOfTypeEnum = {
-    Ir: 'ir'
-} as const;
-
-export type DocumentRewritePreviewInputSelectionOneOfTypeEnum = typeof DocumentRewritePreviewInputSelectionOneOfTypeEnum[keyof typeof DocumentRewritePreviewInputSelectionOneOfTypeEnum];
-
 export interface DocumentRewritePreviewRequest {
     'action': DocumentRewritePreviewRequestActionEnum;
     'base_draft_version'?: number;
     'base_revision': number;
-    'input': DocumentRewritePreviewInput;
+    'input': DocumentRewritePreviewRequestInput;
 }
 
 export const DocumentRewritePreviewRequestActionEnum = {
@@ -2299,6 +2296,72 @@ export const DocumentRewritePreviewRequestActionEnum = {
 
 export type DocumentRewritePreviewRequestActionEnum = typeof DocumentRewritePreviewRequestActionEnum[keyof typeof DocumentRewritePreviewRequestActionEnum];
 
+/**
+ * @type DocumentRewritePreviewRequestInput
+ */
+export type DocumentRewritePreviewRequestInput = DocumentRewritePreviewRequestInputOneOf | DocumentRewritePreviewRequestInputOneOf1 | DocumentRewritePreviewRequestInputOneOf2;
+
+export interface DocumentRewritePreviewRequestInputOneOf {
+    'instruction': string;
+    'selection': DocumentRewritePreviewRequestInputOneOfSelection;
+}
+export interface DocumentRewritePreviewRequestInputOneOf1 {
+    'instruction': string;
+    'selection_ranges': Array<DocumentRewritePreviewRequestInputOneOf1SelectionRangesInner>;
+    'type': DocumentRewritePreviewRequestInputOneOf1TypeEnum;
+}
+
+export const DocumentRewritePreviewRequestInputOneOf1TypeEnum = {
+    Markdown: 'markdown'
+} as const;
+
+export type DocumentRewritePreviewRequestInputOneOf1TypeEnum = typeof DocumentRewritePreviewRequestInputOneOf1TypeEnum[keyof typeof DocumentRewritePreviewRequestInputOneOf1TypeEnum];
+
+/**
+ * @type DocumentRewritePreviewRequestInputOneOf1SelectionRangesInner
+ */
+export type DocumentRewritePreviewRequestInputOneOf1SelectionRangesInner = DocumentRewritePreviewRequestInputOneOf1SelectionRangesInnerOneOf | DocumentRewritePreviewRequestInputOneOf1SelectionRangesInnerOneOf1;
+
+export interface DocumentRewritePreviewRequestInputOneOf1SelectionRangesInnerOneOf {
+    'selected_text': string;
+}
+export interface DocumentRewritePreviewRequestInputOneOf1SelectionRangesInnerOneOf1 {
+    'end': number;
+    'selected_text': string;
+    'start': number;
+}
+export interface DocumentRewritePreviewRequestInputOneOf2 {
+    'instruction': string;
+    'selection_ranges': Array<DocumentRewritePreviewRequestInputOneOf2SelectionRangesInner>;
+    'type': DocumentRewritePreviewRequestInputOneOf2TypeEnum;
+}
+
+export const DocumentRewritePreviewRequestInputOneOf2TypeEnum = {
+    Ir: 'ir'
+} as const;
+
+export type DocumentRewritePreviewRequestInputOneOf2TypeEnum = typeof DocumentRewritePreviewRequestInputOneOf2TypeEnum[keyof typeof DocumentRewritePreviewRequestInputOneOf2TypeEnum];
+
+export interface DocumentRewritePreviewRequestInputOneOf2SelectionRangesInner {
+    'node_id': string;
+    'selected_text'?: string;
+}
+/**
+ * @type DocumentRewritePreviewRequestInputOneOfSelection
+ */
+export type DocumentRewritePreviewRequestInputOneOfSelection = DocumentCrossReferencePreviewInputOneOf1SelectionOneOf | DocumentRewritePreviewRequestInputOneOfSelectionOneOf;
+
+export interface DocumentRewritePreviewRequestInputOneOfSelectionOneOf {
+    'node_id': string;
+    'type': DocumentRewritePreviewRequestInputOneOfSelectionOneOfTypeEnum;
+}
+
+export const DocumentRewritePreviewRequestInputOneOfSelectionOneOfTypeEnum = {
+    Ir: 'ir'
+} as const;
+
+export type DocumentRewritePreviewRequestInputOneOfSelectionOneOfTypeEnum = typeof DocumentRewritePreviewRequestInputOneOfSelectionOneOfTypeEnum[keyof typeof DocumentRewritePreviewRequestInputOneOfSelectionOneOfTypeEnum];
+
 export interface DocumentRewritePreviewResult {
     'artifact': DocumentActionArtifact;
     'commit': DocumentRewriteCommit;
@@ -2306,6 +2369,31 @@ export interface DocumentRewritePreviewResult {
     'preview': DocumentRewritePreview;
     'representation': string;
     'target': DocumentRewriteTarget;
+}
+export interface DocumentRewriteRangeResult {
+    'patch': DocumentRewritePatch;
+    'preview': DocumentRewritePreview;
+    'target': DocumentRewriteRangeTarget;
+}
+export interface DocumentRewriteRangeTarget {
+    'block_type': string;
+    'node_id'?: string;
+    'target_end'?: number;
+    'target_start'?: number;
+    'type': DocumentRewriteRangeTargetTypeEnum;
+}
+
+export const DocumentRewriteRangeTargetTypeEnum = {
+    Block: 'block'
+} as const;
+
+export type DocumentRewriteRangeTargetTypeEnum = typeof DocumentRewriteRangeTargetTypeEnum[keyof typeof DocumentRewriteRangeTargetTypeEnum];
+
+export interface DocumentRewriteRangesResult {
+    'artifact': DocumentActionArtifact;
+    'commit': DocumentRewriteCommit;
+    'representation': string;
+    'results': Array<DocumentRewriteRangeResult>;
 }
 export interface DocumentRewriteTarget {
     'block_type': string;
