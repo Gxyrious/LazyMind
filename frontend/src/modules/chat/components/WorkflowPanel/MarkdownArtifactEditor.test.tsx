@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mdxMocks = vi.hoisted(() => ({
+  onChange: undefined as ((value: string, initial?: boolean) => void) | undefined,
   imagePreviewHandler: undefined as ((url: string) => Promise<string>) | undefined,
 }));
 
@@ -29,6 +30,7 @@ vi.mock('@mdxeditor/editor', async () => {
         else update();
       },
     }));
+    mdxMocks.onChange = props.onChange as typeof mdxMocks.onChange;
     const plugins = props.plugins as Array<{ toolbarContents?: () => React.ReactNode }>;
     const toolbar = plugins.find((plugin) => plugin.toolbarContents)?.toolbarContents?.();
     const hasInternalReference = renderedMarkdown.includes('[beta](#block-sec-1)');
@@ -969,6 +971,25 @@ describe('MarkdownArtifactEditor conflict refresh', () => {
     expect(onSave).not.toHaveBeenCalled();
   });
 
+  it('resets source tracking when accepting a remote version with formatting and margins', async () => {
+    const onSave = vi.fn();
+    const onContentChange = vi.fn();
+    const remote = '\nFresh **remote**.\n\n';
+    const { rerender } = render(<MarkdownArtifactEditor markdown='Old **source**.' sourceRevision={1} onSave={onSave} onContentChange={onContentChange} />);
+    const editable = screen.getByTestId('markdown-editable');
+    editable.textContent = 'Unsaved local changes.';
+    fireEvent.input(editable);
+    rerender(<MarkdownArtifactEditor markdown={remote} sourceRevision={2} onSave={onSave} onContentChange={onContentChange} />);
+    fireEvent.click(screen.getByRole('button', { name: 'chat.writerMarkdown.useRemoteVersion' }));
+    await waitFor(() => expect(onContentChange).toHaveBeenLastCalledWith(remote));
+    vi.useFakeTimers();
+    try {
+      await act(async () => { await vi.advanceTimersByTimeAsync(16000); });
+      expect(onSave).not.toHaveBeenCalled();
+    } finally { vi.useRealTimers(); }
+    expect(screen.queryByText('chat.writerMarkdown.externalUpdate')).toBeNull();
+  });
+
   it('saves the explicitly chosen local version against the refreshed revision', async () => {
     const onSave = vi.fn(async () => ({ markdown: 'Local document', revision: 3 }));
     const { rerender } = render(
@@ -1195,4 +1216,46 @@ describe('MarkdownArtifactEditor autosave', () => {
       vi.useRealTimers();
     }
   });
+});
+
+it('does not publish initial editor normalization as a content edit', async () => {
+  const source = 'https://example.org\n';
+  const normalized = '[https://example.org](https://example.org)';
+  const onContentChange = vi.fn();
+  render(<MarkdownArtifactEditor markdown={source} sourceRevision={1} onSave={async()=>1} onContentChange={onContentChange} />);
+  await act(async () => { mdxMocks.onChange?.(normalized, true); });
+  expect(onContentChange.mock.calls.map(([value]) => value)).not.toContain(normalized);
+});
+
+it('keeps intentional whitespace edits made in source mode', async () => {
+  const onContentChange = vi.fn();
+  render(<MarkdownArtifactEditor markdown={'Alpha\n'} sourceRevision={1} onSave={async()=>1} onContentChange={onContentChange} />);
+  fireEvent.click(screen.getByRole('button', {name:'chat.writerSource.source'}));
+  const input = screen.getByRole('textbox', {name:'chat.writerSource.source'});
+  fireEvent.change(input, {target:{value:'\nAlpha\n\n'}});
+  await waitFor(() => expect(onContentChange).toHaveBeenLastCalledWith('\nAlpha\n\n'));
+  expect(input).toHaveValue('\nAlpha\n\n');
+});
+
+it('carries an unsaved source edit into the rich editor when switching views', () => {
+ const {container}=render(<MarkdownArtifactEditor markdown='Original paragraph' sourceRevision={1} onSave={async()=>1} />);
+ fireEvent.click(screen.getByRole('button',{name:'chat.writerSource.source'}));
+ fireEvent.change(screen.getByRole('textbox',{name:'chat.writerSource.source'}),{target:{value:'Changed paragraph'}});
+ fireEvent.click(screen.getByRole('button',{name:'chat.writerSource.rich'}));
+ expect(container.querySelector('.writer-markdown-editor__surface')).toHaveAttribute('data-markdown','Changed paragraph');
+});
+
+it('preserves source spelling across successive rich-text saves', async () => {
+ const source = 'Old https://example.org A & B.\n';
+ const normalized = 'Old [https://example.org](https://example.org) A \\& B.';
+ let revision=1;
+ const onSave=vi.fn(async(markdown:string)=>({markdown,revision:++revision}));
+ render(<MarkdownArtifactEditor markdown={source} sourceRevision={1} onSave={onSave} />);
+ await act(async()=>mdxMocks.onChange?.(normalized,true));
+ await act(async()=>mdxMocks.onChange?.(normalized.replace('Old','First'),false));
+ await waitFor(()=>expect(onSave).toHaveBeenCalledTimes(1),{timeout:2500});
+ expect(onSave.mock.calls[0][0]).toBe(source.replace('Old','First'));
+ await act(async()=>mdxMocks.onChange?.(normalized.replace('Old','Second'),false));
+ await waitFor(()=>expect(onSave).toHaveBeenCalledTimes(2),{timeout:2500});
+ expect(onSave.mock.calls[1][0]).toBe(source.replace('Old','Second'));
 });

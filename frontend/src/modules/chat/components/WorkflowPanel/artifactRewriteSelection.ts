@@ -63,6 +63,9 @@ export function floatingToolbarAnchor({
 }
 
 export interface MarkdownSelection {
+  sourceRange?: { selected_text: string; start: number; end: number };
+  sourceRanges?: Array<{ selected_text: string; start: number; end: number }>;
+  paragraphSelections?: Array<{ paragraph: HTMLElement; selectedText: string; startOffset: number }>;
   text: string;
   anchor: SelectionActionAnchor;
   supported: boolean;
@@ -176,7 +179,7 @@ export function selectionActionAnchor(range: Range): SelectionActionAnchor | nul
  * Captures the visible selection and whether it stays inside one ordinary
  * Markdown paragraph. The server remains the source of truth for matching it.
  */
-export function selectedMarkdownParagraph(container: HTMLElement): MarkdownSelection | null {
+export function selectedMarkdownParagraph(container: HTMLElement, allowMultiple = false): MarkdownSelection | null {
   const selection = globalThis.getSelection();
   if (!selection || selection.rangeCount === 0 || selection.isCollapsed) return null;
 
@@ -203,6 +206,17 @@ export function selectedMarkdownParagraph(container: HTMLElement): MarkdownSelec
   const text = selectedText.trim();
   const anchor = selectionActionAnchor(range);
   if (!text || !anchor) return null;
+
+  if (allowMultiple && startParagraph && endParagraph && startParagraph !== endParagraph) {
+    const forbidden = Array.from(container.querySelectorAll('h1,h2,h3,h4,h5,h6,li,blockquote,pre,table,hr,img,video,audio'));
+    const invalid = forbidden.some((element) => range.intersectsNode(element)
+      && (['IMG','HR','VIDEO','AUDIO'].includes(element.tagName) || rangeTextWithin(range, element)?.selectedText));
+    const paragraphs = Array.from(container.querySelectorAll<HTMLElement>('p'))
+      .map((paragraph) => ({paragraph, ...rangeTextWithin(range,paragraph)}))
+      .filter((item): item is {paragraph: HTMLElement; selectedText: string; startOffset: number} => Boolean(item.selectedText));
+    return {text: paragraphs.map((p)=>p.selectedText).join('\n\n'),anchor,supported: !invalid && paragraphs.length>1,
+      paragraph: startParagraph,paragraphSelections: paragraphs};
+  }
 
   let supported = Boolean(
     startParagraph
@@ -238,4 +252,15 @@ export function selectedMarkdownParagraph(container: HTMLElement): MarkdownSelec
     startOffset,
     internalReference: selectedInternalReference(container, range),
   };
+}
+
+/** Intersect a DOM range with one text block, preserving the block-local offset. */
+export function rangeTextWithin(range: Range, element: Element): {selectedText: string; startOffset: number} | undefined {
+  if (!range.intersectsNode(element)) return;
+  const part = element.ownerDocument.createRange();part.selectNodeContents(element);
+  if (range.compareBoundaryPoints(Range.START_TO_START,part)>0) part.setStart(range.startContainer,range.startOffset);
+  if (range.compareBoundaryPoints(Range.END_TO_END,part)<0) part.setEnd(range.endContainer,range.endOffset);
+  const raw=part.toString(),selectedText=raw.trim();if(!selectedText)return;
+  const prefix=element.ownerDocument.createRange();prefix.selectNodeContents(element);prefix.setEnd(part.startContainer,part.startOffset);
+  return {selectedText,startOffset:prefix.toString().length+raw.length-raw.trimStart().length};
 }

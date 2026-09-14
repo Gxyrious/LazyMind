@@ -36,7 +36,7 @@ vi.mock('./WriterIRDocumentEditor', async (original) => ({
 vi.mock('./FilePreviewDrawer', () => ({ FilePreviewDrawer: () => null }));
 vi.mock('@/modules/chat/components/MarkdownViewer', () => ({ default: ({ children }: { children: string }) => <div>{children}</div> }));
 const api = vi.hoisted(() => ({
-  listDocumentProviders: vi.fn(), saveDocumentArtifact: vi.fn(), publishDocument: vi.fn(), getSlots: vi.fn(),
+  getPublicationForArtifact: vi.fn(), listDocumentProviders: vi.fn(), saveDocumentArtifact: vi.fn(), publishDocument: vi.fn(), getSlots: vi.fn(),
 }));
 const confirm = vi.hoisted(() => vi.fn());
 vi.mock('@/modules/chat/utils/request', async (original) => ({
@@ -51,6 +51,7 @@ afterEach(() => vi.useRealTimers());
 
 beforeEach(() => {
   vi.clearAllMocks();
+  api.getPublicationForArtifact.mockResolvedValue({ data: { data: {} } });
   api.getSlots.mockResolvedValue({ data: { data: { slots: [] } } });
   api.listDocumentProviders.mockResolvedValue({ data: { data: { providers: [{ id: 'future-provider', capabilities: ['create', 'replace', 'patch'] }] } } });
   api.saveDocumentArtifact.mockImplementation(async (_id, body) => ({ data: { contract_version: 'workflow.v1', ok: true, result: {

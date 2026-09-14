@@ -23,6 +23,7 @@ it('offers a newly registered Provider from supplied capabilities without adding
 vi.mock('./FilePreviewDrawer', () => ({ FilePreviewDrawer: () => null }));
 vi.mock('@/modules/chat/components/MarkdownViewer', () => ({ default: ({ children }: { children: string }) => createElement('div', null, children) }));
 const publicationApi = vi.hoisted(() => ({
+  getPublicationForArtifact: vi.fn(async () => ({ data: { data: {} } })),
   listDocumentProviders: vi.fn(async () => ({ data: { data: { providers: [{ id: 'future-provider', capabilities: ['create', 'replace'] }] } } })),
   publishDocument: vi.fn(async (..._args: unknown[]) => ({ data: { data: { artifact_id: 'saved-artifact', revision: 4, draft_version: 1, provider: 'future-provider', provider_synced: true, artifact_saved: true } } })),
 }));

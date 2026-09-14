@@ -22,6 +22,9 @@ import './ArtifactRewriteSelectionHighlight.scss';
 
 export type ArtifactRewriteSelection = RewriteSelection & {
   selectedText: string;
+  sourceRange?: { selected_text: string; start: number; end: number };
+  sourceRanges?: Array<{ selected_text: string; start: number; end: number }>;
+  nodeSelections?: Array<{node_id: string; selected_text?: string}>;
   anchor?: SelectionActionAnchor;
   paragraph?: HTMLElement;
   startOffset?: number;
@@ -248,7 +251,7 @@ export function ArtifactRewriteDialog({
                 } }
               : selection.type === 'ir'
                 ? { type: 'ir', selection_ranges: [{ node_id: selection.node_id, selected_text: selection.selectedText }] }
-                : { type: 'markdown', selection_ranges: [{ selected_text: selection.selected_text }] }),
+                : { type: 'markdown', selection_ranges: [selection.sourceRange ?? { selected_text: selection.selected_text }] }),
           },
         },
         { silentError: true } as never,
@@ -337,7 +340,7 @@ interface ArtifactRewriteInlineDiffProps {
   applyPreview?: () => Promise<number | undefined>;
 }
 
-function renderInlineDiff(oldText: string, newText: string) {
+export function renderInlineDiff(oldText: string, newText: string) {
   return diffWordsWithSpace(oldText, newText).map((part, index) => (
     <span
       className={part.added

@@ -1,3 +1,5 @@
+import {ArtifactRewriteBatchPreview} from '@/modules/chat/components/WorkflowPanel/ArtifactRewriteBatchPreview';
+import { markdownSelectionRange, markdownRewriteTargets } from '@/modules/chat/components/WorkflowPanel/writerMarkdownSource';
 import { useCallback, useMemo, useRef, useState } from "react";
 import { MarkdownArtifactEditor } from "@/modules/chat/components/WorkflowPanel/MarkdownArtifactEditor";
 import { ArtifactRewriteDialog } from "@/modules/chat/components/WorkflowPanel/ArtifactRewriteDialog";
@@ -30,36 +32,8 @@ interface EditableBlockProps {
   onCiteSelection?: (text: string) => void;
 }
 
-function resolveSelectionRange(markdown: string, selection: ArtifactRewriteSelection) {
-  const selectedText = selection.selectedText;
-  const paragraphText = selection.paragraph?.textContent ?? "";
-  const paragraphStart = paragraphText ? markdown.indexOf(paragraphText) : -1;
-  if (paragraphStart >= 0 && markdown.indexOf(paragraphText, paragraphStart + paragraphText.length) < 0) {
-    const localStart = selection.startOffset;
-    if (typeof localStart === "number") {
-      const start = paragraphStart + localStart;
-      if (markdown.slice(start, start + selectedText.length) === selectedText) {
-        return { start, end: start + selectedText.length, paragraphStart };
-      }
-    }
-  }
-  const start = markdown.indexOf(selectedText);
-  if (start < 0 || markdown.indexOf(selectedText, start + selectedText.length) >= 0) {
-    throw new Error("selected text is missing or ambiguous");
-  }
-  return { start, end: start + selectedText.length, paragraphStart: start };
-}
-
-function codePointOffset(value: string, jsOffset: number) {
-  return Array.from(value.slice(0, jsOffset)).length;
-}
-
 function jsOffsetFromCodePoints(value: string, offset: number) {
   return Array.from(value).slice(0, offset).join("").length;
-}
-
-function replaceRange(markdown: string, start: number, end: number, replacement: string) {
-  return markdown.slice(0, start) + replacement + markdown.slice(end);
 }
 
 /** A persisted chat writing surface backed by the shared Workflow editor and diff controls. */
@@ -75,10 +49,12 @@ export default function EditableBlock({
   const [rewriteSelection, setRewriteSelection] = useState<ArtifactRewriteSelection | null>(null);
   const [rewritePreview, setRewritePreview] = useState<MarkdownRewritePreview | null>(null);
   const persistedMarkdownRef = useRef(value);
+  const currentDraftRef=useRef(value), previewBaseline=useRef(value);
+  const batchPreview=(rewritePreview?.preview.results?.length ?? 0)>1;
 
   const save = useCallback(async (nextMarkdown: string, baseRevision: number) => {
     if (!conversationId || !historyId) throw new Error("editable message identity unavailable");
-    const response = await ChatServiceApi().patchEditableBlock({
+    await ChatServiceApi().patchEditableBlock({
       conversation_id: conversationId,
       history_id: historyId,
       base_content: persistedMarkdownRef.current,
@@ -99,6 +75,8 @@ export default function EditableBlock({
       anchor: selection.anchor,
       paragraph: selection.paragraph,
       startOffset: selection.startOffset,
+      sourceRange: selection.sourceRange,
+      sourceRanges: selection.sourceRanges,
     });
   }, []);
 
@@ -119,45 +97,36 @@ export default function EditableBlock({
     instruction: string,
     selection: ArtifactRewriteSelection,
   ): Promise<RewriteSelectionPreview> => {
-    const range = resolveSelectionRange(markdown, selection);
+    previewBaseline.current=markdown;
+    const ranges = selection.sourceRanges ?? [selection.sourceRange ?? markdownSelectionRange(markdown, selection)];
     const response = await PromptServiceApi().polishEditableSelection({
       content: selection.selectedText,
       user_instruct: instruction,
       allow_empty: true,
       full_content: markdown,
-      selection_ranges: [{
-        start: codePointOffset(markdown, range.start),
-        end: codePointOffset(markdown, range.end),
-        content: selection.selectedText,
-      }],
+      selection_ranges: ranges.map(range=>({start:range.start,end:range.end,content:range.selected_text})),
     }, {
       timeout: 10 * 60 * 1_000,
       silentError: true,
     } as never);
-    if (response.data.results?.length !== 1) throw new Error("Expected one paragraph rewrite result");
-    const result = response.data.results[0];
-    const newText = result.content;
-    const targetStart = typeof result.target_start === "number"
-      ? jsOffsetFromCodePoints(markdown, result.target_start) : -1;
-    const targetEnd = typeof result.target_end === "number"
-      ? jsOffsetFromCodePoints(markdown, result.target_end) : -1;
-    if (targetStart < 0 || targetEnd <= targetStart
-      || targetStart > range.start || targetEnd < range.end) {
-      throw new Error("invalid authorized block range");
-    }
-    const oldText = markdown.slice(targetStart, targetEnd);
-    if (oldText !== result.old_content) throw new Error("The original paragraph does not match");
-    const nextMarkdown = replaceRange(markdown, targetStart, targetEnd, newText);
-    return {
-      status: "ready",
-      action: "rewrite_selection",
-      base_revision: revision,
-      representation: "markdown",
-      target: { type: "block", block_type: "paragraph" },
-      preview: { old_text: oldText, new_text: newText },
-      patch: { type: "string_replace_set", payload: {} },
-      artifact: { content_type: "text/markdown", value: nextMarkdown },
-    };
+    if (!response.data.results?.length) throw new Error("Missing paragraph rewrite results");
+    const results=[...response.data.results].sort((a,b)=>a.target_start-b.target_start);
+    const expected=markdownRewriteTargets(markdown,ranges);
+    if(expected.length!==results.length)throw new Error('Incomplete paragraph result');
+    let nextMarkdown='',cursor=0;
+    const items=results.map((result,index)=>{
+      const from=jsOffsetFromCodePoints(markdown,result.target_start),to=jsOffsetFromCodePoints(markdown,result.target_end);
+      if(!Number.isInteger(result.target_start)||!Number.isInteger(result.target_end)||result.target_start<0||result.target_end>Array.from(markdown).length
+        ||from<cursor||to<=from||markdown.slice(from,to)!==result.old_content
+        ||result.target_start!==expected[index].start||result.target_end!==expected[index].end)throw new Error('Invalid paragraph result');
+      nextMarkdown+=markdown.slice(cursor,from)+result.content;cursor=to;
+      return {target:{type:'block' as const,block_type:'paragraph',target_start:result.target_start,target_end:result.target_end},
+        preview:{old_text:result.old_content,new_text:result.content},patch:{type:'string_replace_set' as const,payload:{}}};
+    });
+    nextMarkdown+=markdown.slice(cursor);
+    return {status:'ready',action:'rewrite_selection',base_revision:revision,representation:'markdown',...items[0],results:items,
+      artifact:{content_type:'text/markdown',value:nextMarkdown}};
+
   }, [markdown, revision]);
 
   const handlePreviewReady = useCallback((preview: RewriteSelectionPreview) => {
@@ -172,6 +141,7 @@ export default function EditableBlock({
       listIndex: 0,
       preview,
       applyPreview: async () => {
+        if(persistedMarkdownRef.current!==previewBaseline.current || currentDraftRef.current!==previewBaseline.current)throw new Error('Document changed after preview');
         const result = await save(nextMarkdown, preview.base_revision);
         return result.revision;
       },
@@ -182,6 +152,8 @@ export default function EditableBlock({
     <div className="md-editable-block" data-testid="editable-writing-block">
       <MarkdownArtifactEditor
         markdown={markdown}
+        allowMultipleParagraphs readOnly={batchPreview}
+        onContentChange={(content)=>{currentDraftRef.current=content;}}
         sourceRevision={revision}
         presentation="chat"
         onCiteSelection={onCiteSelection}
@@ -190,7 +162,7 @@ export default function EditableBlock({
         onSave={save}
         onRewriteSelection={openRewrite}
         rewriteDialogOpen={Boolean(rewriteSelection)}
-        rewritePreview={rewritePreview}
+        rewritePreview={batchPreview ? null : rewritePreview}
         onRewritePreviewApplied={(nextRevision) => {
           if (typeof nextRevision === "number") setRevision(nextRevision);
           setRewritePreview(null);
@@ -201,6 +173,7 @@ export default function EditableBlock({
           setRewriteSelection(null);
         }}
       />
+      {batchPreview && rewritePreview && <ArtifactRewriteBatchPreview preview={rewritePreview.preview} onCancel={()=>{setRewritePreview(null);setRewriteSelection(null);}} onApply={async()=>{await rewritePreview.applyPreview?.();setRewritePreview(null);setRewriteSelection(null);}} />}
       <ArtifactRewriteDialog
         open={Boolean(rewriteSelection)}
         sessionId=""

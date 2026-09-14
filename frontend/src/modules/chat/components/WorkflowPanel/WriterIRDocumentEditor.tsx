@@ -73,6 +73,8 @@ import {
   type WriterSpan,
   type WriterSpanColorField,
 } from './writerIR';
+import { selectedIRParagraphs } from './writerIRRewriteSelection';
+import { ArtifactRewriteSelectionAction } from './ArtifactRewriteSelectionAction';
 import { ArtifactRewriteInlineDiff } from './ArtifactRewriteDialog';
 import { ArtifactRewriteSelectionHighlight } from './ArtifactRewriteSelectionHighlight';
 import { selectionActionAnchor, type SelectionActionAnchor } from './artifactRewriteSelection';
@@ -119,6 +121,7 @@ function imageReferencePath(block: WriterBlock): string {
 }
 
 export interface WriterIRRewriteSelection {
+  nodeSelections?: Array<{node_id:string;selected_text:string}>;
   nodeId: string;
   selectedText: string;
   anchor?: SelectionActionAnchor;
@@ -136,6 +139,7 @@ interface WriterIRDocumentEditorProps {
   disabled?: boolean;
   rewriteDialogOpen?: boolean;
   onRewriteSelection?: (selection: WriterIRRewriteSelection) => void;
+  allowMultipleParagraphs?: boolean;
   rewritePreview?: WriterIRRewritePreview | null;
   onRewritePreviewApplied?: (revision?: number, draftVersion?: number) => void;
   onRewritePreviewRejected?: () => void;
@@ -678,7 +682,8 @@ function renderBlock(
     return `<div ${attributes}>${dragHandle}<hr data-writer-block-content="true" class="writer-ir__divider"></div>`;
   }
   if (block.type === 'list_item') {
-    return `<li ${attributes}>${dragHandle}<span data-writer-block-content="true">${text}</span>${children}</li>`;
+    const task = block.numbering?.task ? `<input type="checkbox" data-writer-task="true" aria-label="${escapeHtmlAttribute(block.content ?? '')}"${block.numbering.checked ? ' checked' : ''}${block.editable === false ? ' disabled' : ''}>` : '';
+    return `<li ${attributes}>${dragHandle}${task}<span data-writer-block-content="true">${text}</span>${children}</li>`;
   }
   if (block.type === 'image') {
     const source = imageReferencePath(block);
@@ -914,7 +919,7 @@ function parseEditorDocument(editor: HTMLElement, source: WriterDocument): Write
           || 2,
       }
       : type === 'list_item'
-        ? { ...(template.numbering ?? {}), ordered: Boolean(ordered) }
+        ? { ...(template.numbering ?? {}), ordered: Boolean(ordered), ...(template.numbering?.task ? { checked: element.querySelector<HTMLInputElement>('[data-writer-task]')?.checked ?? Boolean(template.numbering.checked) } : {}) }
         : template.numbering;
 
     return {
@@ -1265,6 +1270,7 @@ export function WriterIRDocumentEditor({
   disabled = false,
   rewriteDialogOpen = false,
   onRewriteSelection,
+  allowMultipleParagraphs = false,
   rewritePreview,
   onRewritePreviewApplied,
   onRewritePreviewRejected,
@@ -1278,6 +1284,7 @@ export function WriterIRDocumentEditor({
   const lastEmittedDocumentRef = useRef<WriterDocument>();
   const lastRenderedDocumentRef = useRef<WriterDocument | undefined>(undefined);
   const lastRenderedNumberingRef = useRef<WriterNumberingState | undefined>();
+  const [multiSelection,setMultiSelection]=useState<ReturnType<typeof selectedIRParagraphs>>(null);
   const savedSelectionRef = useRef<WriterEditorSelection | null>(null);
   const referenceSelectionRef = useRef<WriterEditorSelection | null>(null);
   const referenceMenuOpenRef = useRef(false);
@@ -1710,6 +1717,7 @@ export function WriterIRDocumentEditor({
   const recordSelection = useCallback(() => {
     const editor = editorRef.current;
     if (!editor) return;
+    if (allowMultipleParagraphs && !rewriteDialogOpenRef.current) setMultiSelection(selectedIRParagraphs(editor,document));
     const selection = readEditorSelection(editor);
     if (!selection) {
       if ((rewriteDialogOpenRef.current || pinnedRewriteSelectionRef.current) && savedSelectionRef.current) {
@@ -1725,7 +1733,7 @@ export function WriterIRDocumentEditor({
     }
     savedSelectionRef.current = selection;
     setActiveSelection(selection);
-  }, []);
+  }, [allowMultipleParagraphs, document]);
 
   useEffect(() => {
     const handleSelectionChange = () => {
@@ -2569,6 +2577,7 @@ export function WriterIRDocumentEditor({
       onBlur={handleBlur}
       onClickCapture={openNumberingMenu}
     >
+      {multiSelection && onRewriteSelection && !disabled && !rewriteDialogOpen && <ArtifactRewriteSelectionAction anchor={multiSelection.anchor} label={t('chat.artifactRewrite.action')} onActivate={()=>onRewriteSelection(multiSelection)} onDismiss={()=>setMultiSelection(null)} />}
       {numberingMenu && numberingBlock?.type === 'heading' && (
         <WriterHeadingNumberingMenu
           x={numberingMenu.x}

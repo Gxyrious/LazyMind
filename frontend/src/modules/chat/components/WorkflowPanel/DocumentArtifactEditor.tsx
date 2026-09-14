@@ -1,6 +1,6 @@
 import { useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { Modal } from 'antd';
-import type { DocumentProvider, DocumentPublishRequest, DocumentRewritePreviewResult, DocumentNumberingResult, DocumentConvertResult } from '@/api/generated/core-client';
+import type { DocumentProvider, DocumentPublishRequest, DocumentNumberingResult, DocumentConvertResult } from '@/api/generated/core-client';
 import type { SlotRevision } from '@/modules/chat/store/workflowPanel';
 import { WorkflowSessionApi, type RewriteSelectionPreview, type WriterNumberingState, type WriterNumberingUpdate } from '@/modules/chat/utils/request';
 import { resolveCoreAssetUrl, resolveMarkdownImageUrlAsync } from '@/modules/knowledge/utils/imageUrl';
@@ -13,6 +13,10 @@ import { ArtifactRewriteDialog, type ArtifactRewriteSelection } from './Artifact
 import { useDocumentCopy } from './useDocumentCopy';
 import { WriterDownloadFormatDialog, writerDownloadFilename, writerDownloadCacheKey } from './WriterDownloadFormat';
 import { WriterProviderChoice } from './DocumentProviderChoice';
+import { documentRewritePreview } from './documentRewritePreview';
+import { documentPublicationErrorMessage } from './documentPublicationError';
+import { ArtifactRewriteBatchPreview } from './ArtifactRewriteBatchPreview';
+import { DocumentPublicationRecoveryPanel } from './DocumentPublicationRecoveryPanel';
 
 function unwrap(value: unknown): unknown {
   while (value && typeof value === 'object') {
@@ -49,6 +53,10 @@ export function DocumentArtifactEditor({ slot, sessionId, readOnly, onRefresh }:
   const providersRef = useRef(providers); providersRef.current = providers;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [publicationBlocked,setPublicationBlocked]=useState(true);
+  const [publicationRefresh,setPublicationRefresh]=useState(0);
+  const publicationAvailable=useCallback((allowed:boolean)=>setPublicationBlocked(!allowed),[]);
+  const publicationResolved=useCallback(()=>{attempt.current=undefined;setError('');onRefresh?.();},[onRefresh]);
   const draftContent = useRef(initial.value);
   const [numbering, setNumbering] = useState<WriterNumberingState>();
   const [selection, setSelection] = useState<ArtifactRewriteSelection | null>(null);
@@ -86,7 +94,7 @@ export function DocumentArtifactEditor({ slot, sessionId, readOnly, onRefresh }:
     let canceled = false;
     void WorkflowSessionApi().listDocumentProviders().then((response) => {
       if (!canceled) setProviders(response.data.data.providers);
-    }).catch(() => { if (!canceled) setError(String(i18n.t('chat.writerIR.writeBackFailed'))); });
+    }).catch(() => { if (!canceled) setError(documentPublicationErrorMessage('DOCUMENT_PROVIDERS_UNAVAILABLE')); });
     return () => { canceled = true; };
   }, [descriptor.capabilities, writable]);
 
@@ -130,7 +138,7 @@ export function DocumentArtifactEditor({ slot, sessionId, readOnly, onRefresh }:
     revision: version, document: value as string | WriterDocument });
   useEffect(() => {
     if (!active || !loaded || !descriptor.capabilities.includes('convert_document')) return;
-    return registerFooterAction(`${editingKey}:download`, { label: String(i18n.t('common.download')), icon: 'download', onClick: () => setDownload(true) });
+    return registerFooterAction(`${editingKey}:download`, { label: String(i18n.t('chat.slots.download')), icon: 'download', onClick: () => setDownload(true) });
   }, [active, loaded, descriptor.capabilities, registerFooterAction, editingKey]);
   const convert = async (format: 'markdown' | 'latex') => {
     const current = latest.current;
@@ -141,6 +149,8 @@ export function DocumentArtifactEditor({ slot, sessionId, readOnly, onRefresh }:
   };
   const applyPreview = async () => {
     if (!preview?.value.commit?.token) return undefined;
+    const baseline=previewSource.current;
+    if (dirty.current || !baseline || external.current.id!==baseline.id || external.current.revision!==baseline.revision || external.current.draft!==baseline.draft) throw new Error('rewrite baseline changed');
     const response = await WorkflowSessionApi().executeDocumentAction(preview.id, { action: 'rewrite_selection',
       base_revision: preview.value.base_revision, base_draft_version: preview.value.base_draft_version,
       input: { commit_token: preview.value.commit.token } });
@@ -150,14 +160,15 @@ export function DocumentArtifactEditor({ slot, sessionId, readOnly, onRefresh }:
     accept(artifact.artifact_id, artifact.revision, artifact.draft_version, unwrap(artifact.value));
     setPreview(null); onRefresh?.(); return artifact.revision;
   };
+  const batchPreview = (preview?.value.results?.length ?? 0)>1;
   const canRewrite = writable && descriptor.capabilities.includes('rewrite_selection') && !selection && !preview;
 
   const publish = useCallback(async (provider: string) => {
-    if (busy) return;
+    if (busy || publicationBlocked) return;
     const current = latest.current;
     const fingerprint = JSON.stringify([current.id, current.revision, current.draft, provider]);
     if (attempt.current?.uncertain && attempt.current.fingerprint !== fingerprint) {
-      setError(String(i18n.t('chat.writerIR.writeBackFailed'))); return;
+      setError(documentPublicationErrorMessage('PUBLICATION_OUTCOME_UNKNOWN', provider)); return;
     }
     if (!attempt.current || attempt.current.fingerprint !== fingerprint) {
       attempt.current = { fingerprint, id: current.id, uncertain: false, body: { action: 'publish_document',
@@ -175,19 +186,19 @@ export function DocumentArtifactEditor({ slot, sessionId, readOnly, onRefresh }:
     } catch (failure) {
       const code = responseCode(failure);
       const beforeWrite = ['DOCUMENT_ACTION_INVALID', 'REVISION_CONFLICT', 'DRAFT_VERSION_CONFLICT', 'ARTIFACT_IN_USE',
-        'DOCUMENT_ACTION_UNSUPPORTED', 'DOCUMENT_PROVIDERS_UNAVAILABLE', 'PROVIDER_CREDENTIALS_UNAVAILABLE'];
+        'DOCUMENT_ACTION_UNSUPPORTED', 'DOCUMENT_PROVIDERS_UNAVAILABLE', 'PROVIDER_CREDENTIALS_UNAVAILABLE', 'DOCUMENT_CONVERSION_FAILED', 'PUBLICATION_RECOVERY_CLOSED'];
       if (code && beforeWrite.includes(code)) attempt.current = undefined;
       else request.uncertain = true;
-      setError(String(i18n.t('chat.writerIR.writeBackFailed')));
-    } finally { setBusy(false); }
-  }, [accept, busy, onRefresh]);
+      setError(documentPublicationErrorMessage(code, provider));
+    } finally { setBusy(false);setPublicationRefresh(value=>value+1); }
+  }, [accept, busy, publicationBlocked, onRefresh]);
   const publishRef = useRef(publish); publishRef.current = publish;
 
   useEffect(() => {
     if (!active || !writable || !descriptor.capabilities.includes('publish_document')) return;
     return registerFooterAction(`${editingKey}:publish`, {
       label: String(i18n.t('chat.writerIR.writeToCloudDocument')), icon: 'write-back', tone: 'primary', order: 30,
-      disabled: busy || !loaded || providers.length === 0, flushBeforeAction: true, flushKey: editingKey,
+      disabled: busy || publicationBlocked || !loaded || providers.length === 0, flushBeforeAction: true, flushKey: editingKey,
       onClick: () => {
         const catalog = providersRef.current;
         if (!catalog.length) return;
@@ -199,30 +210,34 @@ export function DocumentArtifactEditor({ slot, sessionId, readOnly, onRefresh }:
       },
       statusText: error || undefined, statusTone: error ? 'error' : undefined,
     });
-  }, [active, writable, descriptor.capabilities, registerFooterAction, editingKey, loaded, providers.length, busy, error, slot.provider]);
+  }, [active, writable, descriptor.capabilities, registerFooterAction, editingKey, loaded, providers.length, busy, publicationBlocked, error, slot.provider]);
 
   if (!loaded) return <div role='status'>{error || '…'}</div>;
-  return <div className='workflow-slot'>
-    {error && <div role='alert'>{error}</div>}
+  return <div className='workflow-slot workflow-slot--artifact'>
+    {error && !publicationBlocked && <div role='alert'>{error}</div>}
+    {descriptor.capabilities.includes('publish_document') && <DocumentPublicationRecoveryPanel key={slot.artifact_id} artifactId={slot.artifact_id!} slotId={slot.slot_id} itemIndex={slot.list_index ?? -1}
+      refreshKey={publicationRefresh} publishing={busy} readOnly={readOnly} canApplyLocal={()=>!dirty.current} onAvailability={publicationAvailable} onResolved={publicationResolved} />}
+    <div className={`workflow-slot__artifact-body${descriptor.representation === 'markdown' ? ' workflow-slot__artifact-body--markdown' : ''}`}>
     {descriptor.representation === 'markdown' && typeof value === 'string'
-      ? <MarkdownArtifactEditor markdown={value} sourceRevision={version} editingKey={editingKey} readOnly={!writable}
+      ? <MarkdownArtifactEditor renderContext={descriptor.render_context} markdown={value} sourceRevision={version} editingKey={editingKey} readOnly={!writable || batchPreview} allowMultipleParagraphs
         resolveImageUrl={resolveMarkdownImageUrlAsync} onContentChange={edit} numbering={numbering}
-        onRewriteSelection={canRewrite ? (picked) => { if (picked.supported) setSelection({ type: 'markdown', selected_text: picked.text, selectedText: picked.text, paragraph: picked.paragraph, startOffset: picked.startOffset, anchor: picked.anchor }); } : undefined}
+        onRewriteSelection={canRewrite ? (picked) => { if (picked.supported) setSelection({ type: 'markdown', selected_text: picked.text, selectedText: picked.text, paragraph: picked.paragraph, startOffset: picked.startOffset, sourceRange: picked.sourceRange, sourceRanges: picked.sourceRanges, anchor: picked.anchor }); } : undefined}
         rewriteDialogOpen={selection !== null}
-        rewritePreview={preview?.selection.paragraph ? { paragraph: preview.selection.paragraph, startOffset: preview.selection.startOffset,
+        rewritePreview={!batchPreview && preview?.selection.paragraph ? { paragraph: preview.selection.paragraph, startOffset: preview.selection.startOffset,
           sessionId, slotId: slot.slot_id, listIndex: slot.list_index ?? -1, preview: preview.value, applyPreview } : null}
         onRewritePreviewApplied={() => setPreview(null)} onRewritePreviewRejected={() => setPreview(null)}
         onSave={async (text, revision, mode, numbering) => { const saved = await save(text, revision, mode, numbering); return { markdown: String(saved.value), revision: saved.revision }; }} />
-      : isWriterDocument(value) ? <WriterIRControl document={value as WriterDocument} sourceRevision={version} editingKey={editingKey} readOnly={!writable}
+      : isWriterDocument(value) ? <WriterIRControl document={value as WriterDocument} sourceRevision={version} editingKey={editingKey} readOnly={!writable || batchPreview} allowMultipleParagraphs
         onDocumentChange={edit} numbering={numbering}
-        onRewriteSelection={canRewrite ? (picked) => setSelection({ type: 'ir', node_id: picked.nodeId, selectedText: picked.selectedText, anchor: picked.anchor }) : undefined}
+        onRewriteSelection={canRewrite ? (picked) => setSelection({ type: 'ir', node_id: picked.nodeId, nodeSelections: picked.nodeSelections, selectedText: picked.selectedText, anchor: picked.anchor }) : undefined}
         rewriteDialogOpen={selection !== null}
-        rewritePreview={preview?.selection.type === 'ir' ? { nodeId: preview.selection.node_id, sessionId,
+        rewritePreview={!batchPreview && preview?.selection.type === 'ir' ? { nodeId: preview.selection.node_id, sessionId,
           slotId: slot.slot_id, listIndex: slot.list_index ?? -1, preview: preview.value, applyPreview } : null}
         onRewritePreviewApplied={() => setPreview(null)} onRewritePreviewRejected={() => setPreview(null)} onSave={async (_source, revised, revision, mode, numbering) => {
           const saved = await save(revised, Number(revision ?? latest.current.revision), mode, numbering);
           return { document: saved.value as WriterDocument, sourceRevision: saved.revision, draftVersion: saved.draft };
         }} /> : <div role='alert'>{String(i18n.t('chat.writerIR.saveFailed'))}</div>}
+    </div>
     <ArtifactRewriteDialog open={selection !== null} sessionId={sessionId} slotId={slot.slot_id} listIndex={slot.list_index ?? -1}
       baseRevision={latest.current.revision} baseDraftVersion={latest.current.draft} selection={selection}
       onClose={() => setSelection(null)} onApplied={() => { setPreview(null); onRefresh?.(); }}
@@ -231,9 +246,10 @@ export function DocumentArtifactEditor({ slot, sessionId, readOnly, onRefresh }:
         if (picked.type === 'ppt_html') throw new Error('unsupported document selection');
         const response = await WorkflowSessionApi().previewDocumentAction(current.id, { action: 'rewrite_selection',
           base_revision: current.revision, base_draft_version: current.draft,
-          input: { instruction, selection: picked.type === 'ir' ? { type: 'ir', node_id: picked.node_id } : { type: 'markdown', selected_text: picked.selected_text } } });
-        return { ...(response.data.data as DocumentRewritePreviewResult), status: 'ready', action: 'rewrite_selection', base_revision: current.revision, base_draft_version: current.draft } as RewriteSelectionPreview;
+          input: picked.type === 'ir' ? { instruction, type: 'ir', selection_ranges: picked.nodeSelections ?? [{ node_id: picked.node_id, ...(picked.selectedText ? { selected_text: picked.selectedText } : {}) }] } : { instruction, type: 'markdown', selection_ranges: picked.sourceRanges ?? [picked.sourceRange ?? { selected_text: picked.selected_text }] } });
+        return documentRewritePreview(response.data.data, current.revision, current.draft);
       }} onPreviewReady={(result) => { if (selection && previewSource.current) setPreview({ id: previewSource.current.id, selection, value: result }); }} />
+    {batchPreview && preview && <ArtifactRewriteBatchPreview preview={preview.value} onApply={applyPreview} onCancel={()=>setPreview(null)} />}
     {download && <WriterDownloadFormatDialog open={download} onOpenChange={setDownload}
       markdown={{ filename: writerDownloadFilename('', 'md'), content: () => convert('markdown') }}
       latex={{ filename: writerDownloadFilename('', 'tex'), content: () => convert('latex') }}
