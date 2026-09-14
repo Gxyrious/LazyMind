@@ -611,7 +611,7 @@ export function MarkdownArtifactEditor({
   const selectionToolbarDismissedRef = useRef(false);
   const latestSourceRef = useRef({ markdown, revision: sourceRevision });
   const staleSourceEchoRef = useRef<{ markdown: string; revision: number }>();
-  const pendingSourceRef = useRef<{ markdown: string; revision: number }>();
+  const [pendingSource, setPendingSource] = useState<{ markdown: string; revision: number }>();
   const autoSaveTimerRef = useRef<number | undefined>(undefined);
   const viewRestoreFrameRef = useRef<number | undefined>(undefined);
   const draftMarkdownRef = useRef(draftMarkdown);
@@ -1151,10 +1151,15 @@ export function MarkdownArtifactEditor({
       && markdown === staleSource.markdown
     ) return;
     staleSourceEchoRef.current = undefined;
+    // A pending remote revision must not replace the source paired with the
+    // local editor's serialized baseline before the user resolves the conflict.
+    if (dirty && richSourceRef.current === undefined && !sourceEditedRef.current) {
+      richSourceRef.current = latestSource.markdown;
+    }
     latestSourceRef.current = { markdown, revision: sourceRevision };
 
     if (dirty) {
-      pendingSourceRef.current = { markdown, revision: sourceRevision };
+      setPendingSource({ markdown, revision: sourceRevision });
       setConflict(true);
       return;
     }
@@ -1175,7 +1180,7 @@ export function MarkdownArtifactEditor({
     setSaveError(undefined);
     setRenderErrorSource(undefined);
     setConflict(false);
-    pendingSourceRef.current = undefined;
+    setPendingSource(undefined);
   }, [dirty, markdown, replaceMarkdownSilently, sourceRevision]);
 
   const persistMarkdown = useCallback(async (
@@ -1232,10 +1237,17 @@ export function MarkdownArtifactEditor({
         markdown: persistedMarkdown,
         revision: savedRevision,
       };
-      pendingSourceRef.current = undefined;
+      setPendingSource(undefined);
       setConflict(false);
       return true;
     } catch (error) {
+      if (isRevisionConflict(error)) {
+        // The version just rejected by the server is no longer a safe conflict
+        // choice. Keep the local draft and request a fresh remote snapshot.
+        setPendingSource((current) => (
+          current?.revision === revisionBeforeSave ? undefined : current
+        ));
+      }
       setConflict(isRevisionConflict(error));
       setSaveError(
         isRevisionConflict(error)
@@ -1300,6 +1312,30 @@ export function MarkdownArtifactEditor({
       }
     };
   }, [conflict, dirty, draftMarkdown, readOnly, saveError, saving]);
+
+  const useRemoteVersion = () => {
+    if (!pendingSource || savingRef.current) return;
+    const nextMarkdown = normalizeMarkdownForMdxEditor(pendingSource.markdown);
+    richSourceRef.current = undefined;
+    sourceEditedRef.current = false;
+    awaitingModeBaselineRef.current = false;
+    serializedBaselineRef.current = nextMarkdown.trim();
+    replaceMarkdownSilently(nextMarkdown, true);
+    draftMarkdownRef.current = nextMarkdown;
+    setDraftMarkdown(nextMarkdown);
+    setBaseMarkdown(nextMarkdown);
+    setBaseRevision(pendingSource.revision);
+    setAnchorSourceMarkdown(pendingSource.markdown);
+    setPendingSource(undefined);
+    setConflict(false);
+    setSaveError(undefined);
+    setRenderErrorSource(undefined);
+  };
+
+  const saveLocalVersion = () => {
+    if (!pendingSource || savingRef.current) return;
+    void persistMarkdown(draftMarkdownRef.current, pendingSource.revision);
+  };
 
   const handleMarkdownChange = useCallback((nextDraft: string, initialMarkdownNormalize = false) => {
     if (initialMarkdownNormalize) {
@@ -1764,6 +1800,26 @@ export function MarkdownArtifactEditor({
       {conflict && (
         <div className='writer-markdown-editor__notice writer-markdown-editor__notice--warning' role='alert'>
           <span>{t('chat.writerMarkdown.externalUpdate')}</span>
+          {pendingSource && !readOnly && (
+            <>
+              <button
+                type='button'
+                className='workflow-slot__file-action-btn'
+                onClick={saveLocalVersion}
+                disabled={saving}
+              >
+                {t('chat.writerMarkdown.saveLocalVersion')}
+              </button>
+              <button
+                type='button'
+                className='workflow-slot__file-action-btn'
+                onClick={useRemoteVersion}
+                disabled={saving}
+              >
+                {t('chat.writerMarkdown.useRemoteVersion')}
+              </button>
+            </>
+          )}
           {onRefresh && (
             <button
               type='button'

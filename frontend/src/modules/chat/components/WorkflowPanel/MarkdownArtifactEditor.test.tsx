@@ -910,6 +910,101 @@ describe('MarkdownArtifactEditor rewrite selection highlight', () => {
   });
 });
 
+describe('MarkdownArtifactEditor conflict refresh', () => {
+  it('keeps the local draft when saving the refreshed revision conflicts again', async () => {
+    const onSave = vi.fn().mockRejectedValue({ response: { status: 409 } });
+    const onRefresh = vi.fn();
+    const { rerender } = render(
+      <MarkdownArtifactEditor markdown='Original document' sourceRevision={1} onSave={onSave} onRefresh={onRefresh} />,
+    );
+    const editable = screen.getByTestId('markdown-editable');
+    editable.textContent = 'My retained local draft';
+    fireEvent.input(editable);
+    rerender(<MarkdownArtifactEditor markdown='Remote version two' sourceRevision={2} onSave={onSave} onRefresh={onRefresh} />);
+    fireEvent.click(screen.getByRole('button', { name: 'chat.writerMarkdown.saveLocalVersion' }));
+    await screen.findByText('chat.writerMarkdown.revisionConflict');
+    expect(editable).toHaveTextContent('My retained local draft');
+    expect(onSave).toHaveBeenCalledWith('My retained local draft', 2, 'draft', undefined);
+    expect(screen.queryByRole('button', { name: 'chat.writerMarkdown.useRemoteVersion' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'common.refresh' })).toBeEnabled();
+  });
+
+  it('recovers from a rejected autosave after refresh without silently discarding the draft', async () => {
+    const onSave = vi.fn().mockRejectedValue({ response: { status: 409 } });
+    const { rerender, container } = render(
+      <MarkdownArtifactEditor markdown='Original document' sourceRevision={1} onSave={onSave} onRefresh={refresh} />,
+    );
+    function refresh() {
+      rerender(<MarkdownArtifactEditor markdown='Fresh server document' sourceRevision={2} onSave={onSave} onRefresh={refresh} />);
+    }
+    const editable = screen.getByTestId('markdown-editable');
+    editable.textContent = 'Unsaved local document';
+    fireEvent.input(editable);
+    await screen.findByText('chat.writerMarkdown.revisionConflict', {}, { timeout: 2000 });
+    expect(screen.queryByRole('button', { name: 'chat.writerMarkdown.useRemoteVersion' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'common.refresh' }));
+    expect(editable).toHaveTextContent('Unsaved local document');
+    fireEvent.click(screen.getByRole('button', { name: 'chat.writerMarkdown.useRemoteVersion' }));
+    expect(container.querySelector('.writer-markdown-editor__surface')).toHaveAttribute('data-markdown', 'Fresh server document');
+    expect(screen.queryByText('chat.writerMarkdown.revisionConflict')).toBeNull();
+    expect(screen.queryByText('chat.writerMarkdown.externalUpdate')).toBeNull();
+    expect(onSave).toHaveBeenCalledTimes(1);
+  });
+
+  it('refreshes the remote version while preserving local text until the user chooses it', async () => {
+    const onSave = vi.fn();
+    const onRefresh = vi.fn();
+    const { rerender, container } = render(
+      <MarkdownArtifactEditor markdown='Original document' sourceRevision={1} onSave={onSave} onRefresh={onRefresh} />,
+    );
+    const editable = screen.getByTestId('markdown-editable');
+    editable.textContent = 'Unsaved local document';
+    fireEvent.input(editable);
+    rerender(<MarkdownArtifactEditor markdown='New remote document' sourceRevision={2} onSave={onSave} onRefresh={onRefresh} />);
+    expect(screen.getByText('chat.writerMarkdown.externalUpdate')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'common.refresh' }));
+    expect(onRefresh).toHaveBeenCalledOnce();
+    expect(editable).toHaveTextContent('Unsaved local document');
+    fireEvent.click(screen.getByRole('button', { name: 'chat.writerMarkdown.useRemoteVersion' }));
+    expect(container.querySelector('.writer-markdown-editor__surface')).toHaveAttribute('data-markdown', 'New remote document');
+    expect(screen.queryByText('chat.writerMarkdown.externalUpdate')).toBeNull();
+    expect(onSave).not.toHaveBeenCalled();
+  });
+
+  it('resets source tracking when accepting a remote version with formatting and margins', async () => {
+    const onSave = vi.fn();
+    const onContentChange = vi.fn();
+    const remote = '\nFresh **remote**.\n\n';
+    const { rerender } = render(<MarkdownArtifactEditor markdown='Old **source**.' sourceRevision={1} onSave={onSave} onContentChange={onContentChange} />);
+    const editable = screen.getByTestId('markdown-editable');
+    editable.textContent = 'Unsaved local changes.';
+    fireEvent.input(editable);
+    rerender(<MarkdownArtifactEditor markdown={remote} sourceRevision={2} onSave={onSave} onContentChange={onContentChange} />);
+    fireEvent.click(screen.getByRole('button', { name: 'chat.writerMarkdown.useRemoteVersion' }));
+    await waitFor(() => expect(onContentChange).toHaveBeenLastCalledWith(remote));
+    vi.useFakeTimers();
+    try {
+      await act(async () => { await vi.advanceTimersByTimeAsync(16000); });
+      expect(onSave).not.toHaveBeenCalled();
+    } finally { vi.useRealTimers(); }
+    expect(screen.queryByText('chat.writerMarkdown.externalUpdate')).toBeNull();
+  });
+
+  it('saves the explicitly chosen local version against the refreshed revision', async () => {
+    const onSave = vi.fn(async () => ({ markdown: 'Local document', revision: 3 }));
+    const { rerender } = render(
+      <MarkdownArtifactEditor markdown='Original document' sourceRevision={1} onSave={onSave} onRefresh={vi.fn()} />,
+    );
+    const editable = screen.getByTestId('markdown-editable');
+    editable.textContent = 'Local document';
+    fireEvent.input(editable);
+    rerender(<MarkdownArtifactEditor markdown='New remote document' sourceRevision={2} onSave={onSave} onRefresh={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'chat.writerMarkdown.saveLocalVersion' }));
+    await waitFor(() => expect(onSave).toHaveBeenCalledWith('Local document', 2, 'draft', undefined));
+    await waitFor(() => expect(screen.queryByText('chat.writerMarkdown.externalUpdate')).toBeNull());
+  });
+});
+
 describe('MarkdownArtifactEditor autosave', () => {
   it('exposes unsaved Markdown for copying without invoking save', () => {
     const onSave = vi.fn();
