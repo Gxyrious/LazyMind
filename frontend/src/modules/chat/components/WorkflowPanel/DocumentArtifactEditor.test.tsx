@@ -5,7 +5,7 @@ import type { SlotRevision } from '@/modules/chat/store/workflowPanel';
 import { DocumentArtifactEditor } from './DocumentArtifactEditor';
 import { SlotEditingContext, type SlotFooterAction } from './slotEditingContext';
 
-const api = vi.hoisted(() => ({ listDocumentProviders: vi.fn(), publishDocument: vi.fn() }));
+const api = vi.hoisted(() => ({ listDocumentProviders: vi.fn(), publishDocument: vi.fn(), getPublicationForArtifact: vi.fn(async()=>({data:{data:{}}})) }));
 const confirm = vi.hoisted(() => vi.fn());
 vi.mock('@/modules/chat/utils/request', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/modules/chat/utils/request')>(),

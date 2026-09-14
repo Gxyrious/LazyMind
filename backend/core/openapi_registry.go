@@ -115,7 +115,7 @@ type documentActionErrorOpenAPIData struct {
 	ArtifactSaved  *bool  `json:"artifact_saved,omitempty"`
 	Retryable      *bool  `json:"retryable,omitempty"`
 
-	Code string `json:"code" enum:"IDENTITY_REQUIRED,PERMISSION_DENIED,ARTIFACT_NOT_FOUND,REVISION_REQUIRED,REVISION_CONFLICT,DRAFT_VERSION_REQUIRED,DRAFT_VERSION_CONFLICT,SESSION_NOT_EDITABLE,DOCUMENT_ACTION_INVALID,DOCUMENT_ACTION_UNSUPPORTED,MODEL_CONFIG_REQUIRED,SELECTION_STALE,SELECTION_AMBIGUOUS,ARTIFACT_IN_USE,DOCUMENT_ACTION_FAILED,DOCUMENT_CONVERSION_FAILED,DOCUMENT_PROVIDERS_UNAVAILABLE,DOCUMENT_ACTION_RESULT_INVALID,DOCUMENT_ACTION_SAVE_FAILED,CROSS_REFERENCE_SELECTION_INVALID,CROSS_REFERENCE_TARGET_NOT_FOUND,PUBLICATION_NOT_FOUND,PUBLICATION_IN_PROGRESS,PUBLICATION_STATE_CONFLICT,PUBLICATION_IDEMPOTENCY_CONFLICT,PUBLICATION_ALREADY_BOUND,PUBLICATION_OUTCOME_UNKNOWN,PROVIDER_SYNC_LOCAL_CONFLICT,PROVIDER_SYNC_LOCAL_PERSIST_FAILED,PROVIDER_CREDENTIALS_UNAVAILABLE,PROVIDER_BINDING_CONFLICT"`
+	Code string `json:"code" enum:"IDENTITY_REQUIRED,PERMISSION_DENIED,ARTIFACT_NOT_FOUND,REVISION_REQUIRED,REVISION_CONFLICT,DRAFT_VERSION_REQUIRED,DRAFT_VERSION_CONFLICT,SESSION_NOT_EDITABLE,DOCUMENT_ACTION_INVALID,DOCUMENT_ACTION_UNSUPPORTED,MODEL_CONFIG_REQUIRED,SELECTION_STALE,SELECTION_AMBIGUOUS,ARTIFACT_IN_USE,DOCUMENT_ACTION_FAILED,DOCUMENT_CONVERSION_FAILED,DOCUMENT_PROVIDERS_UNAVAILABLE,DOCUMENT_ACTION_RESULT_INVALID,DOCUMENT_ACTION_SAVE_FAILED,CROSS_REFERENCE_SELECTION_INVALID,CROSS_REFERENCE_TARGET_NOT_FOUND,PUBLICATION_NOT_FOUND,PUBLICATION_IN_PROGRESS,PUBLICATION_STATE_CONFLICT,PUBLICATION_RECOVERY_CLOSED,PUBLICATION_IDEMPOTENCY_CONFLICT,PUBLICATION_ALREADY_BOUND,PUBLICATION_OUTCOME_UNKNOWN,PROVIDER_SYNC_LOCAL_CONFLICT,PROVIDER_SYNC_LOCAL_PERSIST_FAILED,PROVIDER_CREDENTIALS_UNAVAILABLE,PROVIDER_BINDING_CONFLICT"`
 }
 type documentActionErrorOpenAPIResponse struct {
 	Code    int                            `json:"code"`
@@ -130,6 +130,11 @@ type documentPublicationReadResponse struct {
 	Code    int                                `json:"code"`
 	Message string                             `json:"message"`
 	Data    workflow.DocumentPublicationStatus `json:"data"`
+}
+type documentPublicationLookupResponse struct {
+	Code    int                                `json:"code"`
+	Message string                             `json:"message"`
+	Data    workflow.DocumentPublicationLookup `json:"data"`
 }
 type documentPublicationResultResponse struct {
 	Code    int                            `json:"code"`
@@ -500,7 +505,7 @@ func inlineSpecialSchema(t reflect.Type) map[string]any {
 				offsets := map[string]any{"selected_text": text, "start": map[string]any{"type": "integer", "minimum": 0}, "end": map[string]any{"type": "integer", "minimum": 1}}
 				items = map[string]any{"oneOf": []any{item, map[string]any{"type": "object", "additionalProperties": false, "properties": offsets, "required": []string{"selected_text", "start", "end"}}}}
 			}
-			branches = append(branches, map[string]any{"type": "object", "additionalProperties": false, "required": []string{"instruction", "type", "selection_ranges"}, "properties": map[string]any{"instruction": text, "type": map[string]any{"type": "string", "enum": []string{kind}}, "selection_ranges": map[string]any{"type": "array", "minItems": 1, "maxItems": 1, "items": items}}})
+			branches = append(branches, map[string]any{"type": "object", "additionalProperties": false, "required": []string{"instruction", "type", "selection_ranges"}, "properties": map[string]any{"instruction": text, "type": map[string]any{"type": "string", "enum": []string{kind}}, "selection_ranges": map[string]any{"type": "array", "minItems": 1, "items": items}}})
 		}
 		return map[string]any{"oneOf": branches}
 	}
@@ -2703,6 +2708,8 @@ func registeredCoreOperations() []openAPIOperation {
 		{Method: "GET", Path: "/conversations/{conversation_id}/workflow-sessions:latest", Summary: "Read Workflow artifacts with document descriptors", Tags: []string{"workflow"}, Responses: map[int]openAPIResponse{200: resp("Workflow artifact read result", workflowSessionReadResponse{})}},
 		{Method: "GET", Path: "/workflow-sessions/{session_id}/artifacts", Summary: "Read Workflow artifacts with document descriptors", Tags: []string{"workflow"}, Responses: map[int]openAPIResponse{200: resp("Workflow artifact read result", workflowArtifactListReadResponse{})}},
 		{Method: "GET", Path: "/document-publications/{operation_id}", Summary: "Read an owned publication outcome", Tags: []string{"workflow"}, PathParams: documentPublicationPath{}, Responses: map[int]openAPIResponse{200: resp("Publication status", documentPublicationReadResponse{}), 404: resp("Publication not found", documentActionErrorOpenAPIResponse{})}},
+		{Method: "GET", Path: "/workflow-artifacts/{artifact_id}/publication", Summary: "Find the blocking or latest owned document publication", Tags: []string{"workflow"}, Responses: map[int]openAPIResponse{200: resp("Publication lookup", documentPublicationLookupResponse{}), 404: resp("Artifact not found", documentActionErrorOpenAPIResponse{})}},
+		{Method: "POST", Path: "/document-publications/{operation_id}:recover", Summary: "Recover local publication tracking without repeating a provider write", Tags: []string{"workflow"}, PathParams: documentPublicationPath{}, RequestBody: jsonBodyOf(workflow.DocumentPublicationRecoveryRequest{}, true), Responses: map[int]openAPIResponse{200: resp("Recovered publication status", documentPublicationReadResponse{}), 400: resp("Explicit recovery confirmation required", documentActionErrorOpenAPIResponse{}), 404: resp("Publication not found", documentActionErrorOpenAPIResponse{}), 409: resp("Publication state changed", documentActionErrorOpenAPIResponse{})}},
 		{Method: "POST", Path: "/document-publications/{operation_id}:cancel", Summary: "Cancel a publication before its external write", Tags: []string{"workflow"}, PathParams: documentPublicationPath{}, Responses: map[int]openAPIResponse{200: resp("Canceled publication", documentPublicationReadResponse{}), 404: resp("Publication not found", documentActionErrorOpenAPIResponse{}), 409: resp("Write already started", documentActionErrorOpenAPIResponse{})}},
 		{Method: "POST", Path: "/document-publications/{operation_id}:retry-local", Summary: "Save a confirmed publication without repeating the provider write", Tags: []string{"workflow"}, PathParams: documentPublicationPath{}, Responses: map[int]openAPIResponse{200: resp("Saved publication", documentPublicationResultResponse{}), 404: resp("Publication not found", documentActionErrorOpenAPIResponse{}), 409: resp("Local baseline changed", documentActionErrorOpenAPIResponse{}), 500: resp("Local persistence failed", documentActionErrorOpenAPIResponse{})}},
 		{Method: "PATCH", Path: "/workflow-artifacts/{artifact_id}", Summary: "Save an Artifact with revision and draft preconditions", Tags: []string{"workflow"}, RequestBody: jsonBodyOf(documentArtifactPatchRequest{}, true), Responses: map[int]openAPIResponse{200: resp("Saved artifact", workflowArtifactReadResponse{}), 400: resp("Draft baseline required", documentActionErrorOpenAPIResponse{}), 409: resp("Artifact baseline changed", documentActionErrorOpenAPIResponse{})}},

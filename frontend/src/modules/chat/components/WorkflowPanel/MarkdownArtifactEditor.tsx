@@ -499,6 +499,7 @@ interface MarkdownArtifactEditorProps {
   /** Chat-only display metadata for inline source citations. */
   sourceReferences?: MarkdownSourceReferencePresentation[];
   onRewriteSelection?: (selection: MarkdownSelection) => void;
+  allowMultipleParagraphs?: boolean;
   renderContext?: DocumentRenderContext;
   rewriteUnavailableReason?: string;
   rewriteDialogOpen?: boolean;
@@ -561,6 +562,7 @@ export function MarkdownArtifactEditor({
   onOpenSourceReference,
   sourceReferences = [],
   onRewriteSelection,
+  allowMultipleParagraphs = false,
   rewriteUnavailableReason,
   rewriteDialogOpen = false,
   rewritePreview,
@@ -991,7 +993,7 @@ export function MarkdownArtifactEditor({
 
   const recordSelection = useCallback((showToolbar = true) => {
     const root = rootRef.current;
-    const nextSelection = root ? selectedMarkdownParagraph(root) : null;
+    const nextSelection = root ? selectedMarkdownParagraph(root, allowMultipleParagraphs) : null;
     if (
       !nextSelection
       && (
@@ -1003,7 +1005,7 @@ export function MarkdownArtifactEditor({
     ) {
       return;
     }
-    if (nextSelection?.supported || nextSelection?.internalReference) {
+    if ((nextSelection?.supported && !nextSelection.paragraphSelections?.length) || nextSelection?.internalReference) {
       referenceSelectionRef.current = nextSelection;
       const browserSelection = globalThis.getSelection();
       if (browserSelection?.rangeCount) {
@@ -1017,7 +1019,7 @@ export function MarkdownArtifactEditor({
     if (!showToolbar) return;
     selectionToolbarDismissedRef.current = false;
     updateSelectionToolbar();
-  }, [updateSelectionToolbar]);
+  }, [allowMultipleParagraphs, updateSelectionToolbar]);
 
   const cancelParagraphHover = useCallback(() => {
     if (paragraphHoverTimerRef.current !== undefined) {
@@ -1355,7 +1357,7 @@ export function MarkdownArtifactEditor({
     || conflict
     || Boolean(rewriteUnavailableReason);
   const polishTitle = !selection?.supported
-    ? t('chat.artifactRewrite.singleParagraphHint')
+    ? t(allowMultipleParagraphs ? 'chat.artifactRewrite.paragraphsHint' : 'chat.artifactRewrite.singleParagraphHint')
     : dirty
       ? t('chat.artifactRewrite.saveFirstHint')
       : rewriteUnavailableReason ?? t('chat.artifactRewrite.action');
@@ -1389,10 +1391,15 @@ export function MarkdownArtifactEditor({
     }
     setRewriteSelectionPinned(Boolean(pinnedRewriteRangeRef.current));
     try {
+      if (selection.paragraphSelections?.length) {
+        const sourceRanges = selection.paragraphSelections.map((item)=>markdownSelectionRange(latestSourceRef.current.markdown,item));
+        onRewriteSelection({...selection,sourceRanges});
+      } else {
       const sourceRange = markdownSelectionRange(latestSourceRef.current.markdown, {
         selectedText: selection.text, paragraph: selection.paragraph, startOffset: selection.startOffset,
       });
       onRewriteSelection({ ...selection, sourceRange });
+      }
     } catch {
       setSaveError(t('chat.writerSource.selectionMappingFailed'));
       setRewriteSelectionPinned(false);
@@ -1430,7 +1437,7 @@ export function MarkdownArtifactEditor({
     return nextMarkdown === draftMarkdown ? null : nextMarkdown;
   }, [draftMarkdown, selection]);
   const referenceDisabled = readOnly
-    || !selection?.supported
+    || !selection?.supported || Boolean(selection.paragraphSelections?.length)
     || saving
     || conflict
     || Boolean(removableReferenceMarkdown)
@@ -1466,7 +1473,7 @@ export function MarkdownArtifactEditor({
     const referenceSelection = referenceSelectionRef.current;
     if (
       !editor
-      || !referenceSelection?.supported
+      || !referenceSelection?.supported || Boolean(referenceSelection.paragraphSelections?.length)
       || !anchorId
       || savingRef.current
       || conflictRef.current
@@ -1491,6 +1498,7 @@ export function MarkdownArtifactEditor({
     if (
       !editor
       || !referenceSelection
+      || Boolean(referenceSelection.paragraphSelections?.length)
       || (!referenceSelection.supported && !referenceSelection.internalReference)
       || savingRef.current
       || conflictRef.current

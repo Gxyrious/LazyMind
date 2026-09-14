@@ -23,7 +23,13 @@ func TestDocumentPublicationReportsConversionFailureBeforeWriting(t *testing.T) 
 					_ = json.NewEncoder(w).Encode(map[string]any{"providers": []any{map[string]any{
 						"id": provider, "capabilities": []string{"create", "replace"}}}})
 				case "/api/authservice/v1/cloud/connections/internal/chat-enabled":
-					_, _ = w.Write([]byte(`{"data":{"items":[]}}`))
+					items := []any{}
+					if provider != "obsidian" {
+						items = append(items, map[string]any{"connection_id": "fixture-connection", "provider": provider, "owner_user_id": "owner", "status": "ACTIVE"})
+					}
+					_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"items": items}})
+				case "/api/authservice/v1/cloud/connections/fixture-connection/token":
+					_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"connection_id": "fixture-connection", "provider": provider, "status": "ACTIVE", "access_token": "fixture-conversion-token"}})
 				case "/api/document/actions:invoke":
 					var request struct {
 						Reference string `json:"reference"`

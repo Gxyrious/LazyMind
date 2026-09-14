@@ -35,4 +35,12 @@ describe('publication failure stages', () => {
     await i18n.changeLanguage('en-US');
     expect(documentPublicationErrorMessage('DOCUMENT_CONVERSION_FAILED', 'github')).toContain('Document conversion failed');
   });
+  it('explains the chat-use switch and an earlier operation blocking this write', async () => {
+    await i18n.changeLanguage('zh-CN');
+    expect(documentPublicationErrorMessage('PROVIDER_CREDENTIALS_UNAVAILABLE','feishu')).toContain('对话使用');
+    const pending=documentPublicationErrorMessage('PUBLICATION_IN_PROGRESS','feishu');
+    expect(pending).toContain('上次');
+    expect(pending).toContain('当前写入已阻止');
+    expect(pending).not.toContain('尚未写入');
+  });
 });

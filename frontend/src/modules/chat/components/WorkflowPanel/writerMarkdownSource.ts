@@ -11,8 +11,9 @@ function sourceBlocks(source: string, paragraphsOnly = false) {
     if (!token.map) return [];
     if (paragraphsOnly ? token.type !== 'inline' || tokens[index - 1]?.type !== 'paragraph_open' || tokens[index - 1].level !== 0
       : token.level !== 0 || token.type === 'inline' || token.type.endsWith('_close')) return [];
-    const start = offsets[token.map[0]], end = Math.min(source.length, offsets[token.map[1]] - 1);
-    const raw = source.slice(start, end);
+    const start = offsets[token.map[0]], rawEnd = Math.min(source.length, offsets[token.map[1]] - 1);
+    const raw = source.slice(start, rawEnd).replace(/[\r\n]+$/, '');
+    const end = start + raw.length;
     if (/^<a\s+id=[^>]+><\/a>\s*$/.test(raw)) return [];
     const inline = token.children ?? [];
     const text = inline.map((item) => ['text', 'code_inline'].includes(item.type) ? item.content : ['softbreak','hardbreak'].includes(item.type) ? '\n' : '').join('');
@@ -200,4 +201,24 @@ export function preserveMarkdownSource(original: string, previousExport: string,
   const leading = original.match(/^\s*/)?.[0] ?? '';
   const trailing = original.match(/\s*$/)?.[0] ?? '';
   return leading + result.trim() + trailing;
+}
+
+/** Source-authoritative paragraph set for a batch; response ranges cannot expand it. */
+export function markdownRewriteTargets(source: string, selections: Array<{start:number;end:number;selected_text:string}>) {
+  const runes=Array.from(source);
+  const paragraphs=sourceBlocks(source,true).map(block=>({...block,
+    start:Array.from(source.slice(0,block.start)).length,end:Array.from(source.slice(0,block.end)).length}));
+  const selected=new Map<number,(typeof paragraphs)[number]>();
+  for(const range of selections) {
+    if(!Number.isInteger(range.start)||!Number.isInteger(range.end)||range.start<0||range.end<=range.start||range.end>runes.length||runes.slice(range.start,range.end).join('')!==range.selected_text)throw new Error('Invalid source selection');
+    let cursor=range.start,matched=false;
+    for(const block of paragraphs) {
+      const from=Math.max(range.start,block.start),to=Math.min(range.end,block.end);
+      if(from>=to||!runes.slice(from,to).join('').trim())continue;
+      if(runes.slice(cursor,from).join('').trim())throw new Error('Unsupported source structure');
+      cursor=to;matched=true;selected.set(block.start,block);
+    }
+    if(!matched||runes.slice(cursor,range.end).join('').trim())throw new Error('Unsupported source structure');
+  }
+  return [...selected.values()].sort((a,b)=>a.start-b.start);
 }

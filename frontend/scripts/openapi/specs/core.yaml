@@ -2987,22 +2987,68 @@ components:
             required:
                 - providers
             type: object
+        DocumentPublicationLookup:
+            properties:
+                operation:
+                    $ref: '#/components/schemas/DocumentPublicationStatus'
+            type: object
+        DocumentPublicationRecoveryRequest:
+            properties:
+                action:
+                    enum:
+                        - check
+                        - release_unknown
+                        - keep_remote
+                    type: string
+                confirmed:
+                    type: boolean
+                reason:
+                    enum:
+                        - user_verified_no_write
+                        - accept_unknown
+                    type: string
+            required:
+                - action
+            type: object
         DocumentPublicationStatus:
             properties:
+                actions:
+                    items:
+                        type: string
+                    type: array
                 artifact_id:
                     type: string
                 error_code:
                     type: string
+                item_index:
+                    type: integer
                 operation_id:
                     type: string
                 provider:
                     type: string
+                provider_synced:
+                    type: boolean
+                recovery_after:
+                    format: date-time
+                    type: string
+                source_slot_id:
+                    type: string
                 status:
                     type: string
+                target_url:
+                    type: string
+                updated_at:
+                    format: date-time
+                    type: string
             required:
+                - actions
+                - item_index
                 - operation_id
                 - provider
+                - provider_synced
+                - source_slot_id
                 - status
+                - updated_at
             type: object
         DocumentPublishInput:
             properties:
@@ -3250,7 +3296,6 @@ components:
                                             - start
                                             - end
                                           type: object
-                                maxItems: 1
                                 minItems: 1
                                 type: array
                             type:
@@ -3280,7 +3325,6 @@ components:
                                     required:
                                         - node_id
                                     type: object
-                                maxItems: 1
                                 minItems: 1
                                 type: array
                             type:
@@ -7090,6 +7134,7 @@ components:
                         - PUBLICATION_NOT_FOUND
                         - PUBLICATION_IN_PROGRESS
                         - PUBLICATION_STATE_CONFLICT
+                        - PUBLICATION_RECOVERY_CLOSED
                         - PUBLICATION_IDEMPOTENCY_CONFLICT
                         - PUBLICATION_ALREADY_BOUND
                         - PUBLICATION_OUTCOME_UNKNOWN
@@ -7200,6 +7245,19 @@ components:
                     type: integer
                 data:
                     $ref: '#/components/schemas/DocumentProviderCatalog'
+                message:
+                    type: string
+            required:
+                - code
+                - data
+                - message
+            type: object
+        documentPublicationLookupResponse:
+            properties:
+                code:
+                    type: integer
+                data:
+                    $ref: '#/components/schemas/DocumentPublicationLookup'
                 message:
                     type: string
             required:
@@ -13668,6 +13726,48 @@ paths:
             summary: Cancel a publication before its external write
             tags:
                 - workflow
+    /api/core/document-publications/{operation_id}:recover:
+        post:
+            parameters:
+                - in: path
+                  name: operation_id
+                  required: true
+                  schema:
+                    type: string
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/DocumentPublicationRecoveryRequest'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/documentPublicationReadResponse'
+                    description: Recovered publication status
+                "400":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/documentActionErrorOpenAPIResponse'
+                    description: Explicit recovery confirmation required
+                "404":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/documentActionErrorOpenAPIResponse'
+                    description: Publication not found
+                "409":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/documentActionErrorOpenAPIResponse'
+                    description: Publication state changed
+            summary: Recover local publication tracking without repeating a provider write
+            tags:
+                - workflow
     /api/core/document-publications/{operation_id}:retry-local:
         post:
             parameters:
@@ -19080,6 +19180,30 @@ paths:
                                 $ref: '#/components/schemas/documentActionErrorOpenAPIResponse'
                     description: Document action service failed
             summary: Preview a document rewrite, conversion, numbering or cross-reference action
+            tags:
+                - workflow
+    /api/core/workflow-artifacts/{artifact_id}/publication:
+        get:
+            parameters:
+                - in: path
+                  name: artifact_id
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/documentPublicationLookupResponse'
+                    description: Publication lookup
+                "404":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/documentActionErrorOpenAPIResponse'
+                    description: Artifact not found
+            summary: Find the blocking or latest owned document publication
             tags:
                 - workflow
     /api/core/workflow-authoring/v1/drafts:

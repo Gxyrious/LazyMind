@@ -340,9 +340,20 @@ func runDocumentRewrite(w http.ResponseWriter, r *http.Request, phase, owner str
 	}
 	if phase == "preview" {
 		var result documentRewritePreviewAlgorithmResult
-		if decodeDocumentJSON(bytes.NewReader(response.Result), &result) != nil || len(result.Results) != 1 || result.Results[0].Target == nil {
+		if decodeDocumentJSON(bytes.NewReader(response.Result), &result) != nil || len(result.Results) == 0 || (!request.arrayInput && len(result.Results) != 1) {
 			replyDocumentFailure(w, documentFailure("DOCUMENT_ACTION_RESULT_INVALID", 502))
 			return
+		}
+		for _, item := range result.Results {
+			if item.Target == nil {
+				replyDocumentFailure(w, documentFailure("DOCUMENT_ACTION_RESULT_INVALID", 502))
+				return
+			}
+			checked := DocumentRewritePreviewResult{Representation: result.Representation, Target: &DocumentRewriteTarget{Type: item.Target.Type, BlockType: item.Target.BlockType, NodeID: item.Target.NodeID}, Preview: item.Preview, Patch: item.Patch, Artifact: result.Artifact, Commit: result.Commit}
+			if !validDocumentPreview(checked, target.content.Representation) {
+				replyDocumentFailure(w, documentFailure("DOCUMENT_ACTION_RESULT_INVALID", 502))
+				return
+			}
 		}
 		item := result.Results[0]
 		preview := DocumentRewritePreviewResult{

@@ -73,6 +73,8 @@ import {
   type WriterSpan,
   type WriterSpanColorField,
 } from './writerIR';
+import { selectedIRParagraphs } from './writerIRRewriteSelection';
+import { ArtifactRewriteSelectionAction } from './ArtifactRewriteSelectionAction';
 import { ArtifactRewriteInlineDiff } from './ArtifactRewriteDialog';
 import { ArtifactRewriteSelectionHighlight } from './ArtifactRewriteSelectionHighlight';
 import { selectionActionAnchor, type SelectionActionAnchor } from './artifactRewriteSelection';
@@ -119,6 +121,7 @@ function imageReferencePath(block: WriterBlock): string {
 }
 
 export interface WriterIRRewriteSelection {
+  nodeSelections?: Array<{node_id:string;selected_text:string}>;
   nodeId: string;
   selectedText: string;
   anchor?: SelectionActionAnchor;
@@ -136,6 +139,7 @@ interface WriterIRDocumentEditorProps {
   disabled?: boolean;
   rewriteDialogOpen?: boolean;
   onRewriteSelection?: (selection: WriterIRRewriteSelection) => void;
+  allowMultipleParagraphs?: boolean;
   rewritePreview?: WriterIRRewritePreview | null;
   onRewritePreviewApplied?: (revision?: number, draftVersion?: number) => void;
   onRewritePreviewRejected?: () => void;
@@ -1266,6 +1270,7 @@ export function WriterIRDocumentEditor({
   disabled = false,
   rewriteDialogOpen = false,
   onRewriteSelection,
+  allowMultipleParagraphs = false,
   rewritePreview,
   onRewritePreviewApplied,
   onRewritePreviewRejected,
@@ -1279,6 +1284,7 @@ export function WriterIRDocumentEditor({
   const lastEmittedDocumentRef = useRef<WriterDocument>();
   const lastRenderedDocumentRef = useRef<WriterDocument | undefined>(undefined);
   const lastRenderedNumberingRef = useRef<WriterNumberingState | undefined>();
+  const [multiSelection,setMultiSelection]=useState<ReturnType<typeof selectedIRParagraphs>>(null);
   const savedSelectionRef = useRef<WriterEditorSelection | null>(null);
   const referenceSelectionRef = useRef<WriterEditorSelection | null>(null);
   const referenceMenuOpenRef = useRef(false);
@@ -1711,6 +1717,7 @@ export function WriterIRDocumentEditor({
   const recordSelection = useCallback(() => {
     const editor = editorRef.current;
     if (!editor) return;
+    if (allowMultipleParagraphs && !rewriteDialogOpenRef.current) setMultiSelection(selectedIRParagraphs(editor,document));
     const selection = readEditorSelection(editor);
     if (!selection) {
       if ((rewriteDialogOpenRef.current || pinnedRewriteSelectionRef.current) && savedSelectionRef.current) {
@@ -1726,7 +1733,7 @@ export function WriterIRDocumentEditor({
     }
     savedSelectionRef.current = selection;
     setActiveSelection(selection);
-  }, []);
+  }, [allowMultipleParagraphs, document]);
 
   useEffect(() => {
     const handleSelectionChange = () => {
@@ -2570,6 +2577,7 @@ export function WriterIRDocumentEditor({
       onBlur={handleBlur}
       onClickCapture={openNumberingMenu}
     >
+      {multiSelection && onRewriteSelection && !disabled && !rewriteDialogOpen && <ArtifactRewriteSelectionAction anchor={multiSelection.anchor} label={t('chat.artifactRewrite.action')} onActivate={()=>onRewriteSelection(multiSelection)} onDismiss={()=>setMultiSelection(null)} />}
       {numberingMenu && numberingBlock?.type === 'heading' && (
         <WriterHeadingNumberingMenu
           x={numberingMenu.x}

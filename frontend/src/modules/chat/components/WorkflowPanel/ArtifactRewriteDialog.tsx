@@ -23,6 +23,8 @@ import './ArtifactRewriteSelectionHighlight.scss';
 export type ArtifactRewriteSelection = RewriteSelection & {
   selectedText: string;
   sourceRange?: { selected_text: string; start: number; end: number };
+  sourceRanges?: Array<{ selected_text: string; start: number; end: number }>;
+  nodeSelections?: Array<{node_id: string; selected_text?: string}>;
   anchor?: SelectionActionAnchor;
   paragraph?: HTMLElement;
   startOffset?: number;
@@ -338,7 +340,7 @@ interface ArtifactRewriteInlineDiffProps {
   applyPreview?: () => Promise<number | undefined>;
 }
 
-function renderInlineDiff(oldText: string, newText: string) {
+export function renderInlineDiff(oldText: string, newText: string) {
   return diffWordsWithSpace(oldText, newText).map((part, index) => (
     <span
       className={part.added

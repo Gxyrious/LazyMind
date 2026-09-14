@@ -50,11 +50,18 @@ type DocumentPublishResult struct {
 	TargetDocument json.RawMessage `json:"target_document,omitempty"`
 }
 type DocumentPublicationStatus struct {
-	OperationID string `json:"operation_id"`
-	Status      string `json:"status"`
-	Provider    string `json:"provider"`
-	ArtifactID  string `json:"artifact_id,omitempty"`
-	ErrorCode   string `json:"error_code,omitempty"`
+	OperationID    string     `json:"operation_id" required:"true"`
+	Status         string     `json:"status" required:"true"`
+	Provider       string     `json:"provider" required:"true"`
+	ArtifactID     string     `json:"artifact_id,omitempty"`
+	ErrorCode      string     `json:"error_code,omitempty"`
+	UpdatedAt      time.Time  `json:"updated_at" required:"true"`
+	RecoveryAfter  *time.Time `json:"recovery_after,omitempty"`
+	ProviderSynced bool       `json:"provider_synced" required:"true"`
+	TargetURL      string     `json:"target_url,omitempty"`
+	Actions        []string   `json:"actions" required:"true"`
+	SourceSlotID   string     `json:"source_slot_id" required:"true"`
+	ItemIndex      int        `json:"item_index" required:"true"`
 }
 
 func publicationBindingTarget(raw json.RawMessage) json.RawMessage {
@@ -211,7 +218,7 @@ func publicationFailure(err error) documentActionFailure {
 		return documentActionFailure{err.Error(), 400}
 	case "DOCUMENT_INVALID":
 		return documentActionFailure{"DOCUMENT_ACTION_INVALID", 400}
-	case "PUBLICATION_STATE_CONFLICT", "PUBLICATION_IN_PROGRESS", "PUBLICATION_ALREADY_BOUND", "PUBLICATION_IDEMPOTENCY_CONFLICT", "PUBLICATION_RECEIPT_CONFLICT", "PUBLICATION_BINDING_CONFLICT", "SESSION_NOT_EDITABLE":
+	case "PUBLICATION_STATE_CONFLICT", "PUBLICATION_IN_PROGRESS", "PUBLICATION_RECOVERY_CLOSED", "PUBLICATION_ALREADY_BOUND", "PUBLICATION_IDEMPOTENCY_CONFLICT", "PUBLICATION_RECEIPT_CONFLICT", "PUBLICATION_BINDING_CONFLICT", "SESSION_NOT_EDITABLE":
 		return documentActionFailure{err.Error(), 409}
 	default:
 		return documentActionFailure{"DOCUMENT_ACTION_FAILED", 500}
@@ -250,6 +257,11 @@ func PublishDocumentArtifact(ctx context.Context, db *gorm.DB, owner, id string,
 	in := DocumentPublicationInput{ArtifactID: id, OwnerUserID: owner, SessionID: session.ID, SlotID: revision.SlotID, ListIndex: revision.ListIndex, BaseRevision: *body.BaseRevision, BaseDraftVersion: body.BaseDraftVersion, Provider: body.Input.Provider, IdempotencyKey: body.Input.IdempotencyKey, Title: body.Input.Title, ParentURI: body.Input.ParentURI, Template: body.Input.Template, AllowBound: true, SharedTarget: shared, CandidateValue: options.Candidate}
 	op, created, err := prepareDocumentPublication(ctx, db, in)
 	if err != nil {
+		if errors.Is(err, publicationError("PUBLICATION_IN_PROGRESS")) {
+			if blocked, findErr := FindDocumentPublication(ctx, db, owner, id); findErr == nil {
+				return nil, blocked, publicationFailure(err)
+			}
+		}
 		return nil, nil, publicationFailure(err)
 	}
 	if !created || op.Status != "preparing" {
@@ -267,8 +279,9 @@ func PublishDocumentArtifact(ctx context.Context, db *gorm.DB, owner, id string,
 		code := publicationFailure(failure).code
 		if finishPublicationBeforeWrite(clean, db, owner, op.ID, "failed_no_write", code) == nil {
 			op.Status, op.ErrorCode = "failed_no_write", code
+			return nil, op, failure
 		}
-		return nil, op, failure
+		return publicationFailureState(clean, db, owner, op, failure)
 	}
 	catalog, err := algo.ListDocumentProviders(ctx)
 	if err != nil || !validDocumentProviderCatalog(catalog) {
@@ -362,22 +375,22 @@ func PublishDocumentArtifact(ctx context.Context, db *gorm.DB, owner, id string,
 		request.Reference = "builtin:document.write_document.v1"
 		request.Arguments = args
 	}
-	if err := ClaimDocumentPublicationWrite(ctx, db, owner, op.ID); err != nil {
+	writeCtx, writeCancel := context.WithTimeout(ctx, algo.DocumentActionTimeout)
+	defer writeCancel()
+	if err := ClaimDocumentPublicationWrite(writeCtx, db, owner, op.ID); err != nil {
 		return failBefore(publicationFailure(err))
 	}
-	response, _, err := algo.InvokeDocumentAction(ctx, request)
+	response, _, err := algo.InvokeDocumentAction(writeCtx, request)
 	clean, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 	defer cancel()
 	if err != nil {
 		_ = MarkDocumentPublicationUnknown(clean, db, owner, op.ID)
-		op.Status = "outcome_unknown"
-		return nil, op, documentFailure("PUBLICATION_OUTCOME_UNKNOWN", 502)
+		return publicationFailureState(clean, db, owner, op, documentFailure("PUBLICATION_OUTCOME_UNKNOWN", 502))
 	}
 	receipt, err := publicationReceiptFromResult(op, response.Result, target, syncIR)
 	if err != nil {
 		_ = MarkDocumentPublicationUnknown(clean, db, owner, op.ID)
-		op.Status = "outcome_unknown"
-		return nil, op, err
+		return publicationFailureState(clean, db, owner, op, err)
 	}
 	if syncIR && options.SkipUnchangedDraft {
 		var flags struct {
@@ -387,15 +400,14 @@ func PublishDocumentArtifact(ctx context.Context, db *gorm.DB, owner, id string,
 			receipt.NoLocalChange = true
 		}
 	}
-	op.ReceiptJSON, _ = json.Marshal(receipt)
 	if err := ConfirmDocumentPublication(clean, db, owner, op.ID, receipt); err != nil {
-		return nil, op, documentFailure("PROVIDER_SYNC_LOCAL_PERSIST_FAILED", 500)
+		return publicationFailureState(clean, db, owner, op, documentFailure("PROVIDER_SYNC_LOCAL_PERSIST_FAILED", 500))
 	}
 	op.Status = "provider_confirmed"
 	op.ReceiptJSON, _ = json.Marshal(receipt)
 	saved, err := FinalizeDocumentPublication(clean, db, owner, op.ID)
 	if err != nil {
-		return nil, op, publicationLocalFailure(err)
+		return publicationFailureState(clean, db, owner, op, publicationLocalFailure(err))
 	}
 	op.Status = "succeeded"
 	op.ResultRevisionID = saved.ID
@@ -458,6 +470,8 @@ func publicationReplayFailure(op *DocumentPublicationOperation) error {
 		return documentFailure(op.ErrorCode, 409)
 	}
 	switch op.Status {
+	case "outcome_unknown_released", "confirmed_detached":
+		return documentFailure("PUBLICATION_RECOVERY_CLOSED", 409)
 	case "outcome_unknown", "write_started":
 		return documentFailure("PUBLICATION_OUTCOME_UNKNOWN", 409)
 	case "provider_confirmed", "local_conflict", "local_persist_failed":
@@ -537,7 +551,7 @@ func ReadDocumentPublication(w http.ResponseWriter, r *http.Request) {
 		replyPublicationResult(w, nil, nil, publicationFailure(err))
 		return
 	}
-	common.ReplyOK(w, DocumentPublicationStatus{OperationID: op.ID, Status: op.Status, Provider: op.Provider, ArtifactID: op.ResultRevisionID, ErrorCode: op.ErrorCode})
+	common.ReplyOK(w, publicationStatus(op, time.Now()))
 }
 func CancelDocumentPublicationHTTP(w http.ResponseWriter, r *http.Request) {
 	owner, ok := publicationHTTPIdentity(w, r)

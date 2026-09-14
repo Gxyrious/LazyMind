@@ -1,3 +1,4 @@
+import { selectedIRParagraphs } from './writerIRRewriteSelection';
 import { WriterFormula, WriterSourcePreview } from './WriterSourcePreview';
 import { MenuFoldOutlined, MenuUnfoldOutlined } from '@ant-design/icons';
 import {
@@ -89,6 +90,7 @@ export interface WriterIRControlProps {
   /** Reports the current draft so the write-back action can compare it with its Feishu baseline. */
   onDocumentChange?: (document: WriterDocument) => void;
   onRewriteSelection?: (selection: WriterIRRewriteSelection) => void;
+  allowMultipleParagraphs?: boolean;
   rewriteDialogOpen?: boolean;
   rewritePreview?: WriterIRRewritePreview | null;
   onRewritePreviewApplied?: (revision?: number, draftVersion?: number) => void;
@@ -306,6 +308,7 @@ export function WriterIRControl({
   onEditingChange,
   onDocumentChange,
   onRewriteSelection,
+  allowMultipleParagraphs = false,
   rewriteDialogOpen = false,
   rewritePreview,
   onRewritePreviewApplied,
@@ -932,6 +935,7 @@ export function WriterIRControl({
       setReadOnlySelection(null);
       return;
     }
+    if(allowMultipleParagraphs) {const multi=selectedIRParagraphs(root,draft);if(multi){setReadOnlySelection(multi);return;}}
     const range = selection.getRangeAt(0);
     if (!root.contains(range.startContainer) || !root.contains(range.endContainer)) {
       setReadOnlySelection(null);
@@ -952,7 +956,7 @@ export function WriterIRControl({
       return;
     }
     setReadOnlySelection({ nodeId, selectedText, anchor });
-  }, []);
+  }, [allowMultipleParagraphs,draft]);
 
   useEffect(() => {
     if ((!documentReadOnly && !reading) || !onRewriteSelection) return undefined;
@@ -1171,6 +1175,7 @@ export function WriterIRControl({
             onNumberingUpdate={handleNumberingUpdate}
             onFocus={beginTextEdit}
             onBlur={handleTextBlur}
+            allowMultipleParagraphs={allowMultipleParagraphs}
             rewriteDialogOpen={rewriteDialogOpen}
             onRewriteSelection={
               !dirty && !saving && !externalUpdate ? onRewriteSelection : undefined

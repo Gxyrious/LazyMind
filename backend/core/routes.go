@@ -435,6 +435,8 @@ func registerAllRoutes(r *mux.Router) {
 	handleAPI(r, "POST", "/writer-download-conversions:convert", []string{"qa.write"}, workflow.ConvertWriterDownload)
 	handleAPI(r, "GET", "/workflow-artifacts/{artifact_id}", []string{"qa.read"}, workflowFacade.ReadArtifact)
 	handleAPI(r, "GET", "/document-publications/{operation_id}", []string{"qa.read"}, workflow.ReadDocumentPublication)
+	handleAPI(r, "GET", "/workflow-artifacts/{artifact_id}/publication", []string{"qa.read"}, workflow.ReadArtifactDocumentPublication)
+	handleAPI(r, "POST", "/document-publications/{operation_id}:recover", []string{"qa.write"}, workflow.RecoverDocumentPublicationHTTP)
 	handleAPI(r, "POST", "/document-publications/{operation_id}:cancel", []string{"qa.write"}, workflow.CancelDocumentPublicationHTTP)
 	handleAPI(r, "POST", "/document-publications/{operation_id}:retry-local", []string{"qa.write"}, workflow.RetryDocumentPublicationLocal)
 	handleAPI(r, "GET", "/document-providers", []string{"qa.read"}, workflow.ListDocumentProviders)
