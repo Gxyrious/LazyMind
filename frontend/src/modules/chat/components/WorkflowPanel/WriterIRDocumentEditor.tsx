@@ -1406,25 +1406,19 @@ export function WriterIRDocumentEditor({
         scrollIntoView: hadPendingSelection,
       });
     }
-  }, [collapseVersion, document, dragLabel, foldLabels, numbering]);
-
-  useEffect(() => {
-    const editor = editorRef.current;
-    if (!editor) return undefined;
-    let cancelled = false;
+    // Rebind images whenever the DOM is rebuilt, including numbering-only updates.
     editor.querySelectorAll<HTMLImageElement>('img[data-writer-image-source]').forEach((image) => {
       const source = image.dataset.writerImageSource ?? '';
       if (!source) return;
       resolveMarkdownImageUrlAsync(source)
         .then((resolved) => {
-          if (!cancelled && resolved) image.src = resolved;
+          if (resolved && editorRef.current === editor && editor.contains(image)) image.src = resolved;
         })
         .catch(() => {
           // Keep the caption visible when an individual image cannot be resolved.
         });
     });
-    return () => { cancelled = true; };
-  }, [collapseVersion, document]);
+  }, [collapseVersion, document, dragLabel, foldLabels, numbering]);
 
   useLayoutEffect(() => {
     const editor = editorRef.current;
