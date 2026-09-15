@@ -354,10 +354,20 @@
 }
 
 .writer-ir__document[contenteditable='true'] .writer-ir__heading[data-writer-heading-placeholder] {
-  display: flex;
-  align-items: baseline;
+  position: relative;
+  display: block;
+  font-size: revert;
+  line-height: normal;
+  margin-block: revert;
+
+  .writer-ir__numbering-marker {
+    display: none;
+  }
 
   &::after {
+    position: absolute;
+    inset-block-start: 0;
+    inset-inline-start: 0;
     content: attr(data-writer-heading-placeholder);
     color: #a8b0bc;
     font-size: 16px;

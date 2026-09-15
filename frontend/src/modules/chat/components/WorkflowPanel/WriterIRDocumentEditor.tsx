@@ -275,6 +275,7 @@ interface WriterFoldLabels {
 }
 
 interface WriterEditorLabels extends WriterFoldLabels {
+  headingPlaceholder: (level: number) => string;
   codeBlock: string;
   codeLanguage: string;
   collapseCode: string;
@@ -291,6 +292,7 @@ interface WriterEditorLabels extends WriterFoldLabels {
 }
 
 const DEFAULT_WRITER_EDITOR_LABELS: WriterEditorLabels = {
+  headingPlaceholder: (level) => `Type a level ${level} heading…`,
   collapse: 'Collapse',
   expand: 'Expand',
   codeBlock: 'Code block',
@@ -663,7 +665,7 @@ function renderBlock(
     const numberingMode = entry?.mode ?? 'ordered';
     const headingText = renderEditableBlockText(block);
     const placeholder = !(block.content ?? '').trim() && block.editable !== false
-      ? ` data-writer-heading-placeholder="H${level}"` : '';
+      ? ` data-writer-heading-placeholder="${escapeHtmlAttribute(foldLabels.headingPlaceholder(level))}"` : '';
     const marker = label
       ? `<span class="writer-ir__numbering-marker" data-writer-numbering-marker="${escapeHtmlAttribute(block.node_id)}" contenteditable="false" role="button" tabindex="-1">${escapeHtml(label)}</span>`
       : '';
@@ -1333,6 +1335,7 @@ export function WriterIRDocumentEditor({
   const dropHintRef = useRef<WriterBlockRelocateTarget | null>(null);
   const pendingReferenceTargetRef = useRef<string | null>(null);
   const foldLabels = useMemo<WriterEditorLabels>(() => ({
+    headingPlaceholder: (level) => t(`chat.writerMarkdown.headingPlaceholders.h${level}`),
     collapse: t('chat.writerIR.collapseSection'),
     expand: t('chat.writerIR.expandSection'),
     codeBlock: t('chat.writerIR.codeBlock'),
@@ -1792,7 +1795,9 @@ export function WriterIRDocumentEditor({
       const content = textFromElement(contentElement);
       if (/^H[1-6]$/.test(contentElement.tagName) && !contentElement.closest('[contenteditable="false"]')) {
         if (content.trim()) delete contentElement.dataset.writerHeadingPlaceholder;
-        else contentElement.dataset.writerHeadingPlaceholder = contentElement.tagName;
+        else contentElement.dataset.writerHeadingPlaceholder = t(
+          `chat.writerMarkdown.headingPlaceholders.${contentElement.tagName.toLowerCase()}`,
+        );
       }
       if (content) {
         contentElement.querySelectorAll('[data-writer-empty-placeholder]').forEach(

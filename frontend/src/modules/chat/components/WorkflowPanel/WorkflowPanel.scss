@@ -3850,6 +3850,22 @@
   padding-top: 4px;
 }
 
+.workflow-panel__provider-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+  font-size: 16px;
+
+  img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+  }
+}
+
 .workflow-writer-provider-picker__hint {
   margin-bottom: 14px;
   color: var(--text-secondary, #667085);

@@ -989,9 +989,6 @@ export function MarkdownArtifactEditor({
     selectionToolbarDismissedRef.current = true;
     setSelectionToolbar(null);
     setEmptyHeadingLevel(null);
-    rootRef.current?.querySelectorAll('[data-writer-heading-controls]').forEach((heading) => {
-      heading.removeAttribute('data-writer-heading-controls');
-    });
     setReferenceDropdownOpen(false);
     setCompactActionsOpen(false);
   }, []);
@@ -1021,17 +1018,12 @@ export function MarkdownArtifactEditor({
     ) {
       const surfaceRect = surface.getBoundingClientRect();
       const headingRect = emptyHeading.getBoundingClientRect();
-      const inside = headingRect.left - surfaceRect.left < 64;
-      root.querySelectorAll('[data-writer-heading-controls]').forEach((heading) => {
-        if (heading !== emptyHeading) heading.removeAttribute('data-writer-heading-controls');
-      });
-      emptyHeading.dataset.writerHeadingControls = inside ? 'inside' : 'outside';
       const style = window.getComputedStyle(emptyHeading);
       const lineHeight = parseFloat(style.lineHeight) || parseFloat(style.fontSize) * 1.2;
       setEmptyHeadingLevel(emptyHeading.tagName);
       setSelectionToolbar({
         top: headingRect.top - surfaceRect.top + surface.scrollTop + (lineHeight - 26) / 2,
-        left: headingRect.left - surfaceRect.left + surface.scrollLeft - (inside ? 0 : 64),
+        left: headingRect.left - surfaceRect.left + surface.scrollLeft - 64,
         maxWidth: 56,
         placement: 'above',
       });
@@ -1039,9 +1031,6 @@ export function MarkdownArtifactEditor({
     }
     if (keepToolbarForInteraction) return;
     setEmptyHeadingLevel(null);
-    root?.querySelectorAll('[data-writer-heading-controls]').forEach((heading) => {
-      heading.removeAttribute('data-writer-heading-controls');
-    });
     const hasValidSelection = Boolean(
       browserSelection
       && !browserSelection.isCollapsed
@@ -1794,6 +1783,8 @@ export function MarkdownArtifactEditor({
         selectionToolbar ? ' writer-markdown-editor--selection-toolbar-visible' : ''
       }${
         emptyHeadingLevel ? ' writer-markdown-editor--empty-heading-toolbar' : ''
+      }${
+        !readOnly ? ' writer-markdown-editor--editable' : ''
       }${chatPresentation ? ' writer-markdown-editor--chat' : ''}`}
       aria-label={t('chat.writerMarkdown.documentRegion')}
       ref={rootRef}

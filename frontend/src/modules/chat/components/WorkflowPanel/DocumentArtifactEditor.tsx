@@ -1,9 +1,9 @@
 import { useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { Modal } from 'antd';
 import type { DocumentProvider, DocumentPublishRequest, DocumentNumberingResult, DocumentConvertResult } from '@/api/generated/core-client';
-import type { SlotRevision } from '@/modules/chat/store/workflowPanel';
+import { useWorkflowStore, type SlotRevision } from '@/modules/chat/store/workflowPanel';
 import { WorkflowSessionApi, type RewriteSelectionPreview, type WriterNumberingState, type WriterNumberingUpdate } from '@/modules/chat/utils/request';
-import { resolveCoreAssetUrl, resolveMarkdownImageUrlAsync } from '@/modules/knowledge/utils/imageUrl';
+import { resolveCoreAssetUrl, resolveMarkdownImageUrlFromMap } from '@/modules/knowledge/utils/imageUrl';
 import i18n from '@/i18n';
 import { MarkdownArtifactEditor, type MarkdownSaveMode } from './MarkdownArtifactEditor';
 import { WriterIRControl, type WriterIRSaveMode } from './WriterIRControl';
@@ -16,6 +16,7 @@ import { useWriterProviderAvailability } from './useWriterProviderAvailability';
 import { documentRewritePreview } from './documentRewritePreview';
 import { documentPublicationErrorMessage } from './documentPublicationError';
 import { DocumentPublicationRecoveryPanel } from './DocumentPublicationRecoveryPanel';
+import { WriterProviderIcon } from './DocumentProviderChoice';
 import { documentPublicationUrl } from './documentPublicationUrl';
 
 function unwrap(value: unknown): unknown {
@@ -76,6 +77,39 @@ export function DocumentArtifactEditor({ slot, sessionId, readOnly, onRefresh }:
   const availability = useWriterProviderAvailability(providers.map(provider => provider.id));
   const previewSource = useRef<Baseline>();
   const attempt = useRef<{ fingerprint: string; body: DocumentPublishRequest; id: string; uncertain: boolean }>();
+
+  const writerSlot = (['source_document', 'outline_document', 'flat_draft_document', 'draft_document'] as const).find(id => id === slot.slot_id);
+  const mediaRevision = useWorkflowStore(state => {
+    const session = Object.values(state.sessionByConversation).find(item => item?.session_id === sessionId);
+    if (session?.workflow_id !== 'writer-workflow') return undefined;
+    return JSON.stringify((session.slots ?? [])
+      .filter(item => item.selected && ['media_assets', 'resolved_media_assets', 'flat_resolved_media_assets', 'target_document'].includes(item.slot_id))
+      .map(item => [item.slot_id, item.artifact_id, item.revision, item.draft_version]));
+  });
+  const mediaKey = JSON.stringify([sessionId, slot.artifact_id, slot.revision, slot.draft_version, writerSlot, mediaRevision]);
+  const [media, setMedia] = useState<{ key: string; urls?: Record<string, string> }>();
+  const mediaUrls = media?.key === mediaKey ? media.urls : undefined;
+  const latestMediaUrls = useRef(mediaUrls);
+  latestMediaUrls.current = mediaUrls;
+  const resolveImageUrl = useCallback(async (url: string) => {
+    const resolved = await resolveMarkdownImageUrlFromMap(url, mediaUrls);
+    // MDXEditor does not cancel older preview lookups when its handler changes.
+    return latestMediaUrls.current === mediaUrls ? resolved : resolveMarkdownImageUrlFromMap(url, latestMediaUrls.current);
+  }, [mediaUrls]);
+
+  useEffect(() => {
+    if (descriptor.representation !== 'markdown' || !writerSlot || mediaRevision === undefined || (slot.list_index ?? -1) >= 0) return;
+    const controller = new AbortController();
+    // Resolve preview resources only; the editable source keeps its original image references.
+    void WorkflowSessionApi().renderWriterDocument(sessionId, writerSlot, {
+      signal: controller.signal, silentError: true,
+    } as never).then(response => {
+      if (!controller.signal.aborted) setMedia({ key: mediaKey, urls: response.data.code === 0 ? response.data.data.media_urls : undefined });
+    }).catch(() => {
+      if (!controller.signal.aborted) setMedia({ key: mediaKey });
+    });
+    return () => controller.abort();
+  }, [descriptor.representation, writerSlot, mediaRevision, slot.list_index, sessionId, mediaKey]);
 
   useEffect(() => { setPublicationUrl(documentPublicationUrl(slot.write_back_url)); }, [slot.write_back_url]);
 
@@ -268,7 +302,10 @@ export function DocumentArtifactEditor({ slot, sessionId, readOnly, onRefresh }:
       menuLabel: String(i18n.t('chat.writerLocal.chooseProvider')),
       disabled: busy || publicationBlocked || !loaded || providers.length === 0, flushBeforeAction: true, flushKey: editingKey,
       onClick: () => { if (preferred) chooseRef.current(preferred); },
-      menu: providers.length > 1 ? providers.map(provider => ({ key: provider.id, label: [providerLabel(provider.id), authorizationStatus(provider.id)].filter(Boolean).join(' · '), onClick: () => chooseRef.current(provider.id) })) : undefined,
+      menu: providers.length > 1 ? providers.map(provider => ({ key: provider.id,
+        label: [providerLabel(provider.id), authorizationStatus(provider.id)].filter(Boolean).join(' · '),
+        icon: <span className='workflow-panel__provider-icon' aria-hidden='true'><WriterProviderIcon provider={provider.id} /></span>,
+        onClick: () => chooseRef.current(provider.id) })) : undefined,
       statusText: error || publicationStatus || (providers.length === 1 && preferred ? authorizationStatus(preferred) : undefined), statusTone: error ? 'error' : 'success',
       statusLink: publicationUrl ? { href: publicationUrl, label: String(i18n.t('chat.writerIR.openCloudDocument')) } : undefined,
     });
@@ -279,7 +316,7 @@ export function DocumentArtifactEditor({ slot, sessionId, readOnly, onRefresh }:
     <div className={`workflow-slot__artifact-body${descriptor.representation === 'markdown' ? ' workflow-slot__artifact-body--markdown' : ''}`}>
     {descriptor.representation === 'markdown' && typeof value === 'string'
       ? <MarkdownArtifactEditor renderContext={descriptor.render_context} markdown={value} sourceRevision={version} editingKey={editingKey} readOnly={!writable} savePaused={busy} allowMultipleParagraphs
-        resolveImageUrl={resolveMarkdownImageUrlAsync} onContentChange={edit} numbering={numbering}
+        resolveImageUrl={resolveImageUrl} onContentChange={edit} numbering={numbering}
         onRewriteSelection={canRewrite ? (picked) => { if (picked.supported) setSelection({ type: 'markdown', selected_text: picked.text, selectedText: picked.text, paragraph: picked.paragraph, paragraphs: picked.paragraphSelections?.map(item => item.paragraph), startOffset: picked.startOffset, sourceRange: picked.sourceRange, sourceRanges: picked.sourceRanges, anchor: picked.anchor }); } : undefined}
         rewriteDialogOpen={selection !== null}
         rewritePreview={preview?.selection.paragraph ? { paragraph: preview.selection.paragraph, paragraphs: preview.selection.paragraphs, sourceMarkdown: String(previewSource.current?.value ?? value), startOffset: preview.selection.startOffset,
