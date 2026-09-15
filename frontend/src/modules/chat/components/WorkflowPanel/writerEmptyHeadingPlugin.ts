@@ -12,7 +12,7 @@ import {
 export const writerEmptyHeadingPlugin = realmPlugin({
   init(realm) {
     realm.pub(createRootEditorSubscription$, (editor) => {
-      const preserveHeading = (backward = false) => {
+      const preserveHeading = () => {
         if (!editor.isEditable() || editor.isComposing()) return false;
         const selection = $getSelection();
         if (!$isRangeSelection(selection)) return false;
@@ -22,7 +22,8 @@ export const writerEmptyHeadingPlugin = realmPlugin({
           || !heading.is(selection.focus.getNode().getTopLevelElement())
         ) return false;
 
-        if (selection.isCollapsed()) return backward && heading.isEmpty();
+        // Once empty, let the editor handle further deletion and leave the heading.
+        if (selection.isCollapsed()) return false;
         if (selection.getTextContent() !== heading.getTextContent()) return false;
 
         // Clearing the heading itself keeps its level even at the document start,

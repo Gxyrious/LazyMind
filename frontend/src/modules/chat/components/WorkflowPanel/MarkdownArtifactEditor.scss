@@ -355,10 +355,13 @@
 }
 
 .writer-markdown-editor .mdxeditor-root-contenteditable [data-writer-heading-placeholder] {
-  display: flex;
-  align-items: baseline;
+  position: relative;
+  display: block;
 
   &::after {
+    position: absolute;
+    inset-block-start: 0;
+    inset-inline-start: 0;
     color: #a8b0bc;
     content: attr(data-writer-heading-placeholder);
     font-size: 16px;
@@ -366,20 +369,11 @@
     pointer-events: none;
     user-select: none;
   }
-
-  [data-writer-outline-control] {
-    order: 1;
-  }
 }
 
 .writer-markdown-editor .mdxeditor-root-contenteditable
   [data-writer-heading-placeholder][data-writer-numbering-label]::before {
   display: none;
-}
-
-.writer-markdown-editor .mdxeditor-root-contenteditable
-  [data-writer-heading-placeholder][data-writer-heading-controls='inside'] {
-  padding-inline-start: 64px;
 }
 
 .writer-markdown-editor .mdxeditor-root-contenteditable
@@ -896,6 +890,11 @@
   .writer-markdown-editor__surface .mdxeditor-root-contenteditable {
     padding: 0;
   }
+}
+
+.writer-markdown-editor--editable .writer-markdown-editor__surface .mdxeditor-root-contenteditable {
+  // The editable adds 12px: leave a 64px control gutter and an 8px edge inset.
+  padding-inline-start: 60px;
 }
 
 .writer-markdown-editor__surface a[href^='#block-'] {

@@ -1821,7 +1821,7 @@ const enUS = {
       "publishing": "Writing to {{provider}}…",
       "create": "Create {{provider}} document",
       "update": "Update {{provider}} document",
-      "publishTo": "Publish to…",
+      "publishTo": "Publish",
       "authorization": "Authorize {{provider}} and enable its use in this conversation.",
       "settings": "Open settings",
       "platformFailed": "Unable to load publishing platforms. Please retry.",

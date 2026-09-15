@@ -344,7 +344,7 @@ afterEach(() => {
 });
 
 describe('WriterIRDocumentEditor numbering sidecar', () => {
-  it.each([1, 2, 3, 4, 5, 6])('shows an empty H%i hint without persisting it or changing numbering', (level) => {
+  it.each([1, 2, 3, 4, 5, 6])('uses the Markdown level %i placeholder without persisting it or changing numbering', (level) => {
     const onChange = vi.fn();
     const emptyDocument: WriterDocument = {
       ...document,
@@ -354,7 +354,7 @@ describe('WriterIRDocumentEditor numbering sidecar', () => {
       numbering={{ ordered_style: 'hierarchical', entries: { 'empty-heading': { label: '1.', mode: 'ordered' } } }}
       ariaLabel='Writer document' onChange={onChange} />);
     const heading = container.querySelector<HTMLElement>(`h${level}[data-writer-block-content]`)!;
-    expect(heading).toHaveAttribute('data-writer-heading-placeholder', `H${level}`);
+    expect(heading).toHaveAttribute('data-writer-heading-placeholder', `chat.writerMarkdown.headingPlaceholders.h${level}`);
     expect(heading).toHaveTextContent('1.');
     expect(onChange).not.toHaveBeenCalled();
 
@@ -366,7 +366,7 @@ describe('WriterIRDocumentEditor numbering sidecar', () => {
 
     text.remove();
     fireEvent.input(heading);
-    expect(heading).toHaveAttribute('data-writer-heading-placeholder', `H${level}`);
+    expect(heading).toHaveAttribute('data-writer-heading-placeholder', `chat.writerMarkdown.headingPlaceholders.h${level}`);
     expect(heading.querySelector('[data-writer-numbering-marker]')).toHaveTextContent('1.');
     expect(onChange.mock.calls.at(-1)?.[0].blocks[0]).toMatchObject({ content: '', numbering: { level }, type: 'heading' });
   });

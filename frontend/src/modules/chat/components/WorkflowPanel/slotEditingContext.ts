@@ -1,4 +1,4 @@
-import { createContext } from 'react';
+import { createContext, type ReactNode } from 'react';
 
 /**
  * Context for slot edit lifecycle:
@@ -22,7 +22,7 @@ export interface SlotFooterAction {
   icon?: 'write-back' | 'download' | 'copy';
   selectedMenuKey?: string;
   menuLabel?: string;
-  menu?: Array<{ key: string; label: string; onClick: () => void }>;
+  menu?: Array<{ key: string; label: string; icon?: ReactNode; onClick: () => void }>;
   statusText?: string;
   statusTone?: 'success' | 'error';
   statusLink?: {

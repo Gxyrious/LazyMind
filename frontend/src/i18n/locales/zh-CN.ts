@@ -1772,7 +1772,7 @@ const zhCN = {
       "publishing": "正在写入{{provider}}…",
       "create": "创建{{provider}}文档",
       "update": "更新{{provider}}文档",
-      "publishTo": "发布到…",
+      "publishTo": "发布",
       "authorization": "请完成{{provider}}授权并允许当前对话使用",
       "settings": "去设置",
       "platformFailed": "暂时无法读取发布平台，请重试",
