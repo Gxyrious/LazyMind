@@ -21,6 +21,18 @@ function sourceBlocks(source: string, paragraphsOnly = false) {
   });
 }
 
+/** Reattach a reviewed paragraph after the rich editor rebuilds its DOM. */
+export function markdownParagraphAtRange(root: HTMLElement, source: string, start: number, end: number): HTMLElement | null {
+  const paragraphs = sourceBlocks(source, true);
+  const block = paragraphs.find(item => item.start <= start && item.end >= end);
+  if (!block) return null;
+  const normalize = (text: string) => text.replace(/\u00a0/g, ' ');
+  const matches = paragraphs.filter(item => normalize(item.text) === normalize(block.text));
+  const elements = Array.from(root.querySelectorAll<HTMLElement>('.mdxeditor-root-contenteditable p'))
+    .filter(element => !element.closest('li, blockquote, pre, td, th') && normalize(element.textContent ?? '') === normalize(block.text));
+  return matches.length === elements.length ? elements[matches.indexOf(block)] ?? null : null;
+}
+
 // Reject syntax we cannot map instead of using the first occurrence of a quote.
 function inlinePositions(source: string) {
   let text = '';

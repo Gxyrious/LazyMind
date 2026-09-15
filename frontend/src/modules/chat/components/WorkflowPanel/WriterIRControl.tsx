@@ -1,4 +1,6 @@
+import { WriterDocumentOptions } from './WriterDocumentOptions';
 import { selectedIRParagraphs } from './writerIRRewriteSelection';
+import { mergeIRRewrite } from './mergeRewritePreview';
 import { WriterFormula, WriterSourcePreview } from './WriterSourcePreview';
 import { MenuFoldOutlined, MenuUnfoldOutlined } from '@ant-design/icons';
 import {
@@ -65,9 +67,10 @@ const WRITER_IR_SAVE_FOLLOWUP_MS = 400;
 
 type WriterIRSaveRunResult = 'noop' | 'saved' | 'error' | 'busy';
 export type WriterIRSaveMode = 'draft' | 'checkpoint';
-type WriterIRPageWidth = 'default' | 'wide';
+type WriterIRPageWidth = 'default' | 'wide' | 'reading';
 
 export interface WriterIRControlProps {
+  savePaused?: boolean;
   document: WriterDocument;
   numbering?: WriterNumberingState;
   sourceRevision?: string | number;
@@ -298,6 +301,7 @@ function BlockSequence({ blocks }: { blocks: WriterBlock[] }) {
 }
 
 export function WriterIRControl({
+  savePaused = false,
   document,
   numbering,
   sourceRevision,
@@ -325,7 +329,7 @@ export function WriterIRControl({
   const [saveError, setSaveError] = useState<string>();
   const [externalUpdate, setExternalUpdate] = useState(false);
   const [outlineOpen, setOutlineOpen] = useState(false);
-  const [reading, setReading] = useState(false);
+
   const [outlineInstructionsExpanded, setOutlineInstructionsExpanded] = useState(true);
   const [pageWidth, setPageWidth] = useState<WriterIRPageWidth>('default');
   const [readOnlySelection, setReadOnlySelection] = useState<
@@ -640,6 +644,7 @@ export function WriterIRControl({
   const runSave = useCallback(async (): Promise<WriterIRSaveRunResult> => {
     const saveDocument = onSaveRef.current;
     if (!saveDocument || documentReadOnly) return 'noop';
+    if (savePaused) return 'busy';
     if (saveInFlightRef.current) {
       // Keep editing; coalesce into one follow-up with the latest draft.
       saveQueuedRef.current = true;
@@ -743,7 +748,7 @@ export function WriterIRControl({
         scheduleFollowupSave();
       }
     }
-  }, [clearAutoSaveTimers, documentReadOnly, feishuVersionOnly, scheduleFollowupSave, t]);
+  }, [clearAutoSaveTimers, documentReadOnly, feishuVersionOnly, scheduleFollowupSave, t, savePaused]);
 
   saveRunnerRef.current = runSave;
 
@@ -804,7 +809,7 @@ export function WriterIRControl({
       window.clearTimeout(autoSaveIdleTimerRef.current);
       autoSaveIdleTimerRef.current = undefined;
     }
-    if (!dirty || documentReadOnly || saveError || externalUpdate || saving) {
+    if (!dirty || documentReadOnly || savePaused || saveError || externalUpdate || saving) {
       if (!dirty) {
         dirtyStartedAtRef.current = null;
         if (autoSaveMaxTimerRef.current !== undefined) {
@@ -841,7 +846,7 @@ export function WriterIRControl({
         autoSaveIdleTimerRef.current = undefined;
       }
     };
-  }, [dirty, documentReadOnly, draft, escalateSaveMode, externalUpdate, saveError, saving]);
+  }, [dirty, documentReadOnly, draft, escalateSaveMode, externalUpdate, savePaused, saveError, saving]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -959,10 +964,10 @@ export function WriterIRControl({
   }, [allowMultipleParagraphs,draft]);
 
   useEffect(() => {
-    if ((!documentReadOnly && !reading) || !onRewriteSelection) return undefined;
+    if (!documentReadOnly || !onRewriteSelection) return undefined;
     globalThis.document.addEventListener('selectionchange', recordReadOnlySelection);
     return () => globalThis.document.removeEventListener('selectionchange', recordReadOnlySelection);
-  }, [documentReadOnly, reading, onRewriteSelection, recordReadOnlySelection]);
+  }, [documentReadOnly, onRewriteSelection, recordReadOnlySelection]);
 
   useEffect(() => {
     if (!rewriteDialogOpen) {
@@ -1064,47 +1069,13 @@ export function WriterIRControl({
         )}
       </aside>
       <div className='writer-ir__main'>
-        <div
-          className='writer-ir__display-toolbar'
-          role='toolbar'
-          aria-label={t('chat.writerIR.displaySettings')}
-          onClick={(event) => event.stopPropagation()}
-        >
-          {hasOutlineInstructions && !readOnly && (
-            <button
-              type='button'
-              className='writer-ir__outline-instructions-all'
-              aria-pressed={outlineInstructionsExpanded}
-              onClick={outlineInstructionsExpanded
-                ? collapseAllOutlineInstructions
-                : expandAllOutlineInstructions}
-            >
-              {t(outlineInstructionsExpanded
-                ? 'chat.writerIR.collapseAllOutlineInstructions'
-                : 'chat.writerIR.expandAllOutlineInstructions')}
-            </button>
-          )}
-          {!documentReadOnly && <button type='button' aria-pressed={reading} onClick={() => setReading(!reading)}>{t(reading ? 'chat.writerSource.rich' : 'chat.writerSource.preview')}</button>}
-          <div className='writer-ir__width-control'>
-            <span className='writer-ir__width-label'>{t('chat.writerIR.pageWidth')}</span>
-            <div
-              className='writer-ir__width-options'
-              role='group'
-              aria-label={t('chat.writerIR.pageWidth')}
-            >
-              {(['default', 'wide'] as const).map((width) => (
-                <button
-                  key={width}
-                  type='button'
-                  className='writer-ir__width-option'
-                  aria-pressed={pageWidth === width}
-                  onClick={() => setPageWidth(width)}
-                >
-                  {t(`chat.writerIR.pageWidths.${width}`)}
-                </button>
-              ))}
-            </div>
-          </div>
+        <div className='writer-document-toolbar'>
+          <span role='status' aria-live='polite'>{documentReadOnly ? t('chat.writerMarkdown.readOnly') : saveError ? t('chat.writerMarkdown.saveFailed') : savePaused && dirty ? t('chat.writerLocal.publishingPendingSave') : saving ? t(draft !== lastSavedDocumentRef.current ? 'chat.writerIR.savingWithEdits' : 'chat.writerIR.saving') : t(dirty ? 'chat.writerLocal.pendingSave' : 'chat.writerIR.saved')}</span>
+          <WriterDocumentOptions width={pageWidth} onWidth={setPageWidth}>
+            {hasOutlineInstructions && !readOnly && <button type='button' onClick={outlineInstructionsExpanded ? collapseAllOutlineInstructions : expandAllOutlineInstructions}>
+              {t(outlineInstructionsExpanded ? 'chat.writerIR.collapseAllOutlineInstructions' : 'chat.writerIR.expandAllOutlineInstructions')}
+            </button>}
+          </WriterDocumentOptions>
         </div>
         {externalUpdate && (
           <div className='writer-ir__notice writer-ir__notice--warning' role='alert'>
@@ -1125,7 +1096,7 @@ export function WriterIRControl({
           </div>
         )}
 
-        {documentReadOnly || reading ? (
+        {documentReadOnly ? (
           <div className='writer-ir__editor-shell'>
             <article
               className='writer-ir__document'
@@ -1180,7 +1151,20 @@ export function WriterIRControl({
             onRewriteSelection={
               !dirty && !saving && !externalUpdate ? onRewriteSelection : undefined
             }
-            rewritePreview={rewritePreview}
+            rewritePreview={rewritePreview && (rewritePreview.preview.results?.length ?? 0) > 1 ? {
+              ...rewritePreview,
+              applyParagraphs: async (indices: number[]) => {
+                if (!rewritePreview.sourceDocument || documentReadOnly || externalUpdate || saveInFlightRef.current) throw new Error('rewrite unavailable');
+                const merged = mergeIRRewrite(rewritePreview.sourceDocument, draftRef.current, {
+                  ...rewritePreview.preview, results: indices.map(index => rewritePreview.preview.results![index]),
+                });
+                handleDocumentChange(merged);
+                escalateSaveMode('checkpoint');
+                void saveRunnerRef.current();
+                return undefined;
+              },
+            } : rewritePreview}
+            rewriteApplyingDisabled={saving || externalUpdate}
             onRewritePreviewApplied={onRewritePreviewApplied}
             onRewritePreviewRejected={onRewritePreviewRejected}
           />

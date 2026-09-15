@@ -1,4 +1,3 @@
-import {ArtifactRewriteBatchPreview} from '@/modules/chat/components/WorkflowPanel/ArtifactRewriteBatchPreview';
 import { markdownSelectionRange, markdownRewriteTargets } from '@/modules/chat/components/WorkflowPanel/writerMarkdownSource';
 import { useCallback, useMemo, useRef, useState } from "react";
 import { MarkdownArtifactEditor } from "@/modules/chat/components/WorkflowPanel/MarkdownArtifactEditor";
@@ -50,7 +49,6 @@ export default function EditableBlock({
   const [rewritePreview, setRewritePreview] = useState<MarkdownRewritePreview | null>(null);
   const persistedMarkdownRef = useRef(value);
   const currentDraftRef=useRef(value), previewBaseline=useRef(value);
-  const batchPreview=(rewritePreview?.preview.results?.length ?? 0)>1;
 
   const save = useCallback(async (nextMarkdown: string, baseRevision: number) => {
     if (!conversationId || !historyId) throw new Error("editable message identity unavailable");
@@ -74,6 +72,7 @@ export default function EditableBlock({
       selectedText: selection.text,
       anchor: selection.anchor,
       paragraph: selection.paragraph,
+      paragraphs: selection.paragraphSelections?.map(item => item.paragraph),
       startOffset: selection.startOffset,
       sourceRange: selection.sourceRange,
       sourceRanges: selection.sourceRanges,
@@ -135,6 +134,8 @@ export default function EditableBlock({
     const nextMarkdown = String(preview.artifact.value);
     setRewritePreview({
       paragraph: selection.paragraph,
+      paragraphs: selection.paragraphs,
+      sourceMarkdown: previewBaseline.current,
       startOffset: 0,
       sessionId: "",
       slotId: "",
@@ -152,7 +153,7 @@ export default function EditableBlock({
     <div className="md-editable-block" data-testid="editable-writing-block">
       <MarkdownArtifactEditor
         markdown={markdown}
-        allowMultipleParagraphs readOnly={batchPreview}
+        allowMultipleParagraphs
         onContentChange={(content)=>{currentDraftRef.current=content;}}
         sourceRevision={revision}
         presentation="chat"
@@ -160,9 +161,9 @@ export default function EditableBlock({
         onOpenSourceReference={openSourceReference}
         sourceReferences={sourceReferences}
         onSave={save}
-        onRewriteSelection={openRewrite}
+        onRewriteSelection={rewriteSelection || rewritePreview ? undefined : openRewrite}
         rewriteDialogOpen={Boolean(rewriteSelection)}
-        rewritePreview={batchPreview ? null : rewritePreview}
+        rewritePreview={rewritePreview}
         onRewritePreviewApplied={(nextRevision) => {
           if (typeof nextRevision === "number") setRevision(nextRevision);
           setRewritePreview(null);
@@ -173,7 +174,6 @@ export default function EditableBlock({
           setRewriteSelection(null);
         }}
       />
-      {batchPreview && rewritePreview && <ArtifactRewriteBatchPreview preview={rewritePreview.preview} onCancel={()=>{setRewritePreview(null);setRewriteSelection(null);}} onApply={async()=>{await rewritePreview.applyPreview?.();setRewritePreview(null);setRewriteSelection(null);}} />}
       <ArtifactRewriteDialog
         open={Boolean(rewriteSelection)}
         sessionId=""

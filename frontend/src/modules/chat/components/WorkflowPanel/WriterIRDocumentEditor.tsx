@@ -1,3 +1,7 @@
+import { mergeIRRewrite } from './mergeRewritePreview';
+import { createPortal } from 'react-dom';
+import { WriterLocalSourceEditor } from './WriterLocalSourceEditor';
+import { ArtifactRewriteBatchPreview } from './ArtifactRewriteBatchPreview';
 import {
   BoldOutlined,
   CodeOutlined,
@@ -39,6 +43,8 @@ import {
   getWriterInternalReference,
   getWriterSpanColor,
   getWriterSpanStyles,
+  isWriterFormulaSpan,
+  updateWriterFormulaSpan,
   convertWriterBlockToParagraph,
   indentWriterBlock,
   isWriterSystemAnchorBlock,
@@ -141,6 +147,7 @@ interface WriterIRDocumentEditorProps {
   onRewriteSelection?: (selection: WriterIRRewriteSelection) => void;
   allowMultipleParagraphs?: boolean;
   rewritePreview?: WriterIRRewritePreview | null;
+  rewriteApplyingDisabled?: boolean;
   onRewritePreviewApplied?: (revision?: number, draftVersion?: number) => void;
   onRewritePreviewRejected?: () => void;
 }
@@ -152,6 +159,8 @@ interface WriterNumberingMenuState {
 }
 
 export interface WriterIRRewritePreview {
+  sourceDocument?: WriterDocument;
+  applyParagraphs?: (indices: number[]) => Promise<unknown>;
   applyPreview?: () => Promise<number | undefined>;
   nodeId: string;
   sessionId: string;
@@ -184,7 +193,8 @@ function writerReferenceTargetIcon(type: string) {
   return <FontSizeOutlined aria-hidden />;
 }
 
-function renderSpan(span: WriterSpan): string {
+function renderSpan(span: WriterSpan, nodeId?: string): string {
+  if (nodeId && isWriterFormulaSpan(span)) return `<span data-writer-inline-math="${escapeHtmlAttribute(nodeId)}" data-writer-formula-source="${escapeHtmlAttribute(span.text)}" contenteditable="false"></span>`;
   const reference = getWriterInternalReference(span);
   let content = escapeHtml(reference?.displayText ?? span.text);
   const styles = getWriterSpanStyles(span);
@@ -223,7 +233,7 @@ function renderSpan(span: WriterSpan): string {
 function renderBlockText(block: WriterBlock): string {
   const spans = block.spans ?? [];
   if (spans.length > 0 && spans.map((span) => span.text).join('') === (block.content ?? '')) {
-    return spans.map(renderSpan).join('');
+    return spans.map(span => renderSpan(span, block.node_id)).join('');
   }
   return escapeHtml(block.content ?? '');
 }
@@ -652,6 +662,8 @@ function renderBlock(
     const label = entry?.label;
     const numberingMode = entry?.mode ?? 'ordered';
     const headingText = renderEditableBlockText(block);
+    const placeholder = !(block.content ?? '').trim() && block.editable !== false
+      ? ` data-writer-heading-placeholder="H${level}"` : '';
     const marker = label
       ? `<span class="writer-ir__numbering-marker" data-writer-numbering-marker="${escapeHtmlAttribute(block.node_id)}" contenteditable="false" role="button" tabindex="-1">${escapeHtml(label)}</span>`
       : '';
@@ -659,11 +671,14 @@ function renderBlock(
       `<div ${attributes}>`,
       foldToggle,
       dragHandle,
-      `<h${level} data-writer-block-content="true" data-writer-heading-mode="${numberingMode}" class="writer-ir__heading writer-ir__heading--${level}">${marker}${headingText}</h${level}>`,
+      `<h${level} data-writer-block-content="true" data-writer-heading-mode="${numberingMode}"${placeholder} class="writer-ir__heading writer-ir__heading--${level}">${marker}${headingText}</h${level}>`,
       renderOutlineInstructions(block, foldLabels),
       children,
       '</div>',
     ].join('');
+  }
+  if (block.type === 'math' || (block.type === 'code' && ['mermaid', 'math', 'latex', 'geojson', 'topojson', 'stl'].includes(block.language ?? ''))) {
+    return `<div ${attributes}>${dragHandle}<span data-writer-block-content="true" hidden>${escapeHtml(block.content ?? '')}</span><div data-writer-local-host="${escapeHtmlAttribute(block.node_id)}" contenteditable="false"></div>${children}</div>`;
   }
   if (block.type === 'code') {
     const language = normalizeWriterCodeLanguage(block.language);
@@ -753,6 +768,7 @@ function textFromElement(element: HTMLElement): string {
   const collect = (node: Node): string => {
     if (node.nodeType === Node.TEXT_NODE) return node.textContent ?? '';
     if (!(node instanceof HTMLElement)) return '';
+    if (node.matches('[data-writer-inline-math]')) return node.dataset.writerFormulaSource ?? '';
     if (node.tagName === 'BR') return '\n';
     const value = Array.from(node.childNodes).map(collect).join('');
     return ['DIV', 'P'].includes(node.tagName) ? `${value}\n` : value;
@@ -888,7 +904,7 @@ function parseEditorDocument(editor: HTMLElement, source: WriterDocument): Write
       spans: [{ text: content, style: {} }],
     };
 
-    if (existing?.editable === false) return existing;
+    if (existing?.editable === false || element.querySelector(':scope > [data-writer-local-host]')) return existing!;
 
     const nestedContainers = childElements(element, '[data-writer-children], ul, ol');
     let children = type === 'table'
@@ -1038,13 +1054,16 @@ function readEditorSelection(editor: HTMLElement): WriterEditorSelection | null 
 
   const textOffset = (textRange: Range): number => {
     const contents = textRange.cloneContents();
+    contents.querySelectorAll<HTMLElement>('[data-writer-inline-math]').forEach(formula => {
+      formula.textContent = formula.dataset.writerFormulaSource ?? '';
+    });
     const ignoredLength = Array.from(
       contents.querySelectorAll<HTMLElement>('[data-writer-code-trailing-caret]'),
     ).reduce(
       (length, placeholder) => length + Array.from(placeholder.textContent ?? '').length,
       0,
     );
-    return Math.max(0, Array.from(textRange.toString()).length - ignoredLength);
+    return Math.max(0, Array.from(contents.textContent ?? '').length - ignoredLength);
   };
 
   return {
@@ -1077,20 +1096,22 @@ function textBoundaryAt(
 
   const walker = globalThis.document.createTreeWalker(
     contentElement,
-    NodeFilter.SHOW_TEXT,
+    NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT,
     {
-      acceptNode: (node) => (
-        node.parentElement?.closest('[data-writer-code-trailing-caret]')
-          ? NodeFilter.FILTER_REJECT
-          : NodeFilter.FILTER_ACCEPT
-      ),
+      acceptNode: node => {
+        if (node instanceof HTMLElement && node.matches('[data-writer-inline-math]')) return NodeFilter.FILTER_ACCEPT;
+        if (node.parentElement?.closest('[data-writer-code-trailing-caret], [data-writer-inline-math]')) return NodeFilter.FILTER_REJECT;
+        return node.nodeType === Node.TEXT_NODE ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP;
+      },
     },
   );
   let remaining = Math.max(0, offset);
   let textNode = walker.nextNode();
   while (textNode) {
-    const characters = Array.from(textNode.textContent ?? '');
+    const formula = textNode instanceof HTMLElement && textNode.matches('[data-writer-inline-math]') ? textNode : undefined;
+    const characters = Array.from(formula ? formula.dataset.writerFormulaSource ?? '' : textNode.textContent ?? '');
     if (remaining <= characters.length) {
+      if (formula?.parentNode) return { node: formula.parentNode, offset: Array.from(formula.parentNode.childNodes).indexOf(formula) + (remaining > 0 ? 1 : 0) };
       return {
         node: textNode,
         offset: characters.slice(0, remaining).join('').length,
@@ -1272,6 +1293,7 @@ export function WriterIRDocumentEditor({
   onRewriteSelection,
   allowMultipleParagraphs = false,
   rewritePreview,
+  rewriteApplyingDisabled,
   onRewritePreviewApplied,
   onRewritePreviewRejected,
 }: WriterIRDocumentEditorProps) {
@@ -1279,7 +1301,9 @@ export function WriterIRDocumentEditor({
   const shellRef = useRef<HTMLDivElement | null>(null);
   const editorRef = useRef<HTMLElement | null>(null);
   const formatToolbarRef = useRef<HTMLDivElement | null>(null);
+  const [localHosts, setLocalHosts] = useState<HTMLElement[]>([]);
   const [rewriteLayer, setRewriteLayer] = useState<HTMLDivElement | null>(null);
+  const [rewriteTargets, setRewriteTargets] = useState<Array<HTMLElement | null>>([]);
   const [rewriteTarget, setRewriteTarget] = useState<HTMLElement | null>(null);
   const lastEmittedDocumentRef = useRef<WriterDocument>();
   const lastRenderedDocumentRef = useRef<WriterDocument | undefined>(undefined);
@@ -1364,6 +1388,7 @@ export function WriterIRDocumentEditor({
       dragLabel,
       numbering,
     );
+    setLocalHosts(Array.from(editor.querySelectorAll<HTMLElement>('[data-writer-local-host], [data-writer-inline-math]')));
     lastEmittedDocumentRef.current = document;
     lastRenderedDocumentRef.current = document;
     lastRenderedNumberingRef.current = numbering;
@@ -1402,11 +1427,17 @@ export function WriterIRDocumentEditor({
     const editor = editorRef.current;
     if (!editor || !rewritePreview) {
       setRewriteTarget(null);
+      setRewriteTargets([]);
       return;
     }
     const block = Array.from(editor.querySelectorAll<HTMLElement>('[data-writer-block][data-node-id]'))
       .find((element) => element.dataset.nodeId === rewritePreview.nodeId);
     setRewriteTarget(block ? blockContentElement(block) : null);
+    setRewriteTargets((rewritePreview.preview.results ?? []).map(item => {
+      const target = Array.from(editor.querySelectorAll<HTMLElement>('[data-writer-block][data-node-id]'))
+        .find(element => element.dataset.nodeId === item.target.node_id);
+      return target ? blockContentElement(target) : null;
+    }));
   }, [document, rewritePreview]);
 
   useEffect(() => {
@@ -1752,13 +1783,17 @@ export function WriterIRDocumentEditor({
     const target = event.target;
     if (
       target instanceof Element
-      && target.closest('.writer-ir__code-header')
+      && target.closest('.writer-ir__code-header, [data-writer-local-source]')
     ) return;
     const nextDocument = parseEditorDocument(event.currentTarget, document);
     for (const contentElement of Array.from(
       event.currentTarget.querySelectorAll<HTMLElement>('[data-writer-block-content]'),
     )) {
       const content = textFromElement(contentElement);
+      if (/^H[1-6]$/.test(contentElement.tagName) && !contentElement.closest('[contenteditable="false"]')) {
+        if (content.trim()) delete contentElement.dataset.writerHeadingPlaceholder;
+        else contentElement.dataset.writerHeadingPlaceholder = contentElement.tagName;
+      }
       if (content) {
         contentElement.querySelectorAll('[data-writer-empty-placeholder]').forEach(
           (placeholder) => placeholder.remove(),
@@ -2525,7 +2560,7 @@ export function WriterIRDocumentEditor({
     const selection = savedSelectionRef.current;
     if (!selection || selection.end <= selection.start || !onRewriteSelection) return;
     const block = findWriterBlock(document.blocks, selection.nodeId);
-    if (!block) return;
+    if (!block || block.editable === false || block.spans?.some(isWriterFormulaSpan)) return;
     const selectedText = Array.from(block.content ?? '')
       .slice(selection.start, selection.end)
       .join('')
@@ -2904,7 +2939,7 @@ export function WriterIRDocumentEditor({
                 className='writer-ir__format-button writer-ir__format-button--rewrite'
                 onMouseDown={(event) => event.preventDefault()}
                 onClick={requestRewriteSelection}
-                disabled={disabled || !hasTextSelection}
+                disabled={disabled || !hasTextSelection || activeBlock?.spans?.some(isWriterFormulaSpan)}
                 aria-label={t('chat.artifactRewrite.action')}
                 title={t('chat.artifactRewrite.action')}
               >
@@ -2940,13 +2975,38 @@ export function WriterIRDocumentEditor({
         onMouseUp={recordSelection}
         onKeyUp={handleKeyUp}
       />
+      {localHosts.map(host => {
+        const inline = Boolean(host.dataset.writerInlineMath);
+        const id = host.dataset.writerLocalHost ?? host.dataset.writerInlineMath!;
+        const block = findWriterBlock(document.blocks, id);
+        const ordinal = Array.from(host.closest('[data-writer-block]')?.querySelectorAll('[data-writer-inline-math]') ?? []).indexOf(host);
+        const spanIndex = block?.spans?.map((span, index) => isWriterFormulaSpan(span) ? index : -1).filter(index => index >= 0)[ordinal];
+        return block && host.isConnected ? createPortal(<WriterLocalSourceEditor source={inline ? block.spans?.[spanIndex ?? -1]?.text ?? '' : block.content ?? ''} inline={inline}
+          kind={inline || block.type === 'math' || block.language === 'latex' ? 'math' : block.language as 'math' | 'mermaid' | 'geojson' | 'topojson' | 'stl'} readOnly={disabled || block.editable === false}
+          onChange={source => {
+            const next = inline ? updateWriterFormulaSpan(document, id, spanIndex ?? -1, source) : updateWriterBlockContent(document, id, source);
+            lastEmittedDocumentRef.current = next;
+            if (inline) host.dataset.writerFormulaSource = source;
+            else if (host.previousElementSibling) host.previousElementSibling.textContent = source;
+            onChange(next);
+          }} />, host, `${id}:${inline ? ordinal : 'block'}`) : null;
+      })}
       <div className='writer-ir__rewrite-layer' ref={setRewriteLayer} />
+      {rewritePreview && (rewritePreview.preview.results?.length ?? 0) > 1 && onRewritePreviewRejected && <ArtifactRewriteBatchPreview
+        preview={rewritePreview.preview} invalidIndices={(rewritePreview.preview.results ?? []).flatMap((item, index) => {
+          if (!rewritePreview.sourceDocument) return [];
+          try { mergeIRRewrite(rewritePreview.sourceDocument, document, { ...rewritePreview.preview, results: [item] }); return []; }
+          catch { return [index]; }
+        })} targets={rewriteTargets} layer={rewriteLayer} disabled={disabled || rewriteApplyingDisabled}
+        footerHost={shellRef.current?.closest<HTMLElement>('.workflow-slot__artifact-body')}
+        onApply={async indices => { if (!rewritePreview.applyParagraphs) throw new Error('rewrite unavailable'); await rewritePreview.applyParagraphs(indices); }}
+        onComplete={onRewritePreviewApplied} onCancel={onRewritePreviewRejected} />}
       <ArtifactRewriteSelectionHighlight
         layer={rewriteLayer}
         getRange={getPinnedRewriteRange}
         active={Boolean(pinnedRewriteSelection) || referenceMenuOpen}
       />
-      {rewritePreview && rewriteTarget && rewriteLayer && onRewritePreviewApplied && onRewritePreviewRejected && (
+      {rewritePreview && (rewritePreview.preview.results?.length ?? 0) <= 1 && rewriteTarget && rewriteLayer && onRewritePreviewApplied && onRewritePreviewRejected && (
         <ArtifactRewriteInlineDiff
           target={rewriteTarget}
           layer={rewriteLayer}

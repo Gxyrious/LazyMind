@@ -207,22 +207,23 @@ export function selectedMarkdownParagraph(container: HTMLElement, allowMultiple 
   const anchor = selectionActionAnchor(range);
   if (!text || !anchor) return null;
 
-  if (allowMultiple && startParagraph && endParagraph && startParagraph !== endParagraph) {
-    const forbidden = Array.from(container.querySelectorAll('h1,h2,h3,h4,h5,h6,li,blockquote,pre,table,hr,img,video,audio'));
+  if (allowMultiple) {
+    const forbidden = Array.from(container.querySelectorAll('h1,h2,h3,h4,h5,h6,li,blockquote,pre,table,hr,img,video,audio,[data-writer-local-source],[data-writer-inline-math]'));
     const invalid = forbidden.some((element) => range.intersectsNode(element)
       && (['IMG','HR','VIDEO','AUDIO'].includes(element.tagName) || rangeTextWithin(range, element)?.selectedText));
     const paragraphs = Array.from(container.querySelectorAll<HTMLElement>('p'))
       .map((paragraph) => ({paragraph, ...rangeTextWithin(range,paragraph)}))
       .filter((item): item is {paragraph: HTMLElement; selectedText: string; startOffset: number} => Boolean(item.selectedText));
-    return {text: paragraphs.map((p)=>p.selectedText).join('\n\n'),anchor,supported: !invalid && paragraphs.length>1,
-      paragraph: startParagraph,paragraphSelections: paragraphs};
+    if (paragraphs.length > 1) return {text: paragraphs.map((p)=>p.selectedText).join('\n\n'),anchor,supported: !invalid,
+      paragraph: paragraphs[0].paragraph,paragraphSelections: paragraphs};
   }
 
   let supported = Boolean(
     startParagraph
       && startParagraph === endParagraph
       && container.contains(startParagraph)
-      && !startParagraph.closest('li, blockquote, pre, td, th'),
+      && !startParagraph.closest('li, blockquote, pre, td, th, [data-writer-local-source]')
+      && !Array.from(startParagraph.querySelectorAll('[data-writer-local-source], [data-writer-inline-math]')).some(element => range.intersectsNode(element)),
   );
   let startOffset: number | undefined;
   if (supported && startParagraph) {

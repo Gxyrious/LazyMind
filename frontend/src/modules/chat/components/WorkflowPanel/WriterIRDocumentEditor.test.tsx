@@ -344,6 +344,33 @@ afterEach(() => {
 });
 
 describe('WriterIRDocumentEditor numbering sidecar', () => {
+  it.each([1, 2, 3, 4, 5, 6])('shows an empty H%i hint without persisting it or changing numbering', (level) => {
+    const onChange = vi.fn();
+    const emptyDocument: WriterDocument = {
+      ...document,
+      blocks: [{ node_id: 'empty-heading', type: 'heading', content: '', numbering: { level } }],
+    };
+    const { container } = render(<WriterIRDocumentEditor document={emptyDocument}
+      numbering={{ ordered_style: 'hierarchical', entries: { 'empty-heading': { label: '1.', mode: 'ordered' } } }}
+      ariaLabel='Writer document' onChange={onChange} />);
+    const heading = container.querySelector<HTMLElement>(`h${level}[data-writer-block-content]`)!;
+    expect(heading).toHaveAttribute('data-writer-heading-placeholder', `H${level}`);
+    expect(heading).toHaveTextContent('1.');
+    expect(onChange).not.toHaveBeenCalled();
+
+    const text = window.document.createTextNode('标题');
+    heading.append(text);
+    fireEvent.input(heading);
+    expect(heading).not.toHaveAttribute('data-writer-heading-placeholder');
+    expect(onChange.mock.calls.at(-1)?.[0].blocks[0]).toMatchObject({ content: '标题', numbering: { level }, type: 'heading' });
+
+    text.remove();
+    fireEvent.input(heading);
+    expect(heading).toHaveAttribute('data-writer-heading-placeholder', `H${level}`);
+    expect(heading.querySelector('[data-writer-numbering-marker]')).toHaveTextContent('1.');
+    expect(onChange.mock.calls.at(-1)?.[0].blocks[0]).toMatchObject({ content: '', numbering: { level }, type: 'heading' });
+  });
+
   it('renders an immutable highlighted marker without persisting it in heading content', async () => {
     const onChange = vi.fn();
     const cleanDocument: WriterDocument = {

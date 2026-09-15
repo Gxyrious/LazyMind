@@ -50,11 +50,10 @@ it('connects an arbitrary slot to the generic publication API using the server d
     document: { representation: 'markdown', schema: 'text/markdown', editable: true, capabilities: ['save', 'publish_document'] } };
   render(createElement(SlotEditingContext.Provider, { value: { setEditing: vi.fn(), registerFlush: () => () => {}, registerFooterAction } },
     createElement(SlotRenderer, { slot, sessionId: 'unknown-session', onRefresh: vi.fn() })));
-  await waitFor(() => expect(action).toBeDefined());
+  await waitFor(() => expect(action?.disabled).toBe(false));
   expect(action?.flushBeforeAction).toBe(true);
   act(() => action!.onClick());
-  await waitFor(() => expect(confirm).toHaveBeenCalled());
-  await act(async () => { await confirm.mock.calls[confirm.mock.calls.length - 1][0].onOk(); });
+  expect(confirm).not.toHaveBeenCalled();
   await waitFor(() => expect(publicationApi.publishDocument).toHaveBeenCalledTimes(1));
   const sent = publicationApi.publishDocument.mock.calls[0];
   expect(sent[0]).toBe('unknown-artifact');
