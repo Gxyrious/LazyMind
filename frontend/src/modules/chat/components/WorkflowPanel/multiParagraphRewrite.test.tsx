@@ -1,4 +1,4 @@
-import {act,fireEvent,render,screen,waitFor} from '@testing-library/react';
+import {act,fireEvent,render,screen,waitFor,within} from '@testing-library/react';
 import {beforeEach,expect,it,vi} from 'vitest';
 import i18n from '@/i18n';
 import {ConfigProvider} from 'antd';
@@ -16,17 +16,35 @@ beforeEach(async()=>{await i18n.changeLanguage('zh-CN');Range.prototype.getBound
 it('keeps every paragraph diff and only commits on explicit confirmation',async()=>{
  const preview=documentRewritePreview(payload,3,7),apply=vi.fn(),cancel=vi.fn();
  render(<ConfigProvider theme={{token:{motion:false}}}><ArtifactRewriteBatchPreview preview={preview} onApply={apply} onCancel={cancel}/></ConfigProvider>);
+ expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
  await waitFor(()=>expect(screen.getByText('Clear')).toBeVisible());expect(screen.getByText('Better')).toBeVisible();expect(apply).not.toHaveBeenCalled();
- fireEvent.click(screen.getByRole('button',{name:'放弃本次润色'}));expect(cancel).toHaveBeenCalledTimes(1);expect(apply).not.toHaveBeenCalled();
+ fireEvent.click(screen.getByRole('button',{name:'全部拒绝'}));expect(cancel).toHaveBeenCalledTimes(1);expect(apply).not.toHaveBeenCalled();
  let finish!:()=>void;apply.mockImplementation(()=>new Promise<void>(resolve=>{finish=resolve;}));
- const button=screen.getByRole('button',{name:'应用全部修改'});fireEvent.click(button);fireEvent.click(button);expect(apply).toHaveBeenCalledTimes(1);
+ const button=screen.getByRole('button',{name:'全部接受'});fireEvent.click(button);fireEvent.click(button);expect(apply).toHaveBeenCalledTimes(1);
  await act(async()=>finish());
 });
 it('preserves the preview when applying fails',async()=>{
  const apply=vi.fn().mockRejectedValue(new Error('conflict'));
  render(<ConfigProvider theme={{token:{motion:false}}}><ArtifactRewriteBatchPreview preview={documentRewritePreview(payload,3,7)} onApply={apply} onCancel={vi.fn()}/></ConfigProvider>);
- fireEvent.click(screen.getByRole('button',{name:'应用全部修改'}));
+ fireEvent.click(screen.getByRole('button',{name:'全部接受'}));
  expect(await screen.findByRole('alert')).toHaveTextContent('正文可能已变化');await waitFor(()=>expect(screen.getByText('Better')).toBeVisible());
+});
+it('rejects one paragraph and applies only the remaining proposal', async () => {
+ const apply=vi.fn().mockResolvedValue(undefined),complete=vi.fn(),cancel=vi.fn();
+ render(<ArtifactRewriteBatchPreview preview={documentRewritePreview(payload,3,7)} onApply={apply} onComplete={complete} onCancel={cancel}/>);
+ fireEvent.click(within(screen.getByRole('group',{name:'第 1 段'})).getByRole('button',{name:'拒绝'}));
+ expect(screen.queryByText('Clear')).not.toBeInTheDocument();expect(screen.getByText('Better')).toBeVisible();
+ expect(cancel).not.toHaveBeenCalled();expect(apply).not.toHaveBeenCalled();
+ fireEvent.click(screen.getByRole('button',{name:'全部接受'}));
+ await waitFor(()=>expect(complete).toHaveBeenCalledTimes(1));expect(apply).toHaveBeenCalledWith([1]);
+});
+it('accepts one paragraph without resolving the others, then rejects the rest', async () => {
+ const apply=vi.fn().mockResolvedValue(undefined),complete=vi.fn(),cancel=vi.fn();
+ render(<ArtifactRewriteBatchPreview preview={documentRewritePreview(payload,3,7)} onApply={apply} onComplete={complete} onCancel={cancel}/>);
+ fireEvent.click(within(screen.getByRole('group',{name:'第 1 段'})).getByRole('button',{name:'接受'}));
+ await waitFor(()=>expect(screen.queryByText('Clear')).not.toBeInTheDocument());
+ expect(apply).toHaveBeenCalledWith([0]);expect(complete).not.toHaveBeenCalled();expect(screen.getByText('Better')).toBeVisible();
+ fireEvent.click(screen.getByRole('button',{name:'全部拒绝'}));expect(cancel).toHaveBeenCalledTimes(1);expect(apply).toHaveBeenCalledTimes(1);
 });
 it('maps cross-paragraph DOM selections to distinct Unicode source positions',()=>{
  const root=document.createElement('div');root.className='mdxeditor-root-contenteditable';root.innerHTML='<p>😀 Same.</p><p>Keep.</p><p>😀 Same.</p>';document.body.append(root);
@@ -72,4 +90,11 @@ it.each(['editing','reading'])('rejects IR selections crossing empty structures 
   const value={document_id:'fixture',title:'Fixture',stage:'draft',blocks:[{node_id:'one',type:'paragraph',content:'First.'},{node_id:'divider',type:'divider',content:''},{node_id:'two',type:'paragraph',content:'Last.'}]};
   expect(selectedIRParagraphs(root,value)).toBeNull();root.remove();
  }
+});
+it('allows a multi-paragraph selection that starts at the end of a heading, but rejects actual heading text', () => {
+ const root=document.createElement('div');root.innerHTML='<h1>Title</h1><p>First</p><p>Last</p>';document.body.append(root);
+ const heading=root.querySelector('h1')!.firstChild!,last=root.querySelectorAll('p')[1].firstChild!;
+ const range=document.createRange();range.setStart(heading,5);range.setEnd(last,4);const selection=window.getSelection()!;selection.removeAllRanges();selection.addRange(range);
+ expect(selectedMarkdownParagraph(root,true)).toMatchObject({supported:true,text:'First\n\nLast'});
+ range.setStart(heading,4);expect(selectedMarkdownParagraph(root,true)?.supported).toBe(false);selection.removeAllRanges();root.remove();
 });

@@ -1,4 +1,5 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+vi.mock('./writerLocalSourcePlugin', () => ({ writerLocalSourcePlugin: () => ({}), writerLocalCodeEditor: {} }));
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -122,6 +123,9 @@ vi.mock('@ant-design/icons', () => ({
 }));
 
 vi.mock('antd', () => ({
+  Space: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  Button: ({ children, disabled, loading, onClick }: { children: React.ReactNode; disabled?: boolean; loading?: boolean; onClick?: () => void }) => <button disabled={disabled || loading} onClick={onClick}>{children}</button>,
+  Alert: ({ message }: { message: React.ReactNode }) => <div role='alert'>{message}</div>,
   Dropdown: ({
     children,
     menu,
@@ -167,6 +171,7 @@ vi.mock('react-i18next', () => ({
 
 vi.mock('./ArtifactRewriteDialog', () => ({
   ArtifactRewriteInlineDiff: () => null,
+  renderInlineDiff: (_oldText: string, newText: string) => newText,
 }));
 
 vi.mock('./ArtifactRewriteSelectionHighlight', () => ({
@@ -1221,7 +1226,7 @@ describe('MarkdownArtifactEditor autosave', () => {
       });
       expect(onSave).toHaveBeenCalledTimes(1);
       expect(onSave).toHaveBeenCalledWith('Final edit', 7, 'draft', undefined);
-      expect(screen.queryByText('chat.writerMarkdown.saved')).toBeNull();
+      expect(screen.getByText('chat.writerMarkdown.saved')).toHaveAttribute('role', 'status');
     } finally {
       vi.useRealTimers();
     }
@@ -1287,7 +1292,8 @@ it('does not publish initial editor normalization as a content edit', async () =
 it('keeps intentional whitespace edits made in source mode', async () => {
   const onContentChange = vi.fn();
   render(<MarkdownArtifactEditor markdown={'Alpha\n'} sourceRevision={1} onSave={async()=>1} onContentChange={onContentChange} />);
-  fireEvent.click(screen.getByRole('button', {name:'chat.writerSource.source'}));
+  document.querySelector('details.writer-document-options')?.setAttribute('open', '');
+ fireEvent.click(screen.getByRole('button', {name:'chat.writerSource.source'}));
   const input = screen.getByRole('textbox', {name:'chat.writerSource.source'});
   fireEvent.change(input, {target:{value:'\nAlpha\n\n'}});
   await waitFor(() => expect(onContentChange).toHaveBeenLastCalledWith('\nAlpha\n\n'));
@@ -1296,9 +1302,10 @@ it('keeps intentional whitespace edits made in source mode', async () => {
 
 it('carries an unsaved source edit into the rich editor when switching views', () => {
  const {container}=render(<MarkdownArtifactEditor markdown='Original paragraph' sourceRevision={1} onSave={async()=>1} />);
+ document.querySelector('details.writer-document-options')?.setAttribute('open', '');
  fireEvent.click(screen.getByRole('button',{name:'chat.writerSource.source'}));
  fireEvent.change(screen.getByRole('textbox',{name:'chat.writerSource.source'}),{target:{value:'Changed paragraph'}});
- fireEvent.click(screen.getByRole('button',{name:'chat.writerSource.rich'}));
+ fireEvent.click(screen.getByRole('button',{name:'chat.writerLocal.backToDocument'}));
  expect(container.querySelector('.writer-markdown-editor__surface')).toHaveAttribute('data-markdown','Changed paragraph');
 });
 
@@ -1315,4 +1322,65 @@ it('preserves source spelling across successive rich-text saves', async () => {
  await act(async()=>mdxMocks.onChange?.(normalized.replace('Old','Second'),false));
  await waitFor(()=>expect(onSave).toHaveBeenCalledTimes(2),{timeout:2500});
  expect(onSave.mock.calls[1][0]).toBe(source.replace('Old','Second'));
+});
+
+
+describe('multi-paragraph review while editing', () => {
+  const source = 'First\n\nKeep\n\nLast';
+  const result = { results: [
+    { target: { target_start: 0, target_end: 5 }, preview: { old_text: 'First', new_text: 'Clear' } },
+    { target: { target_start: 13, target_end: 17 }, preview: { old_text: 'Last', new_text: 'Better' } },
+  ] } as import('@/modules/chat/utils/request').RewriteSelectionPreview;
+  function Review({ onSave }: { onSave: (text: string, revision: number) => Promise<{ markdown: string; revision: number }> }) {
+    const [reviewing, setReviewing] = useState(true);
+    return <MarkdownArtifactEditor markdown={source} sourceRevision={3} onSave={onSave}
+      rewritePreview={reviewing ? { paragraph: document.createElement('p'), sourceMarkdown: source, sessionId: '', slotId: '', listIndex: 0, preview: result } : null}
+      onRewritePreviewApplied={() => setReviewing(false)} onRewritePreviewRejected={() => setReviewing(false)} />;
+  }
+  it('applies only reviewed paragraphs and retains edits made during the save', async () => {
+    let finish!: (result: { markdown: string; revision: number }) => void;
+    const save = vi.fn().mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }))
+      .mockImplementation(async (markdown, revision) => ({ markdown, revision: revision + 1 }));
+    render(<Review onSave={save} />);
+    act(() => mdxMocks.onChange?.('First\n\nEdited elsewhere\n\nLast'));
+    fireEvent.click(screen.getByRole('button', { name: 'chat.artifactRewrite.batchApply' }));
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+    expect(save.mock.calls[0][0]).toBe('Clear\n\nEdited elsewhere\n\nBetter');
+    act(() => mdxMocks.onChange?.('Clear\n\nTyping during save\n\nBetter'));
+    await act(async () => finish({ markdown: save.mock.calls[0][0], revision: 4 }));
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(2), { timeout: 2500 });
+    expect(save.mock.calls[1][0]).toBe('Clear\n\nTyping during save\n\nBetter');
+  });
+  it('rejecting review leaves the edited draft intact', async () => {
+    const save = vi.fn(async (markdown: string, revision: number) => ({ markdown, revision: revision + 1 }));
+    render(<Review onSave={save} />);
+    act(() => mdxMocks.onChange?.('First\n\nEdited elsewhere\n\nLast'));
+    fireEvent.click(screen.getByRole('button', { name: 'chat.artifactRewrite.batchReject' }));
+    await waitFor(() => expect(save).toHaveBeenCalled(), { timeout: 2500 });
+    expect(save.mock.calls[0][0]).toBe('First\n\nEdited elsewhere\n\nLast');
+  });
+  it('accepts paragraphs separately and keeps intervening edits in the later save', async () => {
+    const save = vi.fn(async (markdown: string, revision: number) => ({ markdown, revision: revision + 1 }));
+    render(<Review onSave={save} />);
+    const first = screen.getAllByRole('group', { name: 'chat.artifactRewrite.batchParagraph' })[0];
+    fireEvent.click(within(first).getByRole('button', { name: 'chat.artifactRewrite.paragraphApply' }));
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+    expect(save.mock.calls[0][0]).toBe('Clear\n\nKeep\n\nLast');
+    await waitFor(() => expect(screen.getAllByRole('group', { name: 'chat.artifactRewrite.batchParagraph' })).toHaveLength(1));
+    act(() => mdxMocks.onChange?.('Clear\n\nEdited between decisions\n\nLast'));
+    fireEvent.click(screen.getByRole('button', { name: 'chat.artifactRewrite.batchApply' }));
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(2));
+    expect(save.mock.calls[1][0]).toBe('Clear\n\nEdited between decisions\n\nBetter');
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'chat.artifactRewrite.batchApply' })).not.toBeInTheDocument());
+  });
+  it('keeps a changed review target instead of overwriting it', async () => {
+    const save = vi.fn(async (markdown: string, revision: number) => ({ markdown, revision: revision + 1 }));
+    render(<Review onSave={save} />);
+    act(() => mdxMocks.onChange?.('Changed target\n\nKeep\n\nLast'));
+    expect(screen.getAllByRole('button', { name: 'chat.artifactRewrite.paragraphApply' })[0]).toBeDisabled();
+    expect(screen.getByText('chat.writerLocal.expired')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'chat.writerLocal.applyRemaining' }));
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+    expect(save.mock.calls[0][0]).toBe('Changed target\n\nKeep\n\nBetter');
+  });
 });

@@ -1,7 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { markdownSelectionRange, preserveMarkdownSource } from './writerMarkdownSource';
+import { markdownParagraphAtRange, markdownSelectionRange, preserveMarkdownSource } from './writerMarkdownSource';
 
 describe('source positions and untouched Markdown', () => {
+ it('reattaches the correct repeated paragraph after the editor DOM is rebuilt', () => {
+  const source = 'Accepted and expanded\n\n😀 **Same**\n\nMiddle edit\n\n😀 **Same**';
+  const root = document.createElement('div');
+  root.innerHTML = '<div class="mdxeditor-root-contenteditable"><p>Accepted and expanded</p><p>😀 <strong>Same</strong></p><p>Middle edit</p><p>😀 <strong>Same</strong></p></div>';
+  const start = source.lastIndexOf('😀');
+  expect(markdownParagraphAtRange(root, source, start, source.length)).toBe(root.querySelectorAll('p')[3]);
+  root.querySelectorAll('p')[3].remove();
+  expect(markdownParagraphAtRange(root, source, start, source.length)).toBeNull();
+ });
  it('locates the second identical paragraph with Unicode and formatting', () => {
   const source = '😀 **相同** [链接](https://example.org)\n\n😀 **相同** [链接](https://example.org)';
   const editor = document.createElement('div'); editor.className = 'mdxeditor-root-contenteditable';

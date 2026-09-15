@@ -1,4 +1,4 @@
-import {findWriterBlock,type WriterDocument} from './writerIR';
+import {findWriterBlock,isWriterFormulaSpan,type WriterDocument} from './writerIR';
 import {rangeTextWithin,selectionActionAnchor} from './artifactRewriteSelection';
 
 export function selectedIRParagraphs(root: HTMLElement, document: WriterDocument) {
@@ -11,7 +11,7 @@ export function selectedIRParagraphs(root: HTMLElement, document: WriterDocument
  for(const element of root.querySelectorAll<HTMLElement>('[data-node-id]')) {
   const block=findWriterBlock(document.blocks,element.dataset.nodeId!);if(!block)continue;
   const content=element.querySelector<HTMLElement>(':scope > [data-writer-block-content], :scope > .writer-ir__paragraph') ?? element;
-  if(range.intersectsNode(content) && (block.type!=='paragraph'||block.editable===false))return null;
+  if(range.intersectsNode(content) && (block.type!=='paragraph'||block.editable===false||block.spans?.some(isWriterFormulaSpan)))return null;
   const selected=rangeTextWithin(range,content);if(!selected)continue;
   if(!(block.content ?? '').includes(selected.selectedText))return null;
   nodes.push({node_id:block.node_id,selected_text:selected.selectedText});

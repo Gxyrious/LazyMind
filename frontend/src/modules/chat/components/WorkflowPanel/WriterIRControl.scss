@@ -353,6 +353,20 @@
   user-select: none;
 }
 
+.writer-ir__document[contenteditable='true'] .writer-ir__heading[data-writer-heading-placeholder] {
+  display: flex;
+  align-items: baseline;
+
+  &::after {
+    content: attr(data-writer-heading-placeholder);
+    color: #a8b0bc;
+    font-size: 16px;
+    font-weight: 400;
+    pointer-events: none;
+    user-select: none;
+  }
+}
+
 .writer-ir__numbering-marker:hover,
 .writer-ir__numbering-marker:focus-visible {
   color: var(--writer-ir-accent, #245bdb);
