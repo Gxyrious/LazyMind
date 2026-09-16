@@ -1099,6 +1099,7 @@ func TestRenderWriterDocumentKeepsIRCanonicalForPinnedWorkflow(t *testing.T) {
 }
 
 func TestSaveWriterDocumentDraftUpdatesInPlaceAndCheckpointCreatesRevision(t *testing.T) {
+	receivedNormalizedIR := false
 	chatService := httptest.NewServer(adaptLegacyWriterFixture(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/workflow/actions:invoke" {
 			t.Errorf("path = %q, want workflow action invoke", r.URL.Path)
@@ -1114,18 +1115,37 @@ func TestSaveWriterDocumentDraftUpdatesInPlaceAndCheckpointCreatesRevision(t *te
 			return
 		}
 		var edited struct {
-			Data string `json:"data"`
+			Data json.RawMessage `json:"data"`
 		}
 		if err := json.Unmarshal(request.Artifact, &edited); err != nil {
 			t.Errorf("decode edited artifact: %v", err)
 			http.Error(w, "invalid artifact", http.StatusBadRequest)
 			return
 		}
+		var source any
+		if err := json.Unmarshal(edited.Data, &source); err != nil {
+			t.Errorf("decode edited document: %v", err)
+			http.Error(w, "invalid document", http.StatusBadRequest)
+			return
+		}
+		representation := "markdown"
+		if document, ok := source.(map[string]any); ok {
+			representation = "ir"
+			blocks, _ := document["blocks"].([]any)
+			if len(blocks) > 0 {
+				block, _ := blocks[0].(map[string]any)
+				spans, _ := block["spans"].([]any)
+				if len(spans) > 0 {
+					span, _ := spans[0].(map[string]any)
+					_, receivedNormalizedIR = span["style"].(map[string]any)
+				}
+			}
+		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"result": map[string]any{
-				"source_document": edited.Data,
-				"representation":  "markdown",
-				"document":        edited.Data,
+				"source_document": source,
+				"representation":  representation,
+				"document":        source,
 				"numbering":       map[string]any{},
 				"title":           "Draft",
 			},
@@ -1167,7 +1187,7 @@ func TestSaveWriterDocumentDraftUpdatesInPlaceAndCheckpointCreatesRevision(t *te
 		t.Fatalf("seed writer revision: %v", err)
 	}
 
-	save := func(mode, document string, baseRevision int, baseDraftVersion int64) (int, int64) {
+	save := func(mode string, document any, baseRevision int, baseDraftVersion int64) (int, int64) {
 		body, err := json.Marshal(map[string]any{
 			"base_revision":      baseRevision,
 			"base_draft_version": baseDraftVersion,
@@ -1257,6 +1277,21 @@ func TestSaveWriterDocumentDraftUpdatesInPlaceAndCheckpointCreatesRevision(t *te
 	if staleRecorder.Code != http.StatusConflict ||
 		writerErrorCode(t, staleRecorder) != "REVISION_CONFLICT" {
 		t.Fatalf("stale save: status=%d body=%s", staleRecorder.Code, staleRecorder.Body.String())
+	}
+
+	legacyIR := map[string]any{
+		"document_id": "doc-1",
+		"title":       "Draft",
+		"blocks": []any{map[string]any{
+			"node_id": "divider-1", "type": "divider", "content": "",
+			"spans": []any{map[string]any{"text": "", "style": []any{}}},
+		}},
+	}
+	if revision, draftVersion := save("draft", legacyIR, 4, 1); revision != 4 || draftVersion != 2 {
+		t.Fatalf("IR draft baseline = revision %d draft %d, want 4 and 2", revision, draftVersion)
+	}
+	if !receivedNormalizedIR {
+		t.Fatal("save forwarded legacy IR style array without normalization")
 	}
 }
 

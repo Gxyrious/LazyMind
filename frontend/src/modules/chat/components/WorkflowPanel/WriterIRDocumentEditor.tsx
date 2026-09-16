@@ -886,8 +886,17 @@ function parseEditorDocument(editor: HTMLElement, source: WriterDocument): Write
     element.dataset.nodeType = type;
 
     const existing = findWriterBlock(titledDocument.blocks, nodeId);
+    if (type === 'divider') {
+      return existing ?? {
+        ...createWriterParagraph(source.stage),
+        node_id: nodeId,
+        type,
+        content: '---',
+        spans: [],
+      };
+    }
     const contentElement = blockContentElement(element);
-    const content = ['divider', 'table_row'].includes(type)
+    const content = type === 'table_row'
       ? ''
       : type === 'table'
         ? textFromElement(contentElement)

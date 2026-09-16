@@ -356,7 +356,16 @@ func SaveWriterDocument(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	editedArtifact, err := json.Marshal(map[string]json.RawMessage{"data": body.Document})
+	document := body.Document
+	var structuredDocument map[string]any
+	if json.Unmarshal(document, &structuredDocument) == nil {
+		document, err = normalizeWriterDocumentForSync(document)
+		if err != nil {
+			common.ReplyErr(w, "invalid document", http.StatusBadRequest)
+			return
+		}
+	}
+	editedArtifact, err := json.Marshal(map[string]json.RawMessage{"data": document})
 	if err != nil {
 		common.ReplyErr(w, "invalid document", http.StatusBadRequest)
 		return

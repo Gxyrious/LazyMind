@@ -120,9 +120,9 @@ export function markdownSelectionRange(source: string, selection: {
 
 interface SourceEdit { from: number; to: number; value: string }
 
-function sourceEdits(before: string, after: string): SourceEdit[] {
+function sourceEdits(before: string, after: string): SourceEdit[] | undefined {
   const changes = diffChars(before, after, { timeout: 100 });
-  if (!changes) throw new Error('Source mapping is too complex; use the source editor.');
+  if (!changes) return undefined;
   const edits: SourceEdit[] = [];
   let offset = 0;
   let pending: SourceEdit | undefined;
@@ -171,6 +171,7 @@ export function preserveMarkdownSource(original: string, previousExport: string,
   if (!nextExport.trim()) return nextExport;
   const normalized = sourceEdits(original, previousExport);
   const changes = sourceEdits(previousExport, nextExport);
+  if (!normalized || !changes) return nextExport;
   const touches = (start: number, end: number) => changes.some((change) =>
     change.from === change.to ? start < change.from && change.from < end : start < change.to && change.from < end);
   const mapBoundary = (position: number, right: boolean) => {

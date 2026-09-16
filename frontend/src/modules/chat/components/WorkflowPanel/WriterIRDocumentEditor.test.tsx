@@ -381,6 +381,37 @@ describe('WriterIRDocumentEditor image previews', () => {
 });
 
 describe('WriterIRDocumentEditor numbering sidecar', () => {
+  it('preserves divider structure when editing another block', () => {
+    const divider = {
+      node_id: 'divider-1',
+      type: 'divider',
+      content: '---',
+      spans: [],
+      metadata: { provider_owned: true },
+    } satisfies WriterDocument['blocks'][number];
+    const dividerDocument: WriterDocument = {
+      ...document,
+      blocks: [divider, document.blocks[1]],
+    };
+    const onChange = vi.fn();
+    const { container } = render(
+      <WriterIRDocumentEditor
+        document={dividerDocument}
+        ariaLabel='Writer document'
+        onChange={onChange}
+      />,
+    );
+    const paragraph = container.querySelector<HTMLElement>(
+      '[data-node-id="p-1"] > [data-writer-block-content]',
+    )!;
+    paragraph.textContent = 'Edited paragraph';
+    fireEvent.input(paragraph);
+
+    const updated = onChange.mock.calls.at(-1)?.[0] as WriterDocument;
+    expect(updated.blocks[0]).toEqual(divider);
+    expect(updated.blocks[1].content).toBe('Edited paragraph');
+  });
+
   it.each([1, 2, 3, 4, 5, 6])('uses the Markdown level %i placeholder without persisting it or changing numbering', (level) => {
     const onChange = vi.fn();
     const emptyDocument: WriterDocument = {
