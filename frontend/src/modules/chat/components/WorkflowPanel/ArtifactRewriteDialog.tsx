@@ -337,8 +337,8 @@ export function ArtifactRewriteDialog({
       <div className='artifact-rewrite-form__footer'>
         <div className='artifact-rewrite-form__presets'>
           {(['concise', 'fluent', 'formal'] as const).map(preset => <button type='button' key={preset}
-            aria-pressed={instruction.trim() === String(t(`chat.writerLocal.${preset}`))}
-            onClick={() => { setInstruction(String(t(`chat.writerLocal.${preset}`))); inputRef.current?.focus(); }}>{t(`chat.writerLocal.${preset}`)}</button>)}
+            aria-pressed={instruction.trim() === String(t(`chat.writerLocal.${preset}Instruction`))}
+            onClick={() => { setInstruction(String(t(`chat.writerLocal.${preset}Instruction`))); inputRef.current?.focus(); }}>{t(`chat.writerLocal.${preset}`)}</button>)}
         </div>
         <button
           type='button'

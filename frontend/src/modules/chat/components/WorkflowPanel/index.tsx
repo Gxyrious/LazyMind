@@ -9,6 +9,8 @@ import {
   CloudUploadOutlined,
   DownloadOutlined,
   ExportOutlined,
+  MoreOutlined,
+  InfoCircleOutlined,
   FullscreenOutlined,
   FullscreenExitOutlined,
 } from '@ant-design/icons';
@@ -127,7 +129,9 @@ function IntentPopover({
   }, [onClose]);
 
   return (
-    <div className='workflow-panel__intent-popover' ref={wrapRef} role='dialog' aria-label={t('chat.workflowIntentBtn')}>
+    <div className='workflow-panel__intent-popover' ref={wrapRef} role='dialog' aria-label={t('chat.workflowIntentBtn')}
+      onKeyDown={(event) => { if (event.key === 'Escape') { event.stopPropagation(); onClose(); } }}>
+      <button type='button' className='workflow-panel__intent-close' aria-label={t('common.close')} autoFocus onClick={onClose}>×</button>
       <div className='workflow-panel__intent-popover-title'>{t('chat.workflowIntentBtn')}</div>
       {globalText && (
         <div className='workflow-panel__intent-section'>
@@ -1360,8 +1364,10 @@ function NamedTabSlot({
   onFocusSortOrder,
   onAddItem,
   readOnly,
+  hideLabel = false,
 }: {
   slotDef: SlotDef;
+  hideLabel?: boolean;
   revisions: SlotRevision[];
   session: WorkflowSession;
   artifactStream?: TaskArtifactStream;
@@ -1436,7 +1442,7 @@ function NamedTabSlot({
 
   return (
     <div className={`workflow-panel__named-slot${prefersFullGridRow ? ' workflow-panel__named-slot--full-grid-row' : ''}${isWriterDocument ? ' workflow-panel__named-slot--writer-document' : ''}`}>
-      <div className='workflow-panel__slot-heading'>
+      {!hideLabel && <div className='workflow-panel__slot-heading'>
         {(slotDef.label || slotDef.id) && (
           <span className='workflow-panel__slot-label'>{slotLabel}</span>
         )}
@@ -1451,7 +1457,7 @@ function NamedTabSlot({
             <span aria-hidden='true'>⌃</span>
           </button>
         )}
-      </div>
+      </div>}
       {!contentCollapsed && content}
     </div>
   );
@@ -1553,6 +1559,8 @@ function TabSlotGrid({
           <NamedTabSlot
             key={slotDef.id}
             slotDef={slotDef}
+            hideLabel={visibleSlots.length === 1 && slotDef.widget?.widgetType === 'writer-document'
+              && slotDef.widget?.collapsed === undefined && slotDef.label === tab.label}
             revisions={revisions}
             artifactStream={artifactStream}
             session={session}
@@ -1636,8 +1644,11 @@ export function WorkflowPanel({
   const [anySlotEditing, setAnySlotEditing] = useState(false);
   const [actionPending, setActionPending] = useState(false);
   const [footerActions, setFooterActions] = useState<Map<string, SlotFooterAction>>(new Map());
+  const moreButtonRef = useRef<HTMLButtonElement>(null);
+  const tabsRef = useRef<HTMLDivElement | null>(null);
   const tabsWheelCleanupRef = useRef<(() => void) | null>(null);
   const setTabsScrollRef = useCallback((element: HTMLDivElement | null) => {
+    tabsRef.current = element;
     tabsWheelCleanupRef.current?.();
     tabsWheelCleanupRef.current = null;
     if (!element) return;
@@ -1663,6 +1674,17 @@ export function WorkflowPanel({
     element.addEventListener('wheel', handleWheel, { passive: false });
     tabsWheelCleanupRef.current = () => element.removeEventListener('wheel', handleWheel);
   }, []);
+
+  useEffect(() => {
+    const container = tabsRef.current;
+    const selected = container?.querySelector('[aria-selected="true"]');
+    if (!container || !selected) return;
+    const viewport = container.getBoundingClientRect();
+    const tab = selected.getBoundingClientRect();
+    // Follow runtime stage changes without scrolling the conversation or editor.
+    if (tab.left < viewport.left) container.scrollLeft += tab.left - viewport.left;
+    else if (tab.right > viewport.right) container.scrollLeft += tab.right - viewport.right;
+  }, [activeTabIdx, ui.tabs, collapsed]);
 
   const setExpandedMode = useCallback((nextExpanded: boolean) => {
     if (nextExpanded) setCollapsed(false);
@@ -1846,12 +1868,12 @@ export function WorkflowPanel({
   const visibleActiveTabIdx = hasTabs
     ? Math.min(activeTabIdx, tabs.length - 1)
     : 0;
-  const hasIntent = true;
   const showActions =
     session.status === 'waiting' ||
     session.status === 'active' ||
     session.status === 'completed' ||
-    session.status === 'failed';
+    session.status === 'failed' ||
+    session.status === 'stopped';
   const documentFooter = useMemo(
     () => buildDocumentFooterItems(footerActions),
     [footerActions],
@@ -1876,7 +1898,6 @@ export function WorkflowPanel({
   );
   // Workflow packages may expose a follow-on action from a completed tab.
   const showContinue = displayStatus === 'waiting'
-    || displayStatus === 'active'
     || Boolean(completedContinueStepId);
   const showStepRollback =
     (session.status === 'completed' || session.status === 'failed')
@@ -1895,6 +1916,11 @@ export function WorkflowPanel({
         ?.sort((a, b) => b.attempt - a.attempt)[0]?.status
       : undefined);
   const effectivePast = new Set(session.projection?.past ?? []);
+  const rollbackSteps = showStepRollback ? session.steps!.filter((step, index, all) => effectivePast.has(step.step_id)
+    && step.validity !== 'stale'
+    && all.findIndex((candidate) => candidate.step_id === step.step_id && candidate.validity !== 'stale') === index) : [];
+  const stepLabel = (stepId: string) => tabs.find(tab => getTabStepId(tab) === stepId)?.label
+    ?? tabs.find(tab => tab.status_step_ids?.includes(stepId))?.label ?? stepId;
   const continueDisabled = buttonsDisabled || currentStepStatus === 'failed';
   const approvalStepId = resolvePendingApprovalStep(session, displayStatus);
 
@@ -1960,49 +1986,38 @@ export function WorkflowPanel({
       data-session-id={session.session_id}
       aria-label={t('chat.workflowPanelTitle')}
     >
+      <div className={`workflow-panel__topbar${!collapsed && hasTabs && tabs.length <= 3 ? ' workflow-panel__topbar--few-steps' : ''}`}>
       {/* Header */}
       <div className='workflow-panel__header'>
         <div className='workflow-panel__header-left'>
           <span className='workflow-panel__title'>{ui.name || session.workflow_id}</span>
-          <span
+          <button
+            type='button'
             className={`workflow-panel__status workflow-panel__status--${displayStatus}`}
             aria-label={t('chat.workflowStatusAria', { status: t(displayStatusKey) })}
             onClick={() => session && setStateGraphOpen(true)}
-            style={{ cursor: 'pointer' }}
             title={t('chat.workflowViewWorkflow')}
-            role='button'
-            tabIndex={0}
-            onKeyDown={(e) => e.key === 'Enter' && session && setStateGraphOpen(true)}
           >
             {t(displayStatusKey)}
-          </span>
+          </button>
         </div>
         <div className='workflow-panel__header-right'>
-          {hasIntent && (
-            <div className='workflow-panel__intent-btn-wrap'>
-              <button
-                type='button'
-                className='workflow-panel__intent-btn'
-                onClick={() => setIntentOpen((v) => !v)}
-                aria-label={t('chat.workflowIntentBtn')}
-                aria-expanded={intentOpen}
-              >
-                <svg width='13' height='13' viewBox='0 0 13 13' fill='none' xmlns='http://www.w3.org/2000/svg' aria-hidden='true'>
-                  <circle cx='6.5' cy='6.5' r='5.75' stroke='currentColor' strokeWidth='1.5' />
-                  <path d='M6.5 5.5v4' stroke='currentColor' strokeWidth='1.5' strokeLinecap='round' />
-                  <circle cx='6.5' cy='3.75' r='0.75' fill='currentColor' />
-                </svg>
-                {t('chat.workflowIntentBtn')}
+          <div className='workflow-panel__intent-btn-wrap'>
+            <Dropdown trigger={['click']} menu={{
+              items: [
+                { key: 'intent', label: t('chat.workflowIntentBtn'), icon: <InfoCircleOutlined />, onClick: () => setIntentOpen(true) },
+              ],
+            }}>
+              <button ref={moreButtonRef} type='button' className='workflow-panel__more-btn'
+                aria-label={t('chat.workflowMoreActions')} title={t('chat.workflowMoreActions')}>
+                <MoreOutlined />
               </button>
-              {intentOpen && (
-                <IntentPopover
-                  session={session}
-                  tabs={tabs}
-                  onClose={() => setIntentOpen(false)}
-                />
-              )}
-            </div>
-          )}
+            </Dropdown>
+            {intentOpen && <IntentPopover session={session} tabs={tabs} onClose={() => {
+              setIntentOpen(false);
+              moreButtonRef.current?.focus();
+            }} />}
+          </div>
           <button
             type='button'
             className='workflow-panel__expand-btn'
@@ -2011,7 +2026,6 @@ export function WorkflowPanel({
             title={t(expanded ? 'chat.workflowPanelShrink' : 'chat.workflowPanelExpand')}
           >
             {expanded ? <FullscreenExitOutlined /> : <FullscreenOutlined />}
-            <span>{t(expanded ? 'chat.workflowPanelShrinkShort' : 'chat.workflowPanelExpandShort')}</span>
           </button>
           {!expanded && (
             <Tooltip
@@ -2088,9 +2102,20 @@ export function WorkflowPanel({
         </div>
       </div>
 
-      {/* Tabs — step navigator style */}
+      {/* Compact step navigation; long workflows scroll horizontally. */}
       {!collapsed && hasTabs && (
-        <div className='workflow-panel__tabs' role='tablist' ref={setTabsScrollRef}>
+        <div className='workflow-panel__tabs' role='tablist' aria-label={t('chat.workflowStages')} ref={setTabsScrollRef}
+          onKeyDown={(event) => {
+            const direction = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0;
+            if (!direction && event.key !== 'Home' && event.key !== 'End') return;
+            event.preventDefault();
+            const nextIndex = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1
+              : (visibleActiveTabIdx + direction + tabs.length) % tabs.length;
+            handleTabChange(nextIndex, tabs[nextIndex].id);
+            const target = event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]')[nextIndex];
+            target?.focus();
+            target?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+          }}>
           {tabs.map((tab, idx) => {
             const statusStepIds = tab.status_step_ids ?? [tab.step_id ?? tab.id];
             const step = session.steps
@@ -2103,15 +2128,22 @@ export function WorkflowPanel({
             const stepStatus = step?.status;
             return (
               <React.Fragment key={tab.id}>
+                {idx > 0 && (
+                  <svg className='workflow-panel__tab-separator' viewBox='0 0 12 12' fill='none' aria-hidden='true'>
+                    <path d='M4.5 2.5L8 6L4.5 9.5' stroke='currentColor' strokeWidth='1.25' strokeLinecap='round' strokeLinejoin='round' />
+                  </svg>
+                )}
                 <button
                   role='tab'
+                  id={`workflow-tab-${session.session_id}-${tab.id}`}
+                  tabIndex={idx === visibleActiveTabIdx ? 0 : -1}
                   aria-selected={idx === visibleActiveTabIdx}
                   aria-controls={`workflow-tab-panel-${tab.id}`}
-                  className={`workflow-panel__tab${idx === visibleActiveTabIdx ? ' workflow-panel__tab--active' : ''}${idx < visibleActiveTabIdx ? ' workflow-panel__tab--done' : ''}`}
+                  className={`workflow-panel__tab${idx === visibleActiveTabIdx ? ' workflow-panel__tab--active' : ''}`}
                   onClick={() => handleTabChange(idx, tab.id)}
                   type='button'
                 >
-                  <span className='workflow-panel__tab-badge'>{idx + 1}</span>
+                  <span className='workflow-panel__tab-badge' aria-hidden='true'>{idx + 1}</span>
                   <span className='workflow-panel__tab-label'>{tab.label}</span>
                   {stepStatus && stepStatus !== 'succeeded' && (
                     <span
@@ -2121,14 +2153,13 @@ export function WorkflowPanel({
                     />
                   )}
                 </button>
-                {idx < tabs.length - 1 && (
-                  <span className={`workflow-panel__tab-connector${idx < visibleActiveTabIdx ? ' workflow-panel__tab-connector--done' : ''}`} aria-hidden='true' />
-                )}
               </React.Fragment>
             );
           })}
         </div>
       )}
+
+      </div>
 
       {/* Body */}
       {!collapsed && (
@@ -2139,6 +2170,7 @@ export function WorkflowPanel({
                 key={tab.id}
                 id={`workflow-tab-panel-${tab.id}`}
                 role='tabpanel'
+                aria-labelledby={`workflow-tab-${session.session_id}-${tab.id}`}
                 hidden={idx !== visibleActiveTabIdx}
               >
                 <WorkflowPanelTabActiveContext.Provider value={idx === visibleActiveTabIdx}>
@@ -2166,12 +2198,18 @@ export function WorkflowPanel({
       )}
 
       {/* Footer */}
-      {!collapsed && showActions && (
+      {!collapsed && showActions && (documentFooter.actionItems.length > 0 || documentFooter.statusMessages.length > 0
+        || rollbackSteps.length > 0 || sessionBusy || (showContinue && !approvalStepId) || displayStatus === 'failed' || displayStatus === 'stopped') && (
         <div className='workflow-panel__footer' role='group' aria-label={t('chat.workflowSessionControls')}>
           {documentFooter.actionItems.length > 0 || documentFooter.statusMessages.length > 0 ? (
             <div className='workflow-panel__footer-document'>
-              {documentFooter.statusMessages.length > 0 ? (
+              {documentFooter.statusMessages.length > 0 || documentFooter.actionItems.some(item => item.kind === 'link') ? (
                 <div className='workflow-panel__footer-meta'>
+                  {documentFooter.actionItems.filter(item => item.kind === 'link').map(item => item.kind === 'link' && (
+                    <a key={item.key} className='workflow-panel__footer-link' href={item.href} target='_blank' rel='noopener noreferrer'>
+                      {item.label}<ExportOutlined aria-hidden />
+                    </a>
+                  ))}
                   {documentFooter.statusMessages.map((message) => (
                     <span
                       key={message.key}
@@ -2192,20 +2230,7 @@ export function WorkflowPanel({
               {documentFooter.actionItems.length > 0 ? (
                 <div className='workflow-panel__footer-actions'>
                   {documentFooter.actionItems.map((item) => {
-                    if (item.kind === 'link') {
-                      return (
-                        <a
-                          key={item.key}
-                          className='workflow-panel__action-btn workflow-panel__action-btn--secondary workflow-panel__action-btn--link'
-                          href={item.href}
-                          target='_blank'
-                          rel='noopener noreferrer'
-                        >
-                          <ExportOutlined aria-hidden />
-                          {item.label}
-                        </a>
-                      );
-                    }
+                    if (item.kind === 'link') return null;
 
                     const { action } = item;
                     return (
@@ -2259,6 +2284,11 @@ export function WorkflowPanel({
               ) : null}
             </div>
           ) : null}
+          {sessionBusy && !approvalStepId && (
+            <span className='workflow-panel__execution-status' role='status'>
+              {t('chat.workflowStatusRunning')}{session.current_step_id ? ` · ${stepLabel(session.current_step_id)}` : ''}
+            </span>
+          )}
           {displayStatus === 'active' && onStop && (
             <button
               type='button'
@@ -2269,7 +2299,7 @@ export function WorkflowPanel({
               {t('chat.workflowStop')}
             </button>
           )}
-          {session.status !== 'completed' && (
+          {(displayStatus === 'failed' || displayStatus === 'stopped') && (
             <button
               type='button'
               className='workflow-panel__action-btn workflow-panel__action-btn--secondary'
@@ -2313,32 +2343,19 @@ export function WorkflowPanel({
               {actionPending ? t('chat.workflowSavingBeforeAction') : continueLabel}
             </button>
           )}
-          {showStepRollback && (
-            <div style={{ flex: '1 1 100%', display: 'flex', flexDirection: 'column', gap: 6 }}>
-              <span style={{ fontSize: 12, color: '#6b7280', fontWeight: 500 }}>{t('chat.workflowRollbackLabel')}</span>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                {session.steps!
-                  .filter((step, index, all) => effectivePast.has(step.step_id)
-                    && step.validity !== 'stale'
-                    && all.findIndex((candidate) => candidate.step_id === step.step_id && candidate.validity !== 'stale') === index)
-                  .map((step) => (
-                  <button
-                    key={`${step.step_id}-${step.attempt}`}
-                    type='button'
+          {rollbackSteps.length > 0 && (
+            <div className='workflow-panel__rollback' role='group' aria-label={t('chat.workflowRollbackLabel')}>
+              <span className='workflow-panel__rollback-label'>{t('chat.workflowRollbackLabel')}</span>
+              <div className='workflow-panel__rollback-steps'>
+                {rollbackSteps.map(step => (
+                  <button key={step.step_id} type='button'
                     className='workflow-panel__action-btn workflow-panel__action-btn--secondary'
-                    style={{ padding: '3px 10px', fontSize: 12 }}
                     disabled={buttonsDisabled}
-                    aria-disabled={buttonsDisabled}
                     onClick={() => handleRollback(step.step_id)}
-                    title={
-                      actionPending
-                        ? t('chat.workflowSavingBeforeAction')
-                        : buttonsDisabled
-                          ? t('chat.workflowBtnDisabledHint')
-                          : `${t('chat.workflowRollbackPrefix')}${step.step_id}`
-                    }
-                  >
-                    {step.step_id}
+                    title={actionPending ? t('chat.workflowSavingBeforeAction')
+                      : buttonsDisabled ? t('chat.workflowBtnDisabledHint')
+                        : `${t('chat.workflowRollbackPrefix')}${stepLabel(step.step_id)}`}>
+                    {stepLabel(step.step_id)}
                   </button>
                 ))}
               </div>
@@ -2346,7 +2363,6 @@ export function WorkflowPanel({
           )}
         </div>
       )}
-    </div>
     {!collapsed && approvalStepId && (
       <div className='workflow-panel__approval-bar' role='group' aria-label={t('chat.workflowApprovalActions')}>
         <span className='workflow-panel__approval-label'>{t('chat.workflowApprovalRequired')}</span>
@@ -2381,6 +2397,7 @@ export function WorkflowPanel({
         </button>
       </div>
     )}
+    </div>
     {session && (
       <StateGraphModal
         open={stateGraphOpen}

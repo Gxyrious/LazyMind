@@ -1,4 +1,4 @@
-import { useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { Modal } from 'antd';
 import { ExclamationCircleOutlined, ExportOutlined, LockOutlined, ReloadOutlined } from '@ant-design/icons';
 import type { DocumentProvider, DocumentPublishRequest, DocumentNumberingResult, DocumentConvertResult } from '@/api/generated/core-client';
@@ -19,6 +19,7 @@ import { documentPublicationErrorMessage } from './documentPublicationError';
 import { DocumentPublicationRecoveryPanel } from './DocumentPublicationRecoveryPanel';
 import { documentPublicationTargetUrl } from './documentPublicationUrl';
 import { WriterProviderIcon } from './DocumentProviderChoice';
+import type { SlotVersionPopover } from './SlotComponents';
 
 function unwrap(value: unknown): unknown {
   while (value && typeof value === 'object') {
@@ -35,14 +36,51 @@ function responseCode(error: unknown): string | undefined {
 }
 type Baseline = { id: string; revision: number; draft?: number; value: unknown };
 
-export function DocumentArtifactEditor({ slot, sessionId, readOnly, onRefresh }: {
+async function readDocumentValue(value: unknown, representation: string): Promise<unknown> {
+  const content = unwrap(value);
+  const carrier = content as { path?: string; url?: string } | null;
+  const url = carrier && typeof carrier === 'object' ? carrier.url || carrier.path : undefined;
+  if (!url) return content;
+  const response = await fetch(resolveCoreAssetUrl(url), { credentials: 'same-origin' });
+  if (!response.ok) throw new Error('document read failed');
+  const text = await response.text();
+  return representation === 'ir' ? unwrap(JSON.parse(text)) : text;
+}
+
+export function DocumentArtifactEditor({ slot: incomingSlot, sessionId, readOnly, onRefresh, revisionCount, VersionHistory }: {
   slot: SlotRevision; sessionId: string; readOnly?: boolean; onRefresh?: () => void;
+  revisionCount?: number; VersionHistory?: typeof SlotVersionPopover;
 }) {
+  const parentSignature = JSON.stringify([incomingSlot.artifact_id, incomingSlot.revision, incomingSlot.draft_version]);
+  const parentSignatureRef = useRef(parentSignature);
+  parentSignatureRef.current = parentSignature;
+  const [restoredSelection, setRestoredSelection] = useState<{ superseded: string[]; slot: SlotRevision }>();
+  const rollbackPrevious = useRef<string[]>([]);
+  const slot = restoredSelection?.superseded.includes(parentSignature) ? restoredSelection.slot : incomingSlot;
+  useEffect(() => {
+    const selected = restoredSelection?.slot;
+    if (selected && parentSignature === JSON.stringify([selected.artifact_id, selected.revision, selected.draft_version])) {
+      setRestoredSelection(undefined);
+    }
+  }, [parentSignature, restoredSelection]);
+  const [restoring, setRestoring] = useState(false);
   const descriptor = slot.document!;
-  const writable = !readOnly && descriptor.editable && descriptor.capabilities.includes('save');
+  const writable = !readOnly && !restoring && descriptor.editable && descriptor.capabilities.includes('save');
   const active = useContext(WorkflowPanelTabActiveContext);
-  const { registerFooterAction, getSnapshot } = useContext(SlotEditingContext);
+  const editingContext = useContext(SlotEditingContext);
+  const { registerFooterAction, getSnapshot } = editingContext;
   const editingKey = `document:${sessionId}:${slot.slot_id}:${slot.list_index ?? -1}`;
+  const flushEditor = useRef<() => Promise<boolean>>();
+  const editorContext = useMemo(() => ({ ...editingContext,
+    registerFlush: (key: string, flush: () => Promise<boolean>) => {
+      if (key === editingKey) flushEditor.current = flush;
+      const unregister = editingContext.registerFlush(key, flush);
+      return () => {
+        if (flushEditor.current === flush) flushEditor.current = undefined;
+        unregister();
+      };
+    },
+  }), [editingContext, editingKey]);
   const initial: Baseline = { id: slot.artifact_id!, revision: slot.revision, draft: slot.draft_version, value: unwrap(slot.artifact_value) };
   const latest = useRef(initial);
   const external = useRef(initial);
@@ -58,9 +96,12 @@ export function DocumentArtifactEditor({ slot, sessionId, readOnly, onRefresh }:
   const [version, setVersion] = useState(initial.revision);
   const [loaded, setLoaded] = useState(false);
   const [providers, setProviders] = useState<DocumentProvider[]>([]);
-  const [busy, setBusy] = useState(false);
+  const [publishingProvider, setPublishingProvider] = useState<string | null>(null);
+  const busy = publishingProvider !== null;
   const [error, setError] = useState('');
-  const [errorAction, setErrorAction] = useState<'providers' | 'download' | null>(null);
+  const [errorAction, setErrorAction] = useState<'providers' | 'download' | 'history' | null>(null);
+  const retryHistory = useRef<() => void>();
+  const historyLoadPending = useRef(false);
   const [publicationBlocked,setPublicationBlocked]=useState(true);
   const [publicationRefresh,setPublicationRefresh]=useState(0);
   const publicationAvailable=useCallback((allowed:boolean)=>setPublicationBlocked(!allowed),[]);
@@ -129,10 +170,7 @@ export function DocumentArtifactEditor({ slot, sessionId, readOnly, onRefresh }:
     async function load() {
       let content = incomingValue.current;
       if (sourceUrl) {
-        const response = await fetch(resolveCoreAssetUrl(sourceUrl), { credentials: 'same-origin' });
-        if (!response.ok) throw new Error('document read failed');
-        const text = await response.text();
-        content = descriptor.representation === 'ir' ? unwrap(JSON.parse(text)) : text;
+        content = await readDocumentValue(content, descriptor.representation);
       }
       if (canceled) return;
       seen.current = signature;
@@ -179,6 +217,50 @@ export function DocumentArtifactEditor({ slot, sessionId, readOnly, onRefresh }:
       }
     }
   }, []);
+  const loadRestoredVersion = async (revision: number) => {
+    if (historyLoadPending.current) return;
+    historyLoadPending.current = true;
+    try {
+      const response = await WorkflowSessionApi().getSlots(sessionId);
+      const selected = (response.data.data.slots as SlotRevision[]).find(item => item.selected
+        && item.slot_id === slot.slot_id && (item.list_index ?? -1) === (slot.list_index ?? -1)
+        && item.revision === revision);
+      if (!selected?.artifact_id || !selected.document) throw new Error('selected document unavailable');
+      const content = await readDocumentValue(selected.artifact_value, selected.document.representation);
+      // Replace the save baseline as well as the visible text, before editing resumes.
+      dirty.current = false;
+      draftContent.current = content;
+      retainedPublicationSource.current = undefined;
+      accept(selected.artifact_id, selected.revision, selected.draft_version, content);
+      seen.current = JSON.stringify([selected.artifact_id, selected.revision, selected.draft_version]);
+      setRestoredSelection({ superseded: [...rollbackPrevious.current, parentSignatureRef.current], slot: selected });
+      setPreview(null); setSelection(null); setError(''); setErrorAction(null);
+      setRestoring(false);
+      onRefresh?.();
+    } catch (error) {
+      setError(String(i18n.t('chat.slots.contentLoadFailed')));
+      setErrorAction('history');
+      retryHistory.current = () => { void loadRestoredVersion(revision).catch(() => {}); };
+      throw error;
+    } finally {
+      historyLoadPending.current = false;
+    }
+  };
+  const rollback = async (revision: number) => {
+    if (!writable || busy) return false;
+    if (flushEditor.current && !await flushEditor.current()) throw new Error('draft save failed');
+    rollbackPrevious.current = [parentSignatureRef.current,
+      JSON.stringify([latest.current.id, latest.current.revision, latest.current.draft])];
+    setRestoring(true);
+    try {
+      await useWorkflowStore.getState().rollbackSlotItem(sessionId, slot.slot_id, slot.list_index ?? -1, revision);
+    } catch (error) {
+      setRestoring(false);
+      throw error;
+    }
+    await loadRestoredVersion(revision);
+    return true;
+  };
   const save = useCallback(async (content: unknown, base: number, mode: MarkdownSaveMode | WriterIRSaveMode = 'checkpoint', numbering?: WriterNumberingUpdate) => {
     const current = latest.current;
     const ir = isWriterDocument(content);
@@ -271,7 +353,7 @@ export function DocumentArtifactEditor({ slot, sessionId, readOnly, onRefresh }:
         input: { provider, mode: 'replace', idempotency_key: key() } } };
     }
     const request = attempt.current;
-    publishPending.current = true; setBusy(true); setError(''); setErrorAction(null); setPublicationStatus('');
+    publishPending.current = true; setPublishingProvider(provider); setError(''); setErrorAction(null); setPublicationStatus('');
     try {
       const response = await WorkflowSessionApi().publishDocument(request.id, request.body, { silentError: true } as never);
       const result = response.data.data;
@@ -287,7 +369,7 @@ export function DocumentArtifactEditor({ slot, sessionId, readOnly, onRefresh }:
       if (code && beforeWrite.includes(code)) attempt.current = undefined;
       else request.uncertain = true;
       setError(documentPublicationErrorMessage(code, provider));
-    } finally { publishPending.current = false; setBusy(false);setPublicationRefresh(value=>value+1); }
+    } finally { publishPending.current = false; setPublishingProvider(null);setPublicationRefresh(value=>value+1); }
   }, [accept, busy, publicationBlocked, onRefresh]);
   const publishRef = useRef(publish); publishRef.current = publish;
 
@@ -318,7 +400,7 @@ export function DocumentArtifactEditor({ slot, sessionId, readOnly, onRefresh }:
     const preferred = providers.find(provider => provider.id === slot.provider)?.id ?? providers.find(provider => provider.id === remembered)?.id ?? providers[0]?.id;
     const authorizationStatus = (provider: string) => availability.states[provider] === 'ready' ? '' : String(i18n.t(availability.states[provider] === 'authorize' ? 'chat.writerLocal.authorizeShort' : availability.states[provider] === 'failed' ? 'chat.writerLocal.platformFailed' : 'chat.writerLocal.checking'));
     return registerFooterAction(`${editingKey}:publish`, {
-      label: busy ? String(i18n.t('chat.writerLocal.publishing', { provider: providerLabel(preferred ?? '') }))
+      label: publishingProvider !== null ? String(i18n.t('chat.writerLocal.publishing', { provider: providerLabel(publishingProvider) }))
         : providers.length === 1 ? String(i18n.t(slot.provider === preferred && slot.write_back_ready ? 'chat.writerLocal.update' : 'chat.writerLocal.create', { provider: providerLabel(preferred) })) : String(i18n.t('chat.writerLocal.publishTo')),
       icon: 'write-back', tone: 'primary', order: 30,
       menuLabel: String(i18n.t('chat.writerLocal.chooseProvider')),
@@ -331,14 +413,19 @@ export function DocumentArtifactEditor({ slot, sessionId, readOnly, onRefresh }:
       statusText: error && authorizationNeeded ? undefined : error || publicationStatus || (providers.length === 1 && preferred ? authorizationStatus(preferred) : undefined), statusTone: error ? 'error' : 'success',
       statusLink: publicationUrl ? { href: publicationUrl, label: String(i18n.t('chat.writerIR.openCloudDocument')) } : undefined,
     });
-  }, [active, writable, descriptor.capabilities, registerFooterAction, editingKey, loaded, providers, busy, publicationBlocked, error, authorizationNeeded, publicationStatus, publicationUrl, slot.provider, slot.write_back_ready, availability.states]);
+  }, [active, writable, descriptor.capabilities, registerFooterAction, editingKey, loaded, providers, busy, publishingProvider, publicationBlocked, error, authorizationNeeded, publicationStatus, publicationUrl, slot.provider, slot.write_back_ready, availability.states]);
 
   if (!loaded) return <div role='status'>{error || '…'}</div>;
-  return <div className='workflow-slot workflow-slot--artifact'>
+  const versionHistory = VersionHistory && sessionId ? <VersionHistory sessionId={sessionId} slotId={slot.slot_id}
+    listIndex={slot.list_index ?? -1} revisionCount={revisionCount ?? version} currentRevision={version}
+    currentVersionNumber={slot.version_number} currentValue={value} currentChangeSource={slot.change_source}
+    readCurrentValue={() => getSnapshot?.(editingKey) ?? draftContent.current} contentType='text'
+    readOnly={!writable || busy} triggerLabel={String(i18n.t('chat.slots.versionHistory'))} onRollback={rollback} /> : undefined;
+  return <SlotEditingContext.Provider value={editorContext}><div className='workflow-slot workflow-slot--artifact'>
     <div className={`workflow-slot__artifact-body${representation === 'markdown' ? ' workflow-slot__artifact-body--markdown' : ''}`}>
     {representation === 'markdown' && typeof value === 'string'
       ? <MarkdownArtifactEditor renderContext={descriptor.render_context} markdown={value} sourceRevision={version} editingKey={editingKey} readOnly={!writable} savePaused={busy} allowMultipleParagraphs
-        resolveImageUrl={resolveImageUrl} onContentChange={edit} numbering={numbering}
+        resolveImageUrl={resolveImageUrl} onContentChange={edit} numbering={numbering} toolbarActions={versionHistory}
         onRewriteSelection={canRewrite ? (picked) => { if (picked.supported) setSelection({ type: 'markdown', selected_text: picked.text, selectedText: picked.text, paragraph: picked.paragraph, paragraphs: picked.paragraphSelections?.map(item => item.paragraph), startOffset: picked.startOffset, sourceRange: picked.sourceRange, sourceRanges: picked.sourceRanges, anchor: picked.anchor }); } : undefined}
         rewriteDialogOpen={selection !== null}
         rewritePreview={preview?.selection.paragraph ? { paragraph: preview.selection.paragraph, paragraphs: preview.selection.paragraphs, sourceMarkdown: String(previewSource.current?.value ?? value), startOffset: preview.selection.startOffset,
@@ -346,7 +433,7 @@ export function DocumentArtifactEditor({ slot, sessionId, readOnly, onRefresh }:
         onRewritePreviewApplied={() => setPreview(null)} onRewritePreviewRejected={() => setPreview(null)}
         onSave={async (text, revision, mode, numbering) => { const saved = await save(text, revision, mode, numbering); return { markdown: String(saved.value), revision: saved.revision }; }} />
       : isWriterDocument(value) ? <WriterIRControl document={value as WriterDocument} sourceRevision={version} editingKey={editingKey} readOnly={!writable} savePaused={busy} allowMultipleParagraphs
-        onDocumentChange={edit} numbering={numbering}
+        onDocumentChange={edit} numbering={numbering} toolbarActions={versionHistory}
         onRewriteSelection={canRewrite ? (picked) => setSelection({ type: 'ir', node_id: picked.nodeId, nodeSelections: picked.nodeSelections, selectedText: picked.selectedText, anchor: picked.anchor }) : undefined}
         rewriteDialogOpen={selection !== null}
         rewritePreview={preview?.selection.type === 'ir' ? { nodeId: preview.selection.node_id, sourceDocument: previewSource.current?.value as WriterDocument, sessionId,
@@ -363,7 +450,7 @@ export function DocumentArtifactEditor({ slot, sessionId, readOnly, onRefresh }:
         {authorizationNeeded && <a className='workflow-document-notice__action workflow-document-notice__action--settings' href='/cloud-documents' target='_blank' rel='noreferrer'>
           {String(i18n.t('chat.writerLocal.settings'))}<ExportOutlined aria-hidden='true' />
         </a>}
-        {errorAction && <button className='workflow-document-notice__action' type='button' onClick={() => { if (errorAction === 'download') retryDownload.current?.(); else { setError(''); setProviderRefresh(value => value + 1); void availability.refresh(); } }}>
+        {errorAction && <button className='workflow-document-notice__action' type='button' onClick={() => { if (errorAction === 'download') retryDownload.current?.(); else if (errorAction === 'history') retryHistory.current?.(); else { setError(''); setProviderRefresh(value => value + 1); void availability.refresh(); } }}>
           <ReloadOutlined aria-hidden='true' />{String(i18n.t('common.retry'))}
         </button>}
       </div>}
@@ -382,5 +469,5 @@ export function DocumentArtifactEditor({ slot, sessionId, readOnly, onRefresh }:
         return documentRewritePreview(response.data.data, current.revision, current.draft);
       }} onPreviewReady={(result) => { if (selection && previewSource.current) setPreview({ id: previewSource.current.id, selection, value: result }); }} />
 
-  </div>;
+  </div></SlotEditingContext.Provider>;
 }
