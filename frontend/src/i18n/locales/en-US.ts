@@ -2541,6 +2541,8 @@ const enUS = {
       cloudDocumentProvider: "cloud document provider",
       openFeishuDocument: "Open Feishu document",
       openCloudDocument: "Open cloud document",
+      wechatDraftLinkUnavailable: "Saved to WeChat drafts. The draft preview link is temporarily unavailable.",
+      refreshWechatDraftLink: "Refresh draft link",
       localVersion: "Local v{{version}}",
       localHistory: "Local history",
       syncedToVersion: "Cloud document aligned to v{{version}}",

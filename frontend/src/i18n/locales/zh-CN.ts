@@ -2474,6 +2474,8 @@ const zhCN = {
       cloudDocumentProvider: "云文档",
       openFeishuDocument: "打开飞书文档",
       openCloudDocument: "打开云文档",
+      wechatDraftLinkUnavailable: "已写回微信草稿箱，暂时无法获取该草稿的预览链接",
+      refreshWechatDraftLink: "刷新草稿链接",
       localVersion: "本地 v{{version}}",
       localHistory: "本地历史",
       syncedToVersion: "云文档已对齐到 v{{version}}",

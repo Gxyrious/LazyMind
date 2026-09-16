@@ -1314,8 +1314,7 @@ func WriteSlotRevisionWithHumanArtifact(
 	changeSource string,
 	expectedRevision *int, expectedDraftVersion *int64,
 ) (*orm.WorkflowSlotRevision, error) {
-	return writeSlotRevisionWithHumanArtifact(ctx, db, sessionID, slotID, artifactKey, stepID, attempt,
-		cardinality, listIndex, contentType, value, caption, changeSource, expectedRevision, expectedDraftVersion, false)
+	return writeSlotRevisionWithHumanArtifact(ctx, db, sessionID, slotID, artifactKey, stepID, attempt, cardinality, listIndex, contentType, value, caption, changeSource, expectedRevision, expectedDraftVersion, false, nil)
 }
 
 func writeSlotRevisionWithHumanArtifact(
@@ -1326,6 +1325,7 @@ func writeSlotRevisionWithHumanArtifact(
 	changeSource string,
 	expectedRevision *int, expectedDraftVersion *int64,
 	preserveConsumers bool,
+	preservedProducer *orm.WorkflowSlotRevision,
 ) (*orm.WorkflowSlotRevision, error) {
 
 	if changeSource == "" {
@@ -1413,12 +1413,14 @@ func writeSlotRevisionWithHumanArtifact(
 		if err != nil {
 			return err
 		}
-		checkConsumers := artifactgraph.InvalidateConsumers
 		if preserveConsumers && slotID == "target_document" && changeSource == "provider_sync" {
-			// Keep completed consumers effective while still rejecting live consumers.
-			checkConsumers = artifactgraph.CheckConsumers
+			err = artifactgraph.CheckConsumers(ctx, tx, sessionID, replacedRevisionIDs...)
+		} else if preservedProducer == nil {
+			err = artifactgraph.InvalidateConsumers(ctx, tx, sessionID, replacedRevisionIDs...)
+		} else {
+			err = artifactgraph.InvalidateConsumersPreservingProducer(ctx, tx, sessionID, *preservedProducer, replacedRevisionIDs...)
 		}
-		if err := checkConsumers(ctx, tx, sessionID, replacedRevisionIDs...); err != nil {
+		if err != nil {
 			return err
 		}
 		if err := tx.Create(humanArt).Error; err != nil {

@@ -252,10 +252,33 @@ func TestApplyWriterProviderBindingUsesWeChatBrowserURL(t *testing.T) {
 		Provider:   "wechat",
 		DocumentID: "draft-1",
 		URI:        "",
-		BrowserURL: "https://mp.weixin.qq.com/",
+		BrowserURL: "https://mp.weixin.qq.com/s?tempkey=fixture-preview",
 	})
-	if info.URL != "https://mp.weixin.qq.com/" {
-		t.Fatalf("write-back URL = %q, want WeChat console URL", info.URL)
+	if info.URL != "https://mp.weixin.qq.com/s?tempkey=fixture-preview" {
+		t.Fatalf("write-back URL = %q, want WeChat draft URL", info.URL)
+	}
+}
+
+func TestInternalProviderBindingsExposeSameDocumentInPublicationAndSlot(t *testing.T) {
+	for _, tt := range []struct{ provider, uri, id, want string }{
+		{"feishu", "feishu:/~docx/FixtureDoc", "FixtureDoc", "https://feishu.cn/docx/FixtureDoc"},
+		{"feishu", "feishu@FixtureSpace:/~node/FixtureNode", "FixtureDoc", "https://feishu.cn/wiki/FixtureNode"},
+		{"feishu", "", "FixtureDoc", "https://feishu.cn/docx/FixtureDoc"},
+		{"notion", "notion:/~page/12345678-1234-1234-1234-123456789abc", "12345678-1234-1234-1234-123456789abc", "https://www.notion.so/12345678123412341234123456789abc"},
+	} {
+		t.Run(tt.provider+tt.uri, func(t *testing.T) {
+			binding := writerProviderBinding{Provider: tt.provider, URI: tt.uri, DocumentID: tt.id}
+			value, _ := json.Marshal(map[string]any{"provider_binding": binding})
+			target := publicationBindingTarget(value)
+			if got := documentPublicationTargetURL(tt.provider, target); got != tt.want {
+				t.Fatalf("publication target=%s want=%s", got, tt.want)
+			}
+			info := writerWriteBackInfo{}
+			applyWriterProviderBinding(&info, binding)
+			if info.URL != tt.want {
+				t.Fatalf("slot target=%s want=%s", info.URL, tt.want)
+			}
+		})
 	}
 }
 
@@ -286,7 +309,7 @@ func TestEnrichWriterWriteBackSlots_UsesObsidianLocalPath(t *testing.T) {
 	enrichSlots(context.Background(), db.DB, "session", slots)
 	got := slots[1]
 	if got.WriteBackState != writerWriteBackSyncedClean ||
-		got.WriteBackURL != "" ||
+		got.WriteBackURL != "obsidian://open?path=%2FUsers%2Ftest%2FDocuments%2Fobs%2FNote.md" ||
 		got.WriteBackLocalPath != "/Users/test/Documents/obs/Note.md" {
 		t.Fatalf("unexpected Obsidian write-back projection: %+v", got)
 	}

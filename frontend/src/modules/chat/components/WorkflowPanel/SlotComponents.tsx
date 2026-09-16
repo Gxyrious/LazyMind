@@ -2125,7 +2125,7 @@ export function SlotText({ slot, widget, sessionId, slotId, revisionCount, onRef
   useDocumentCopy({
     enabled: !showPending && !isJsonBlock && widget?.widgetType === 'text-markdown',
     editingKey: `${editingKey}:markdown`, sessionId, slotId, listIndex: apiListIndex,
-    revision: localRevision, document: displayText,
+    revision: localRevision, draftVersion: localDraftVersion, document: displayText,
   });
 
   // Compute the pending draft text for the version badge: non-null only when there
@@ -3368,7 +3368,7 @@ function SlotWriterDocument({
 
   useDocumentCopy({
     enabled: Boolean(rendered) && !loading,
-    editingKey, sessionId, slotId, revision: displayRevision,
+    editingKey, sessionId, slotId, revision: displayRevision, draftVersion: localDraftVersion,
     document: rendered?.document,
   });
 
@@ -3899,7 +3899,7 @@ function SlotJsonFile({
   useDocumentCopy({
     enabled: writerDocument !== null,
     editingKey, sessionId, slotId: resolvedSlotId, listIndex: apiListIndex,
-    revision: displayRevision, document: writerDocument,
+    revision: displayRevision, draftVersion: localDraftVersion, document: writerDocument,
   });
 
   useRegisterArtifactDownload({
@@ -4268,7 +4268,7 @@ function SlotInlineStructured({
   useDocumentCopy({
     enabled: writerDocument !== null,
     editingKey, sessionId, slotId: resolvedSlotId, listIndex: apiListIndex,
-    revision: displayRevision, document: writerDocument,
+    revision: displayRevision, draftVersion: localDraftVersion, document: writerDocument,
   });
 
   useRegisterArtifactDownload({
@@ -4756,7 +4756,7 @@ function SlotMarkdownFile({
   useDocumentCopy({
     enabled: !loading && !error,
     editingKey: markdownEditingKey, sessionId, slotId: resolvedSlotId, listIndex: apiListIndex,
-    revision: displayRevision, document: content,
+    revision: displayRevision, draftVersion: localDraftVersion, document: content,
     sourceKey: readOnly ? (typeof raw === 'string' ? raw : raw?.path ?? raw?.url) : undefined,
   });
 
