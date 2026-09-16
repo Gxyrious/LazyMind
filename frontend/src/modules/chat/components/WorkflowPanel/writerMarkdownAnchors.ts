@@ -30,7 +30,8 @@ function mapMarkdownLinesOutsideFences(
   let fenceCharacter = '';
   let fenceLength = 0;
 
-  return markdown.split(/\r?\n/).map((line) => {
+  const lineEndings = markdown.match(/\r?\n/g) ?? [];
+  return markdown.split(/\r?\n/).map((line, index) => {
     const fence = line.match(/^\s*(`{3,}|~{3,})/);
     if (fence) {
       const marker = fence[1];
@@ -41,10 +42,10 @@ function mapMarkdownLinesOutsideFences(
         fenceCharacter = '';
         fenceLength = 0;
       }
-      return line;
+      return line + (lineEndings[index] ?? '');
     }
-    return fenceCharacter ? line : mapLine(line);
-  }).join('\n');
+    return (fenceCharacter ? line : mapLine(line)) + (lineEndings[index] ?? '');
+  }).join('');
 }
 
 function pageMarkersForEditor(markdown: string): string {
@@ -109,7 +110,22 @@ function headingNumberingConfigLine(markdown: string): string | undefined {
 function withHeadingNumberingConfigLine(
   markdown: string,
   configLine?: string,
+  preserveWhitespace = false,
 ): string {
+  if (preserveWhitespace) {
+    const lines = (markdown.match(/[^\n]*\n|[^\n]+$/g) ?? []).filter(
+      line => !HEADING_NUMBERING_CONFIG_LINE_RE.test(line.replace(/\r?\n$/, '')),
+    );
+    if (configLine) {
+      let insertAt = 0;
+      if (lines[0]?.trim() === '---') {
+        const end = lines.slice(1).findIndex(line => /^(?:---|\.\.\.)\s*$/.test(line));
+        if (end >= 0) insertAt = end + 2;
+      }
+      lines.splice(insertAt, 0, configLine + (markdown.match(/\r?\n/)?.[0] ?? '\n'));
+    }
+    return lines.join('');
+  }
   const lines = markdown.split(/\r?\n/).filter(
     (line) => !HEADING_NUMBERING_CONFIG_LINE_RE.test(line),
   );
@@ -248,13 +264,14 @@ export function protectWriterMarkdownAnchors(
   previousMarkdown: string,
   nextMarkdown: string,
   generateMissingAnchors = true,
+  preserveWhitespace = false,
 ): string {
   const configLine = headingNumberingConfigLine(nextMarkdown)
     ?? headingNumberingConfigLine(previousMarkdown);
   const previous = writerMarkdownTargetBindings(previousMarkdown);
   const next = writerMarkdownTargetBindings(nextMarkdown);
   if (next.length === 0) {
-    return withHeadingNumberingConfigLine(nextMarkdown, configLine);
+    return withHeadingNumberingConfigLine(nextMarkdown, configLine, preserveWhitespace);
   }
 
   const previousBySignature = new Map<string, number[]>();
@@ -323,6 +340,7 @@ export function protectWriterMarkdownAnchors(
   });
 
   const lines = nextMarkdown.split(/\r?\n/);
+  const lineEndings = nextMarkdown.match(/\r?\n/g) ?? [];
   const targetAnchorLines = new Set(
     next
       .map((target) => target.anchorLineIndex)
@@ -358,17 +376,20 @@ export function protectWriterMarkdownAnchors(
       // MDX serializers may surround a standalone JSX anchor with extra empty
       // paragraphs. Keep only the normal Markdown separator before a section.
       while (
-        result.length >= 2
+        !preserveWhitespace && result.length >= 2
         && !result[result.length - 1].trim()
         && !result[result.length - 2].trim()
       ) result.pop();
-      result.push(anchor);
+      result.push(preserveWhitespace ? anchor + (lineEndings[lineIndex] ?? lineEndings[0] ?? '\n') : anchor);
     }
-    result.push(line);
+    result.push(preserveWhitespace ? line + (lineEndings[lineIndex] ?? '') : line);
     const instruction = insertAfter.get(lineIndex);
-    if (instruction) result.push(instruction);
+    if (instruction) {
+      if (preserveWhitespace && !lineEndings[lineIndex]) result[result.length - 1] += lineEndings[0] ?? '\n';
+      result.push(preserveWhitespace ? instruction + (lineEndings[lineIndex] ?? '') : instruction);
+    }
   });
-  return withHeadingNumberingConfigLine(result.join('\n'), configLine);
+  return withHeadingNumberingConfigLine(result.join(preserveWhitespace ? '' : '\n'), configLine, preserveWhitespace);
 }
 
 /** Backward-compatible name for callers outside the editor module. */

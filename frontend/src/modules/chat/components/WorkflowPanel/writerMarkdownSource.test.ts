@@ -1,5 +1,20 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { markdownParagraphAtRange, markdownSelectionRange, preserveMarkdownSource } from './writerMarkdownSource';
+
+const diffBudget = vi.hoisted(() => ({ maxChars: Infinity, abortLines: false }));
+vi.mock('diff', async (importOriginal) => {
+ const actual = await importOriginal<typeof import('diff')>();
+ return { ...actual,
+  diffChars: (a: string, b: string, options: import('diff').DiffCharsOptionsAbortable) =>
+   a.length + b.length > diffBudget.maxChars ? undefined : actual.diffChars(a, b, options),
+  diffLines: (a: string, b: string, options: import('diff').DiffLinesOptionsAbortable) =>
+   diffBudget.abortLines ? undefined : actual.diffLines(a, b, options),
+ };
+});
+beforeEach(() => {
+ diffBudget.maxChars = Infinity;
+ diffBudget.abortLines = false;
+});
 
 describe('source positions and untouched Markdown', () => {
  it.each([
@@ -93,4 +108,56 @@ it('maps task text after the checkbox marker even when both contain x', () => {
  root.innerHTML = '<ul><li aria-checked="true">x</li></ul>';
  expect(markdownSelectionRange('- [x] x', { selectedText: 'x', paragraph: root.querySelector('li')! }))
   .toEqual({ selected_text: 'x', start: 6, end: 7 });
+});
+
+describe('README source preservation', () => {
+ const original = [
+  '# Project', '', '**[English](README.md)** | **中文**', '',
+  '[![macOS](https://example.org/badge?style=flat&logo=apple)](desktop/README.md)', '',
+  '- Desktop', '- Enterprise', '', '---', '',
+  '| 场景 | 执行 |', '|------|------|', '| Writer | 编辑 |', '', '',
+  'https://example.org/video', '', '## Features', '', 'Original paragraph.', '',
+  '## Quick start', '', '```bash', 'echo "A & B"', '```', '',
+ ].join('\n');
+ const normalized = [
+  '# Project', '', '[English](README.md) | **中文**', '',
+  '![macOS](https://example.org/badge?style=flat\\&logo=apple)', '',
+  '* Desktop', '* Enterprise', '', '***', '',
+  '| 场景     | 执行 |', '| ------ | -- |', '| Writer | 编辑 |', '',
+  '[https://example.org/video](https://example.org/video)', '', '## Features', '', 'Original paragraph.', '',
+  '## Quick start', '', '```bash', 'echo "A & B"', '```',
+ ].join('\n');
+
+ it('preserves every untouched byte when adding a section, then editing and deleting it', () => {
+  const addition = '### Security\n\nNew section.\n\n';
+  const exported = normalized.replace('## Quick start', addition + '## Quick start');
+  const saved = preserveMarkdownSource(original, normalized, exported);
+  expect(saved).toBe(original.replace('## Quick start', addition + '## Quick start'));
+  const edited = exported.replace('New section.', '**Updated section.**');
+  const savedAgain = preserveMarkdownSource(saved, exported, edited);
+  expect(savedAgain).toBe(saved.replace('New section.', '**Updated section.**'));
+  expect(preserveMarkdownSource(savedAgain, edited, normalized)).toBe(original);
+ });
+
+ it('handles a long README without running a whole-document character diff', () => {
+  const from = Array.from({ length: 80 }, (_, i) => `${original}\n## Section ${i}\n\n`).join('');
+  const before = Array.from({ length: 80 }, (_, i) => `${normalized}\n\n## Section ${i}\n\n`).join('');
+  const after = before.replace('## Section 40', 'New paragraph.\n\n## Section 40');
+  // Model the abort on expensive input deterministically, without timing assertions.
+  diffBudget.maxChars = 2000;
+  expect(preserveMarkdownSource(from, before, after))
+   .toBe(from.replace('## Section 40', 'New paragraph.\n\n## Section 40'));
+ });
+
+ it('keeps CRLF and blank lines around an edited paragraph', () => {
+  const source = original.split('\n').join('\r\n');
+  expect(preserveMarkdownSource(source, normalized, normalized.replace('Original paragraph.', 'Edited paragraph.')))
+   .toBe(source.replace('Original paragraph.', 'Edited paragraph.'));
+ });
+
+ it.each(['lines', 'characters'])('refuses an unsafe save if the %s comparison cannot complete', (phase) => {
+  if (phase === 'lines') diffBudget.abortLines = true;
+  else diffBudget.maxChars = 0;
+  expect(() => preserveMarkdownSource(original, normalized, normalized.replace('Original', 'Edited'))).toThrow();
+ });
 });

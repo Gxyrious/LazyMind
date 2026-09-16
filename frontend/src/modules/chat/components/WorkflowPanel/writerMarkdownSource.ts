@@ -1,5 +1,5 @@
 import MarkdownIt from 'markdown-it';
-import { diffChars } from 'diff';
+import { diffChars, diffLines, type Change } from 'diff';
 import { markdownBlockText, markdownTextBlocks } from './artifactRewriteSelection';
 const parser = new MarkdownIt({ html: true, linkify: true });
 interface Token { type: string; content: string; map?: [number, number]; level: number; children?: Token[] }
@@ -142,9 +142,7 @@ export function markdownSelectionRange(source: string, selection: {
 
 interface SourceEdit { from: number; to: number; value: string }
 
-function sourceEdits(before: string, after: string): SourceEdit[] | undefined {
-  const changes = diffChars(before, after, { timeout: 100 });
-  if (!changes) return undefined;
+function changesToEdits(changes: Change[]): SourceEdit[] {
   const edits: SourceEdit[] = [];
   let offset = 0;
   let pending: SourceEdit | undefined;
@@ -160,6 +158,39 @@ function sourceEdits(before: string, after: string): SourceEdit[] | undefined {
   }
   if (pending) edits.push(pending);
   return edits;
+}
+
+function sourceEdits(before: string, after: string): SourceEdit[] {
+  if (before === after) return [];
+  // A whole-document character diff can time out on ordinary README tables.
+  // First anchor unchanged lines, then refine only the changed spans. Never
+  // substitute the normalized export when a mapping cannot be completed.
+  const lines = diffLines(before, after, { timeout: 100 });
+  if (!lines) throw new Error('Markdown source mapping timed out');
+  const refine = (from: number, oldText: string, newText: string): SourceEdit[] => {
+    if (oldText === newText) return [];
+    if (!oldText || !newText) return [{ from, to: from + oldText.length, value: newText }];
+    const changes = diffChars(oldText, newText, { timeout: 100 });
+    if (!changes) throw new Error('Markdown source mapping timed out');
+    return changesToEdits(changes).map(edit => ({ ...edit, from: from + edit.from, to: from + edit.to }));
+  };
+  // Empty lines are separators, not reliable anchors: a removed leading blank
+  // must not pair with a later paragraph break and move text across a user edit.
+  const anchoredLines = lines.flatMap(change => !change.added && !change.removed && !change.value.trim()
+    ? [{ ...change, removed: true }, { ...change, added: true }]
+    : [change]);
+  return changesToEdits(anchoredLines).flatMap(edit => {
+    const oldText = before.slice(edit.from, edit.to);
+    const oldLines = oldText.match(/[^\n]*\n|[^\n]+$/g) ?? [];
+    const newLines = edit.value.match(/[^\n]*\n|[^\n]+$/g) ?? [];
+    if (oldLines.length !== newLines.length) return refine(edit.from, oldText, edit.value);
+    let offset = edit.from;
+    return oldLines.flatMap((line, index) => {
+      const edits = refine(offset, line, newLines[index]);
+      offset += line.length;
+      return edits;
+    });
+  });
 }
 
 function sourceLinkRanges(markdown: string) {
@@ -193,7 +224,6 @@ export function preserveMarkdownSource(original: string, previousExport: string,
   if (!nextExport.trim()) return nextExport;
   const normalized = sourceEdits(original, previousExport);
   const changes = sourceEdits(previousExport, nextExport);
-  if (!normalized || !changes) return nextExport;
   const touches = (start: number, end: number) => changes.some((change) =>
     change.from === change.to ? start < change.from && change.from < end : start < change.to && change.from < end);
   const mapBoundary = (position: number, right: boolean) => {

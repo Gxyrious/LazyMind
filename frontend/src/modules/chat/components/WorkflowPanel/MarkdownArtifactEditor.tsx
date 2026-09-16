@@ -1288,11 +1288,15 @@ export function MarkdownArtifactEditor({
       // Keep typing entirely under MDXEditor's control. Anchor repair belongs
       // at the persistence boundary so pressing Enter never reloads the whole
       // editor merely to restore hidden system metadata.
-      const protectedDraft = numberingUpdate && !dirtyRef.current
+      // Recover the user's source before restoring system anchors. Otherwise
+      // inserted anchor ids look like edits and can invalidate nearby mappings.
+      const numberingOnly = numberingUpdate && !dirtyRef.current;
+      const sourceDraft = numberingOnly
         ? sourceBeforeSave.markdown
-        : protectWriterMarkdownAnchors(sourceBeforeSave.markdown, nextDraft);
-      const savedMarkdown = writerMarkdownForSave(serializedBaselineRef.current === undefined || sourceEditedRef.current ? protectedDraft :
-        preserveMarkdownSource(richSourceRef.current ?? sourceBeforeSave.markdown, serializedBaselineRef.current, protectedDraft));
+        : serializedBaselineRef.current === undefined || sourceEditedRef.current ? nextDraft :
+          preserveMarkdownSource(richSourceRef.current ?? sourceBeforeSave.markdown, serializedBaselineRef.current, nextDraft);
+      const savedMarkdown = writerMarkdownForSave(numberingOnly ? sourceDraft :
+        protectWriterMarkdownAnchors(sourceBeforeSave.markdown, sourceDraft, true, true));
       const result = await onSave(savedMarkdown, revisionBeforeSave, mode, numberingUpdate);
       const savedRevision = typeof result === 'number'
         ? result
@@ -1752,6 +1756,21 @@ export function MarkdownArtifactEditor({
     ? { ...selectionToolbarStyle, ...(maxHeight !== undefined ? { maxHeight } : {}) }
     : undefined;
 
+  let sourcePreview: string | undefined;
+  if (editorMode === 'source') {
+    try {
+      sourcePreview = dirty ? writerMarkdownForSave(preserveMarkdownSource(
+        richSourceRef.current ?? anchorSourceMarkdown,
+        serializedBaselineRef.current ?? draftMarkdown,
+        draftMarkdown,
+      )) : anchorSourceMarkdown;
+    } catch {
+      // Keep the rich draft mounted and recoverable if safe source mapping fails.
+      // The save path reports the failure and offers retry without writing it back.
+      sourcePreview = undefined;
+    }
+  }
+
   return (
     <section
       className={`writer-markdown-editor writer-markdown-editor--width-${pageWidth}${
@@ -2143,12 +2162,11 @@ export function MarkdownArtifactEditor({
               </button>}
             </WriterDocumentOptions>
           </div>
-          {editorMode === 'source' && <textarea className='writer-source-input' aria-label={t('chat.writerSource.source')} readOnly
-            value={dirty ? writerMarkdownForSave(preserveMarkdownSource(
-              richSourceRef.current ?? anchorSourceMarkdown,
-              serializedBaselineRef.current ?? draftMarkdown,
-              draftMarkdown,
-            )) : anchorSourceMarkdown} />}
+          {editorMode === 'source' && (sourcePreview === undefined
+            ? <div className='writer-markdown-editor__notice writer-markdown-editor__notice--error' role='alert'>
+              {t('chat.writerMarkdown.saveFailed')}
+            </div>
+            : <textarea className='writer-source-input' aria-label={t('chat.writerSource.source')} readOnly value={sourcePreview} />)}
           {renderErrorSource !== undefined ? (
             <div
               className='writer-markdown-editor__parse-fallback'
@@ -2178,7 +2196,9 @@ export function MarkdownArtifactEditor({
               writerListNumberingPlugin(),
               quotePlugin(),
               thematicBreakPlugin(),
-              linkPlugin(),
+              // Auto-link transforms run after the import baseline and otherwise
+              // turn untouched bare URLs into apparent user edits on first input.
+              linkPlugin({ disableAutoLink: true }),
               linkDialogPlugin(),
               tablePlugin(),
               frontmatterPlugin(),

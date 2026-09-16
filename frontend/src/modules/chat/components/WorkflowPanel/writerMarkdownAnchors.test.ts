@@ -15,6 +15,20 @@ import {
 } from './writerMarkdownAnchors';
 
 describe('Writer Markdown system anchors', () => {
+  it('preserves source whitespace and mixed line endings when adding navigation anchors', () => {
+    const source = '# Title\r\n\r\n\r\n## Section\n\n\n![Image](image.png)\r\n\r\n';
+    const saved = writerMarkdownForSave(protectWriterMarkdownHeadingAnchors(source, source, true, true));
+    expect(saved).toContain('<a id="block-user-');
+    expect(saved.replace(/^<a id="block-user-[^"]+"><\/a>\r?\n/gm, '')).toBe(source);
+    expect(writerMarkdownForSave(protectWriterMarkdownHeadingAnchors(saved, saved, true, true))).toBe(saved);
+  });
+
+  it('keeps CRLF frontmatter and the numbering sidecar in source-preserving saves', () => {
+    const source = '---\r\ntitle: Test\r\n---\r\n<!-- heading-numbering: {"ordered_style":"chinese"} -->\r\n# Title\r\n\r\n<a id="block-sec-1"></a>\r\n## Section\r\n';
+    const saved = writerMarkdownForSave(protectWriterMarkdownHeadingAnchors(source, source, true, true));
+    expect(saved).toBe(source);
+  });
+
   it.each(['#', '##', '###', '####', '#####', '######'])('preserves %s numbering when its text is cleared and retyped', (prefix) => {
     const source = `<a id="block-sec-1" numbering="restart"></a>\n${prefix} 1 章节\n\n<a id="block-sec-2"></a>\n## 后续章节`;
     const cleared = `${prefix}\n\n## 后续章节`;
