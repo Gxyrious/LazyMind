@@ -2240,13 +2240,13 @@ export function WorkflowPanel({
                                 onClick: () => { if (action.flushBeforeAction) void runFooterAction(option.onClick, action.flushKey); else option.onClick(); },
                                 icon: action.selectedMenuKey
                                   ? <span className='workflow-panel__format-radio' aria-hidden='true' />
-                                  : undefined,
+                                  : option.icon,
                               })),
                             }}
                             trigger={['click']}
                             disabled={actionPending || action.disabled}
                           >
-                            <button type='button' className='workflow-panel__action-btn workflow-panel__action-btn--secondary'
+                            <button type='button' className={`workflow-panel__action-btn workflow-panel__action-btn--${action.tone ?? 'secondary'}`}
                               disabled={actionPending || action.disabled} aria-label={action.menuLabel ?? t('chat.writerCopy.chooseFormat')}>
                               <DownOutlined />
                             </button>

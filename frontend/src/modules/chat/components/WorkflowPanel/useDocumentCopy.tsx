@@ -85,7 +85,7 @@ export function useDocumentCopy({
       }
     };
     return registerFooterAction(`${editingKey}:copy`, {
-      label: busy ? t('chat.writerLocal.preparing') : copied ? `${t('chat.writerCopy.success')} ${t(`chat.writerCopy.${format}`)}` : t('chat.writerCopy.copyAs', { format: t(`chat.writerCopy.${format}`) }),
+      label: busy ? t('chat.writerLocal.preparing') : copied ? t('chat.writerCopy.success') : t('chat.writerCopy.copyContent'),
       statusText: pendingReview ? t('chat.writerLocal.pendingSuggestions') : undefined,
       dedupKey: sourceKey ? JSON.stringify(['copy', sessionId, sourceKey]) : undefined,
       icon: 'copy',

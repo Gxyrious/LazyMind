@@ -10,13 +10,16 @@ import {
   realmPlugin,
   type MDXEditorMethods,
 } from '@mdxeditor/editor';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
   $getRoot,
   $isElementNode,
   $isTextNode,
+  COMMAND_PRIORITY_LOW,
   CONTROLLED_TEXT_INSERTION_COMMAND,
   DELETE_CHARACTER_COMMAND,
+  DELETE_LINE_COMMAND,
+  DELETE_WORD_COMMAND,
   INSERT_PARAGRAPH_COMMAND,
   type LexicalEditor,
 } from 'lexical';
@@ -72,12 +75,61 @@ describe('Writer Markdown real MDXEditor round trip', () => {
       editor.dispatchCommand(DELETE_CHARACTER_COMMAND, true);
     });
     await waitFor(() => expect(container.querySelector(`h${level}`)?.textContent).toBe(''));
-    act(() => { editor.dispatchCommand(DELETE_CHARACTER_COMMAND, true); });
-    expect(container.querySelector(`h${level}`)).not.toBeNull();
     act(() => { editor.dispatchCommand(CONTROLLED_TEXT_INSERTION_COMMAND, 'New title'); });
     await waitFor(() => expect(container.querySelector(`h${level}`)?.textContent).toBe('New title'));
     act(() => { editor.dispatchCommand(INSERT_PARAGRAPH_COMMAND, undefined); });
     await waitFor(() => expect(container.querySelectorAll('p')).toHaveLength(2));
+  });
+
+  it.each([1, 2, 3, 4, 5, 6])('passes further Backspace in an empty H%i to normal deletion', async (level) => {
+    let editor!: LexicalEditor;
+    const { container } = render(<MDXEditor
+      markdown={`${'#'.repeat(level)} Title\n\nBody`}
+      plugins={[headingsPlugin(), writerEmptyHeadingPlugin(),
+        captureEditorPlugin({ onEditor: (value) => { editor = value; } })]} />);
+    await waitFor(() => expect(editor).toBeDefined());
+    act(() => {
+      editor.update(() => {
+        const heading = $getRoot().getFirstChild();
+        const text = $isElementNode(heading) ? heading.getFirstChild() : null;
+        if (!$isTextNode(text)) throw new Error('Expected heading text');
+        text.select(0, text.getTextContentSize());
+      }, { discrete: true });
+      editor.dispatchCommand(DELETE_CHARACTER_COMMAND, true);
+    });
+    await waitFor(() => expect(container.querySelector(`h${level}`)?.textContent).toBe(''));
+    // Observe command fallthrough: jsdom cannot perform native Selection.modify.
+    // The real browser covers deleting the block and continuing in the preceding paragraph.
+    const normalDeletion = vi.fn(() => true);
+    const unregister = editor.registerCommand(DELETE_CHARACTER_COMMAND, normalDeletion, COMMAND_PRIORITY_LOW);
+    act(() => { editor.dispatchCommand(DELETE_CHARACTER_COMMAND, true); });
+    expect(normalDeletion).toHaveBeenCalledOnce();
+    unregister();
+  });
+
+  it.each([
+    ['Backspace', DELETE_CHARACTER_COMMAND, true],
+    ['Delete', DELETE_CHARACTER_COMMAND, false],
+    ['word deletion', DELETE_WORD_COMMAND, true],
+    ['line deletion', DELETE_LINE_COMMAND, true],
+  ] as const)('does not swallow %s in a saved empty trailing heading', async (_label, command, backward) => {
+    let editor!: LexicalEditor;
+    render(<MDXEditor markdown={'Previous paragraph\n\n##'}
+      plugins={[headingsPlugin(), writerEmptyHeadingPlugin(),
+        captureEditorPlugin({ onEditor: (value) => { editor = value; } })]} />);
+    await waitFor(() => expect(editor).toBeDefined());
+    const normalDeletion = vi.fn(() => true);
+    const unregister = editor.registerCommand(command, normalDeletion, COMMAND_PRIORITY_LOW);
+    act(() => {
+      editor.update(() => {
+        const heading = $getRoot().getLastChild();
+        if (!$isElementNode(heading)) throw new Error('Expected heading');
+        heading.selectEnd();
+      }, { discrete: true });
+      editor.dispatchCommand(command, backward);
+    });
+    expect(normalDeletion).toHaveBeenCalledOnce();
+    unregister();
   });
 
   it('round-trips empty headings with their original level and numbering metadata', async () => {

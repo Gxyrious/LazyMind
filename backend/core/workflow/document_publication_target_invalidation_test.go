@@ -107,3 +107,35 @@ func TestOrdinaryTargetMutationStillInvalidatesWriterProducer(t *testing.T) {
 		})
 	}
 }
+
+func TestGitHubPublicationTargetSyncPreservesCompletedConsumers(t *testing.T) {
+	for _, liveAttempt := range []string{"", "writer-producer", "other-target-consumer"} {
+		t.Run("live="+liveAttempt, func(t *testing.T) {
+			f, in := publicationTargetFixture(t, "writer-producer")
+			in.Provider = "github"
+			op := preparePublication(t, f, in)
+			mustPublicationErrorNil(t, ClaimDocumentPublicationWrite(t.Context(), f.db.DB, "owner", op.ID))
+			receipt := publicationReceipt()
+			receipt.Provider = "github"
+			receipt.TargetDocument = json.RawMessage(`{"adapter":"github","uri":"github://fixture/repo/note.md","meta":{"pull_request_url":"https://github.com/fixture/repo/pull/1"}}`)
+			mustPublicationErrorNil(t, ConfirmDocumentPublication(t.Context(), f.db.DB, "owner", op.ID, receipt))
+			if liveAttempt != "" {
+				mustPublicationUpdate(t, f.db.Model(&orm.WorkflowSessionStep{}).Where("id = ?", liveAttempt).Update("status", StepStatusRunning))
+			}
+			artifacts, rows := publicationArtifacts(t, f), publicationRows(t, f)
+			result, err := FinalizeDocumentPublication(t.Context(), f.db.DB, "owner", op.ID)
+			if liveAttempt != "" {
+				if result != nil || !errors.Is(err, ErrArtifactInUse) {
+					t.Fatalf("GitHub sync accepted live consumer: result=%#v err=%v", result, err)
+				}
+				requirePublicationUnchanged(t, f, artifacts, rows)
+				return
+			}
+			mustPublicationErrorNil(t, err)
+			requireRevisionState(t, artifactDependencyFixture{db: f.db}, result.ID, "effective", true)
+			requireRevisionState(t, artifactDependencyFixture{db: f.db}, "other-target-output", "effective", true)
+			requireAttemptValidity(t, artifactDependencyFixture{db: f.db}, "writer-producer", "effective")
+			requireAttemptValidity(t, artifactDependencyFixture{db: f.db}, "other-target-consumer", "effective")
+		})
+	}
+}

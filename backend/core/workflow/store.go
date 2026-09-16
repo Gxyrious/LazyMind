@@ -1314,7 +1314,7 @@ func WriteSlotRevisionWithHumanArtifact(
 	changeSource string,
 	expectedRevision *int, expectedDraftVersion *int64,
 ) (*orm.WorkflowSlotRevision, error) {
-	return writeSlotRevisionWithHumanArtifact(ctx, db, sessionID, slotID, artifactKey, stepID, attempt, cardinality, listIndex, contentType, value, caption, changeSource, expectedRevision, expectedDraftVersion, nil)
+	return writeSlotRevisionWithHumanArtifact(ctx, db, sessionID, slotID, artifactKey, stepID, attempt, cardinality, listIndex, contentType, value, caption, changeSource, expectedRevision, expectedDraftVersion, false, nil)
 }
 
 func writeSlotRevisionWithHumanArtifact(
@@ -1324,6 +1324,7 @@ func writeSlotRevisionWithHumanArtifact(
 	contentType string, value json.RawMessage, caption *string,
 	changeSource string,
 	expectedRevision *int, expectedDraftVersion *int64,
+	preserveConsumers bool,
 	preservedProducer *orm.WorkflowSlotRevision,
 ) (*orm.WorkflowSlotRevision, error) {
 
@@ -1412,7 +1413,9 @@ func writeSlotRevisionWithHumanArtifact(
 		if err != nil {
 			return err
 		}
-		if preservedProducer == nil {
+		if preserveConsumers && slotID == "target_document" && changeSource == "provider_sync" {
+			err = artifactgraph.CheckConsumers(ctx, tx, sessionID, replacedRevisionIDs...)
+		} else if preservedProducer == nil {
 			err = artifactgraph.InvalidateConsumers(ctx, tx, sessionID, replacedRevisionIDs...)
 		} else {
 			err = artifactgraph.InvalidateConsumersPreservingProducer(ctx, tx, sessionID, *preservedProducer, replacedRevisionIDs...)
