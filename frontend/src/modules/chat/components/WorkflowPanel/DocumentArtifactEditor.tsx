@@ -1,5 +1,6 @@
 import { useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { Modal } from 'antd';
+import { ExclamationCircleOutlined, ExportOutlined, LockOutlined, ReloadOutlined } from '@ant-design/icons';
 import type { DocumentProvider, DocumentPublishRequest, DocumentNumberingResult, DocumentConvertResult } from '@/api/generated/core-client';
 import { useWorkflowStore, type SlotRevision } from '@/modules/chat/store/workflowPanel';
 import { WorkflowSessionApi, type RewriteSelectionPreview, type WriterNumberingState, type WriterNumberingUpdate } from '@/modules/chat/utils/request';
@@ -47,7 +48,14 @@ export function DocumentArtifactEditor({ slot, sessionId, readOnly, onRefresh }:
   const external = useRef(initial);
   const dirty = useRef(false);
   const seen = useRef('');
+  const retainedPublicationSource = useRef<unknown>();
+  const publicationBaseline = useRef<Baseline>();
+  const incomingValue = useRef(initial.value);
+  incomingValue.current = initial.value;
+  const carrier = initial.value as { path?: string; url?: string } | null;
+  const sourceUrl = carrier && typeof carrier === 'object' ? carrier.url || carrier.path : undefined;
   const [value, setValue] = useState<unknown>(initial.value);
+  const representation = typeof value === 'string' ? 'markdown' : isWriterDocument(value) ? 'ir' : descriptor.representation;
   const [version, setVersion] = useState(initial.revision);
   const [loaded, setLoaded] = useState(false);
   const [providers, setProviders] = useState<DocumentProvider[]>([]);
@@ -88,7 +96,7 @@ export function DocumentArtifactEditor({ slot, sessionId, readOnly, onRefresh }:
   });
   const mediaKey = JSON.stringify([sessionId, slot.artifact_id, slot.revision, slot.draft_version, writerSlot, mediaRevision]);
   const [media, setMedia] = useState<{ key: string; urls?: Record<string, string> }>();
-  const mediaUrls = media?.key === mediaKey ? media.urls : undefined;
+  const mediaUrls = media?.key === mediaKey || retainedPublicationSource.current !== undefined ? media?.urls : undefined;
   const latestMediaUrls = useRef(mediaUrls);
   latestMediaUrls.current = mediaUrls;
   const resolveImageUrl = useCallback(async (url: string) => {
@@ -116,26 +124,35 @@ export function DocumentArtifactEditor({ slot, sessionId, readOnly, onRefresh }:
   useEffect(() => {
     const signature = JSON.stringify([slot.artifact_id, slot.revision, slot.draft_version]);
     if (seen.current === signature) return;
-    seen.current = signature;
     let canceled = false;
     async function load() {
-      let content = unwrap(slot.artifact_value);
-      if (content && typeof content === 'object' && ('path' in content || 'url' in content)) {
-        const carrier = content as { path?: string; url?: string };
-        const response = await fetch(resolveCoreAssetUrl(carrier.url || carrier.path || ''), { credentials: 'same-origin' });
+      let content = incomingValue.current;
+      if (sourceUrl) {
+        const response = await fetch(resolveCoreAssetUrl(sourceUrl), { credentials: 'same-origin' });
         if (!response.ok) throw new Error('document read failed');
         const text = await response.text();
         content = descriptor.representation === 'ir' ? unwrap(JSON.parse(text)) : text;
       }
       if (canceled) return;
+      seen.current = signature;
       const next = { id: slot.artifact_id!, revision: slot.revision, draft: slot.draft_version, value: content };
+      const published = publicationBaseline.current;
+      // A slow publication refresh can arrive after the follow-up local save.
+      if (published && next.id === published.id && next.revision === published.revision
+        && next.draft === published.draft && latest.current.revision > next.revision) return;
+      if (next.id === latest.current.id && next.revision === latest.current.revision && next.draft === latest.current.draft) {
+        publicationBaseline.current = undefined;
+      }
       external.current = next;
       if (!dirty.current) { latest.current = next; draftContent.current = content; }
+      // A publication refresh must not replace the editor holding newer local edits.
+      if (dirty.current && (retainedPublicationSource.current !== undefined || publishPending.current)
+        && typeof content !== typeof draftContent.current) return;
       setValue(content); setVersion(next.revision); setLoaded(true);
     }
     void load().catch(() => { if (!canceled) setError(String(i18n.t('chat.writerIR.saveFailed'))); });
     return () => { canceled = true; };
-  }, [slot.artifact_id, slot.revision, slot.draft_version, slot.artifact_value, descriptor.representation]);
+  }, [slot.artifact_id, slot.revision, slot.draft_version, sourceUrl, descriptor.representation]);
 
   useEffect(() => {
     if (!descriptor.capabilities.includes('publish_document') || !writable) return;
@@ -151,21 +168,30 @@ export function DocumentArtifactEditor({ slot, sessionId, readOnly, onRefresh }:
     const next = { id, revision, draft, value: content };
     latest.current = next; external.current = next;
     if (!newerEdits) { dirty.current = false; draftContent.current = content; }
-    setValue(content); setVersion(revision);
+    retainedPublicationSource.current = newerEdits && typeof submitted !== typeof content ? submitted : undefined;
+    setValue(retainedPublicationSource.current ?? content); setVersion(revision);
   }, []);
   const edit = useCallback((content: unknown) => {
     draftContent.current = content;
-    dirty.current = JSON.stringify(content) !== JSON.stringify(external.current.value);
-    if (!dirty.current) latest.current = external.current;
+    dirty.current = JSON.stringify(content) !== JSON.stringify(retainedPublicationSource.current ?? external.current.value);
+    if (!dirty.current) {
+      latest.current = external.current;
+      if (retainedPublicationSource.current !== undefined) {
+        retainedPublicationSource.current = undefined;
+        draftContent.current = external.current.value;
+        setValue(external.current.value);
+      }
+    }
   }, []);
   const save = useCallback(async (content: unknown, base: number, mode: MarkdownSaveMode | WriterIRSaveMode = 'checkpoint', numbering?: WriterNumberingUpdate) => {
     const current = latest.current;
-    const artifact = descriptor.representation === 'ir'
+    const ir = isWriterDocument(content);
+    const artifact = ir
       ? { schema: 'application/vnd.lazymind.writer+json', data: content }
-      : { text: content };
+      : { text: content, ...(isWriterDocument(current.value) ? { schema: 'text/markdown' } : {}) };
     const response = await WorkflowSessionApi().saveDocumentArtifact(current.id, {
       base_revision: base, base_draft_version: current.draft, mode,
-      numbering_update: numbering, content_type: descriptor.representation === 'ir' ? 'json' : 'text/markdown', value: artifact, command_id: key(),
+      numbering_update: numbering, content_type: ir ? 'json' : 'text/markdown', value: artifact, command_id: key(),
     }, { silentError: true } as never);
     const result = response.data.result;
     if (!response.data.ok || !result?.artifact_id || typeof result.revision !== 'number' || typeof result.draft_version !== 'number') throw new Error('invalid save response');
@@ -173,7 +199,7 @@ export function DocumentArtifactEditor({ slot, sessionId, readOnly, onRefresh }:
     attempt.current = undefined;
     onRefresh?.();
     return latest.current;
-  }, [accept, descriptor.representation, onRefresh]);
+  }, [accept, onRefresh]);
 
   useEffect(() => {
     if (!loaded || !descriptor.capabilities.includes('numbering')) return;
@@ -254,6 +280,7 @@ export function DocumentArtifactEditor({ slot, sessionId, readOnly, onRefresh }:
       const result = response.data.data;
       if (!result.provider_synced || !result.artifact_saved || !result.artifact_id) throw new Error('publication did not complete');
       accept(result.artifact_id, result.revision, result.draft_version, result.document, current.value);
+      publicationBaseline.current = latest.current;
       setPublicationUrl(documentPublicationUrl(result.target_document?.uri));
       setPublicationStatus(String(i18n.t(dirty.current ? 'chat.writerLocal.publishedWithEdits' : 'chat.writerIR.writeBackSuccess')));
       attempt.current = undefined; onRefresh?.();
@@ -306,15 +333,15 @@ export function DocumentArtifactEditor({ slot, sessionId, readOnly, onRefresh }:
         label: [providerLabel(provider.id), authorizationStatus(provider.id)].filter(Boolean).join(' · '),
         icon: <span className='workflow-panel__provider-icon' aria-hidden='true'><WriterProviderIcon provider={provider.id} /></span>,
         onClick: () => chooseRef.current(provider.id) })) : undefined,
-      statusText: error || publicationStatus || (providers.length === 1 && preferred ? authorizationStatus(preferred) : undefined), statusTone: error ? 'error' : 'success',
+      statusText: error && authorizationNeeded ? undefined : error || publicationStatus || (providers.length === 1 && preferred ? authorizationStatus(preferred) : undefined), statusTone: error ? 'error' : 'success',
       statusLink: publicationUrl ? { href: publicationUrl, label: String(i18n.t('chat.writerIR.openCloudDocument')) } : undefined,
     });
-  }, [active, writable, descriptor.capabilities, registerFooterAction, editingKey, loaded, providers, busy, publicationBlocked, error, publicationStatus, publicationUrl, slot.provider, slot.write_back_ready, availability.states]);
+  }, [active, writable, descriptor.capabilities, registerFooterAction, editingKey, loaded, providers, busy, publicationBlocked, error, authorizationNeeded, publicationStatus, publicationUrl, slot.provider, slot.write_back_ready, availability.states]);
 
   if (!loaded) return <div role='status'>{error || '…'}</div>;
   return <div className='workflow-slot workflow-slot--artifact'>
-    <div className={`workflow-slot__artifact-body${descriptor.representation === 'markdown' ? ' workflow-slot__artifact-body--markdown' : ''}`}>
-    {descriptor.representation === 'markdown' && typeof value === 'string'
+    <div className={`workflow-slot__artifact-body${representation === 'markdown' ? ' workflow-slot__artifact-body--markdown' : ''}`}>
+    {representation === 'markdown' && typeof value === 'string'
       ? <MarkdownArtifactEditor renderContext={descriptor.render_context} markdown={value} sourceRevision={version} editingKey={editingKey} readOnly={!writable} savePaused={busy} allowMultipleParagraphs
         resolveImageUrl={resolveImageUrl} onContentChange={edit} numbering={numbering}
         onRewriteSelection={canRewrite ? (picked) => { if (picked.supported) setSelection({ type: 'markdown', selected_text: picked.text, selectedText: picked.text, paragraph: picked.paragraph, paragraphs: picked.paragraphSelections?.map(item => item.paragraph), startOffset: picked.startOffset, sourceRange: picked.sourceRange, sourceRanges: picked.sourceRanges, anchor: picked.anchor }); } : undefined}
@@ -334,9 +361,17 @@ export function DocumentArtifactEditor({ slot, sessionId, readOnly, onRefresh }:
           return { document: saved.value as WriterDocument, sourceRevision: saved.revision, draftVersion: saved.draft };
         }} /> : <div role='alert'>{String(i18n.t('chat.writerIR.saveFailed'))}</div>}
     </div>
-    {error && <div role='alert'>{error}
-      {authorizationNeeded && <a href='/cloud-documents' target='_blank' rel='noreferrer'>{String(i18n.t('chat.writerLocal.settings'))}</a>}
-      {errorAction && <button type='button' onClick={() => { if (errorAction === 'download') retryDownload.current?.(); else { setError(''); setProviderRefresh(value => value + 1); void availability.refresh(); } }}>{String(i18n.t('common.retry'))}</button>}
+    {error && <div className={`workflow-document-notice${authorizationNeeded ? ' workflow-document-notice--authorization' : ''}`} role='alert'>
+      <span className='workflow-document-notice__icon' aria-hidden='true'>{authorizationNeeded ? <LockOutlined /> : <ExclamationCircleOutlined />}</span>
+      <span className='workflow-document-notice__message'>{error}</span>
+      {(authorizationNeeded || errorAction) && <div className='workflow-document-notice__actions'>
+        {authorizationNeeded && <a className='workflow-document-notice__action workflow-document-notice__action--settings' href='/cloud-documents' target='_blank' rel='noreferrer'>
+          {String(i18n.t('chat.writerLocal.settings'))}<ExportOutlined aria-hidden='true' />
+        </a>}
+        {errorAction && <button className='workflow-document-notice__action' type='button' onClick={() => { if (errorAction === 'download') retryDownload.current?.(); else { setError(''); setProviderRefresh(value => value + 1); void availability.refresh(); } }}>
+          <ReloadOutlined aria-hidden='true' />{String(i18n.t('common.retry'))}
+        </button>}
+      </div>}
     </div>}
     {descriptor.capabilities.includes('publish_document') && <DocumentPublicationRecoveryPanel key={slot.artifact_id} artifactId={slot.artifact_id!} slotId={slot.slot_id} itemIndex={slot.list_index ?? -1}
       refreshKey={publicationRefresh} publishing={busy} readOnly={readOnly} canApplyLocal={()=>!dirty.current} onAvailability={publicationAvailable} onResolved={publicationResolved} onPublished={writable ? publicationSucceeded : undefined} onTarget={writable ? setPublicationUrl : undefined} />}

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -88,6 +88,7 @@ vi.mock('./ArtifactRewriteSelectionHighlight', () => ({
 }));
 
 import { WriterIRDocumentEditor } from './WriterIRDocumentEditor';
+import * as imageUrl from '@/modules/knowledge/utils/imageUrl';
 import {
   getWriterInternalReference,
   type WriterDocument,
@@ -341,6 +342,42 @@ afterEach(() => {
   restoreProperty(HTMLElement.prototype, 'scrollIntoView', originalScrollIntoView);
   window.getSelection()?.removeAllRanges();
   vi.restoreAllMocks();
+});
+
+describe('WriterIRDocumentEditor image previews', () => {
+  it.each(['before', 'after'] as const)('keeps images visible when the first URL resolves %s numbering arrives', async (timing) => {
+    let resolveFirst!: (url: string) => void;
+    vi.spyOn(imageUrl, 'resolveMarkdownImageUrlAsync')
+      .mockImplementationOnce(() => new Promise<string>((resolve) => { resolveFirst = resolve; }))
+      .mockResolvedValue('/static-files/test-image.png?version=2');
+    const imageDocument: WriterDocument = {
+      ...document,
+      blocks: [...document.blocks, {
+        node_id: 'image-preview', type: 'image', content: 'Test image',
+        references: [{ type: 'media_asset', id: 'test-image', path: '/var/lib/lazymind/uploads/test-image.png' }],
+      }],
+    };
+    const onChange = vi.fn();
+    const props = { document: imageDocument, ariaLabel: 'Writer document', onChange, onFocus: vi.fn(), onBlur: vi.fn() };
+    const { container, rerender, unmount } = render(<WriterIRDocumentEditor {...props} />);
+    const firstImage = container.querySelector('img')!;
+    if (timing === 'before') {
+      await act(async () => { resolveFirst('/static-files/test-image.png?version=1'); });
+      expect(firstImage).toHaveAttribute('src', '/static-files/test-image.png?version=1');
+    }
+
+    rerender(<WriterIRDocumentEditor {...props} numbering={{ entries: { 'sec-1': { label: '1.' } } }} />);
+    await waitFor(() => {
+      expect(container.querySelector('img')).toHaveAttribute('src', '/static-files/test-image.png?version=2');
+    });
+    if (timing === 'after') {
+      await act(async () => { resolveFirst('/static-files/test-image.png?version=1'); });
+      expect(firstImage).not.toHaveAttribute('src');
+      expect(container.querySelector('img')).toHaveAttribute('src', '/static-files/test-image.png?version=2');
+    }
+    expect(onChange).not.toHaveBeenCalled();
+    unmount();
+  });
 });
 
 describe('WriterIRDocumentEditor numbering sidecar', () => {
