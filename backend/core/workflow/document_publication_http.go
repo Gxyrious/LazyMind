@@ -551,7 +551,7 @@ func ReadDocumentPublication(w http.ResponseWriter, r *http.Request) {
 		replyPublicationResult(w, nil, nil, publicationFailure(err))
 		return
 	}
-	common.ReplyOK(w, publicationStatus(op, time.Now()))
+	common.ReplyOK(w, publicationStatusForRead(r.Context(), op))
 }
 func CancelDocumentPublicationHTTP(w http.ResponseWriter, r *http.Request) {
 	owner, ok := publicationHTTPIdentity(w, r)

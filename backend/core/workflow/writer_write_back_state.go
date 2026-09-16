@@ -194,6 +194,12 @@ func applyWriterProviderBinding(info *writerWriteBackInfo, binding writerProvide
 		url = binding.URI
 	}
 	info.URL = writerProviderURL(binding.Provider, url)
+	if info.URL == "" {
+		info.URL = writerInternalTargetURL(canonicalWriterWriteBackProvider(binding.Provider), binding.URI, binding.DocumentID)
+	}
+	if canonicalWriterWriteBackProvider(binding.Provider) == "obsidian" {
+		info.URL = obsidianOpenURL(binding.LocalPath)
+	}
 }
 
 func writerRevisionPointer(revision int) *int {
@@ -400,10 +406,16 @@ func writerProviderSupported(provider string) bool {
 }
 
 func writerProviderURL(provider, uri string) string {
+	provider = canonicalWriterWriteBackProvider(provider)
+	if internal := writerInternalTargetURL(provider, uri, ""); internal != "" {
+		return internal
+	}
+	if provider == "wechat" && wechatDraftURL(uri) {
+		return uri
+	}
 	if !strings.HasPrefix(uri, "https://") {
 		return ""
 	}
-	provider = canonicalWriterWriteBackProvider(provider)
 	host := strings.ToLower(strings.Split(strings.TrimPrefix(uri, "https://"), "/")[0])
 	valid := false
 	switch provider {
@@ -417,7 +429,7 @@ func writerProviderURL(provider, uri string) string {
 	case "github":
 		valid = host == "github.com" || host == "www.github.com"
 	case "wechat":
-		valid = host == "mp.weixin.qq.com"
+		valid = wechatDraftURL(uri)
 	}
 	if valid {
 		return uri

@@ -1314,6 +1314,18 @@ func WriteSlotRevisionWithHumanArtifact(
 	changeSource string,
 	expectedRevision *int, expectedDraftVersion *int64,
 ) (*orm.WorkflowSlotRevision, error) {
+	return writeSlotRevisionWithHumanArtifact(ctx, db, sessionID, slotID, artifactKey, stepID, attempt, cardinality, listIndex, contentType, value, caption, changeSource, expectedRevision, expectedDraftVersion, nil)
+}
+
+func writeSlotRevisionWithHumanArtifact(
+	ctx context.Context, db *gorm.DB,
+	sessionID, slotID, artifactKey, stepID string, attempt int,
+	cardinality string, listIndex *int,
+	contentType string, value json.RawMessage, caption *string,
+	changeSource string,
+	expectedRevision *int, expectedDraftVersion *int64,
+	preservedProducer *orm.WorkflowSlotRevision,
+) (*orm.WorkflowSlotRevision, error) {
 
 	if changeSource == "" {
 		changeSource = "human"
@@ -1400,7 +1412,12 @@ func WriteSlotRevisionWithHumanArtifact(
 		if err != nil {
 			return err
 		}
-		if err := artifactgraph.InvalidateConsumers(ctx, tx, sessionID, replacedRevisionIDs...); err != nil {
+		if preservedProducer == nil {
+			err = artifactgraph.InvalidateConsumers(ctx, tx, sessionID, replacedRevisionIDs...)
+		} else {
+			err = artifactgraph.InvalidateConsumersPreservingProducer(ctx, tx, sessionID, *preservedProducer, replacedRevisionIDs...)
+		}
+		if err != nil {
 			return err
 		}
 		if err := tx.Create(humanArt).Error; err != nil {

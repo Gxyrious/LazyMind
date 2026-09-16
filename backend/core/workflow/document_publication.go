@@ -506,7 +506,7 @@ func FinalizeDocumentPublication(ctx context.Context, db *gorm.DB, owner, id str
 		if op.SharedTarget {
 			if !receipt.NoLocalChange {
 				envelope, _ := json.Marshal(map[string]any{"schema": "lazyllm.tools.writer.data_models.task.TargetDocument", "data": receipt.TargetDocument})
-				if _, err := WriteSlotRevisionWithHumanArtifact(ctx, tx, op.SessionID, "target_document", "target_document", current.StepID, current.Attempt, "single", nil, "json", envelope, nil, "provider_sync", nil, nil); err != nil {
+				if _, err := writeSlotRevisionWithHumanArtifact(ctx, tx, op.SessionID, "target_document", "target_document", current.StepID, current.Attempt, "single", nil, "json", envelope, nil, "provider_sync", nil, nil, &current); err != nil {
 					return err
 				}
 			}

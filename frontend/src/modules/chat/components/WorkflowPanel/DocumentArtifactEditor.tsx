@@ -16,7 +16,7 @@ import { useWriterProviderAvailability } from './useWriterProviderAvailability';
 import { documentRewritePreview } from './documentRewritePreview';
 import { documentPublicationErrorMessage } from './documentPublicationError';
 import { DocumentPublicationRecoveryPanel } from './DocumentPublicationRecoveryPanel';
-import { documentPublicationUrl } from './documentPublicationUrl';
+import { documentPublicationTargetUrl } from './documentPublicationUrl';
 
 function unwrap(value: unknown): unknown {
   while (value && typeof value === 'object') {
@@ -66,10 +66,12 @@ export function DocumentArtifactEditor({ slot, sessionId, readOnly, onRefresh }:
   const retryDownload = useRef<() => void>();
   const publishPending = useRef(false);
   const [publicationStatus, setPublicationStatus] = useState('');
-  const [publicationUrl, setPublicationUrl] = useState(() => documentPublicationUrl(slot.write_back_url));
-  const publicationSucceeded = useCallback((url: string | undefined) => {
+  const [publicationUrl, setPublicationUrl] = useState(() => documentPublicationTargetUrl({ uri: slot.write_back_url, doc_id: slot.provider_document_id }, slot.provider));
+  const publicationSucceeded = useCallback((url: string | undefined, provider?: string) => {
     setPublicationUrl(url);
-    setPublicationStatus(current => current || String(i18n.t('chat.writerIR.writeBackSuccess')));
+    setPublicationStatus(current => provider === 'wechat' && !url
+      ? String(i18n.t('chat.writerIR.wechatDraftLinkUnavailable'))
+      : current === String(i18n.t('chat.writerLocal.publishedWithEdits')) ? current : String(i18n.t('chat.writerIR.writeBackSuccess')));
   }, []);
   const [authorizationNeeded, setAuthorizationNeeded] = useState('');
   const [providerRefresh, setProviderRefresh] = useState(0);
@@ -77,7 +79,7 @@ export function DocumentArtifactEditor({ slot, sessionId, readOnly, onRefresh }:
   const previewSource = useRef<Baseline>();
   const attempt = useRef<{ fingerprint: string; body: DocumentPublishRequest; id: string; uncertain: boolean }>();
 
-  useEffect(() => { setPublicationUrl(documentPublicationUrl(slot.write_back_url)); }, [slot.write_back_url]);
+  useEffect(() => { setPublicationUrl(documentPublicationTargetUrl({ uri: slot.write_back_url, doc_id: slot.provider_document_id }, slot.provider)); }, [slot.write_back_url, slot.provider, slot.provider_document_id]);
 
   useEffect(() => {
     const signature = JSON.stringify([slot.artifact_id, slot.revision, slot.draft_version]);
@@ -95,6 +97,8 @@ export function DocumentArtifactEditor({ slot, sessionId, readOnly, onRefresh }:
       }
       if (canceled) return;
       const next = { id: slot.artifact_id!, revision: slot.revision, draft: slot.draft_version, value: content };
+      // A delayed parent refresh must not undo a save or publication we accepted.
+      if (next.revision < latest.current.revision || (next.revision === latest.current.revision && (next.draft ?? 0) < (latest.current.draft ?? 0))) return;
       external.current = next;
       if (!dirty.current) { latest.current = next; draftContent.current = content; }
       setValue(content); setVersion(next.revision); setLoaded(true);
@@ -151,7 +155,8 @@ export function DocumentArtifactEditor({ slot, sessionId, readOnly, onRefresh }:
     return () => { canceled = true; };
   }, [loaded, version, value, descriptor.capabilities]);
   useDocumentCopy({ enabled: loaded, editingKey, sessionId, slotId: slot.slot_id, listIndex: slot.list_index ?? -1,
-    revision: version, document: value as string | WriterDocument, pendingReview: Boolean(preview) });
+    revision: latest.current.revision, draftVersion: latest.current.draft,
+    document: value as string | WriterDocument, pendingReview: Boolean(preview) });
   const beginDownload = async (format: 'markdown' | 'latex' | 'text' | 'lmd', fixed?: { snapshot: unknown; current: Baseline }) => {
     if (downloadPending.current) return;
     downloadPending.current = true; setDownloading(true); setError(''); setErrorAction(null);
@@ -220,7 +225,7 @@ export function DocumentArtifactEditor({ slot, sessionId, readOnly, onRefresh }:
       const result = response.data.data;
       if (!result.provider_synced || !result.artifact_saved || !result.artifact_id) throw new Error('publication did not complete');
       accept(result.artifact_id, result.revision, result.draft_version, result.document, current.value);
-      setPublicationUrl(documentPublicationUrl(result.target_document?.uri));
+      setPublicationUrl(documentPublicationTargetUrl(result.target_document, provider));
       setPublicationStatus(String(i18n.t(dirty.current ? 'chat.writerLocal.publishedWithEdits' : 'chat.writerIR.writeBackSuccess')));
       attempt.current = undefined; onRefresh?.();
     } catch (failure) {
@@ -246,8 +251,7 @@ export function DocumentArtifactEditor({ slot, sessionId, readOnly, onRefresh }:
     setAuthorizationNeeded(''); setError(''); setErrorAction(null);
     try { localStorage.setItem('writer-publish-provider', provider); } catch { /* Storage preferences are optional. */ }
     if (slot.provider === provider && (slot.provider_document_id || slot.write_back_ready)) {
-      const target = slot.write_back_url;
-      const safeTarget = target && /^https?:\/\//i.test(target) ? target : undefined;
+      const safeTarget = documentPublicationTargetUrl({ uri: slot.write_back_url, doc_id: slot.provider_document_id }, slot.provider);
       Modal.confirm({ title: i18n.t('chat.writerLocal.update', { provider: providerLabel(provider) }),
         content: <div>{i18n.t('chat.writerLocal.updateConfirm')}{safeTarget && <p><a href={safeTarget} target='_blank' rel='noreferrer'>{safeTarget}</a></p>}</div>,
         onOk: () => publishRef.current(provider),
@@ -301,7 +305,7 @@ export function DocumentArtifactEditor({ slot, sessionId, readOnly, onRefresh }:
       {authorizationNeeded && <a href='/cloud-documents' target='_blank' rel='noreferrer'>{String(i18n.t('chat.writerLocal.settings'))}</a>}
       {errorAction && <button type='button' onClick={() => { if (errorAction === 'download') retryDownload.current?.(); else { setError(''); setProviderRefresh(value => value + 1); void availability.refresh(); } }}>{String(i18n.t('common.retry'))}</button>}
     </div>}
-    {descriptor.capabilities.includes('publish_document') && <DocumentPublicationRecoveryPanel key={slot.artifact_id} artifactId={slot.artifact_id!} slotId={slot.slot_id} itemIndex={slot.list_index ?? -1}
+    {descriptor.capabilities.includes('publish_document') && <DocumentPublicationRecoveryPanel key={latest.current.id} artifactId={latest.current.id} slotId={slot.slot_id} itemIndex={slot.list_index ?? -1}
       refreshKey={publicationRefresh} publishing={busy} readOnly={readOnly} canApplyLocal={()=>!dirty.current} onAvailability={publicationAvailable} onResolved={publicationResolved} onPublished={writable ? publicationSucceeded : undefined} onTarget={writable ? setPublicationUrl : undefined} />}
     <ArtifactRewriteDialog open={selection !== null} sessionId={sessionId} slotId={slot.slot_id} listIndex={slot.list_index ?? -1}
       baseRevision={latest.current.revision} baseDraftVersion={latest.current.draft} selection={selection}
