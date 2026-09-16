@@ -1320,24 +1320,24 @@ it('does not publish initial editor normalization as a content edit', async () =
   expect(onContentChange.mock.calls.map(([value]) => value)).not.toContain(normalized);
 });
 
-it('keeps intentional whitespace edits made in source mode', async () => {
+it('does not publish attempted edits made in read-only source mode', async () => {
   const onContentChange = vi.fn();
   render(<MarkdownArtifactEditor markdown={'Alpha\n'} sourceRevision={1} onSave={async()=>1} onContentChange={onContentChange} />);
   document.querySelector('details.writer-document-options')?.setAttribute('open', '');
  fireEvent.click(screen.getByRole('button', {name:'chat.writerSource.source'}));
   const input = screen.getByRole('textbox', {name:'chat.writerSource.source'});
+  expect(input).toHaveAttribute('readonly');
   fireEvent.change(input, {target:{value:'\nAlpha\n\n'}});
-  await waitFor(() => expect(onContentChange).toHaveBeenLastCalledWith('\nAlpha\n\n'));
-  expect(input).toHaveValue('\nAlpha\n\n');
+  expect(onContentChange.mock.calls.map(([value]) => value)).not.toContain('\nAlpha\n\n');
 });
 
-it('carries an unsaved source edit into the rich editor when switching views', () => {
+it('ignores source edits when switching back to the rich editor', () => {
  const {container}=render(<MarkdownArtifactEditor markdown='Original paragraph' sourceRevision={1} onSave={async()=>1} />);
  document.querySelector('details.writer-document-options')?.setAttribute('open', '');
  fireEvent.click(screen.getByRole('button',{name:'chat.writerSource.source'}));
  fireEvent.change(screen.getByRole('textbox',{name:'chat.writerSource.source'}),{target:{value:'Changed paragraph'}});
  fireEvent.click(screen.getByRole('button',{name:'chat.writerLocal.backToDocument'}));
- expect(container.querySelector('.writer-markdown-editor__surface')).toHaveAttribute('data-markdown','Changed paragraph');
+ expect(container.querySelector('.writer-markdown-editor__surface')).toHaveAttribute('data-markdown','Original paragraph');
 });
 
 it('preserves source spelling across successive rich-text saves', async () => {

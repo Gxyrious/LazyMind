@@ -331,6 +331,7 @@ export function WriterIRControl({
   const [saveError, setSaveError] = useState<string>();
   const [externalUpdate, setExternalUpdate] = useState(false);
   const [outlineOpen, setOutlineOpen] = useState(false);
+  const [sourceMode, setSourceMode] = useState(false);
 
   const [outlineInstructionsExpanded, setOutlineInstructionsExpanded] = useState(true);
   const [pageWidth, setPageWidth] = useState<WriterIRPageWidth>('default');
@@ -858,6 +859,10 @@ export function WriterIRControl({
       ) return;
       if (!(event.metaKey || event.ctrlKey)) return;
       const key = event.key.toLowerCase();
+      if (event.target instanceof HTMLTextAreaElement && event.target.classList.contains('writer-source-input')) {
+        if (key === 's') event.preventDefault();
+        return;
+      }
       if (key === 's') {
         event.preventDefault();
         requestDraftSave();
@@ -888,6 +893,11 @@ export function WriterIRControl({
     setFuture([]);
     setSaveError(undefined);
   }, []);
+
+  const toggleSourceMode = () => {
+    finishTextEdit();
+    setSourceMode((current) => !current);
+  };
 
   const handleCrossReferenceApplied = useCallback((nextDocument: WriterDocument) => {
     handleDocumentChange(nextDocument);
@@ -990,14 +1000,14 @@ export function WriterIRControl({
 
   return (
     <section
-      className={`writer-ir writer-ir--width-${pageWidth}${outlineOpen ? ' writer-ir--outline-open' : ''}`}
+      className={`writer-ir writer-ir--width-${pageWidth}${sourceMode ? ' writer-ir--source' : outlineOpen ? ' writer-ir--outline-open' : ''}`}
       aria-label={t('chat.writerIR.documentRegion')}
       ref={rootRef}
     >
       <aside
         className='writer-ir__outline-rail'
         id={outlineId}
-        hidden={!outlineOpen}
+        hidden={!outlineOpen || sourceMode}
         onClick={(event) => event.stopPropagation()}
       >
         {outlineOpen && (
@@ -1059,9 +1069,9 @@ export function WriterIRControl({
           </nav>
         )}
       </aside>
-      <div className='writer-ir__main'>
+      <div className={`writer-ir__main${sourceMode ? ' writer-ir__main--source' : ''}`}>
         <div className='writer-document-toolbar'>
-          {!outlineOpen && (
+          {!outlineOpen && !sourceMode && (
             <button
               type='button'
               className='writer-ir__outline-toggle writer-ir__outline-toggle--collapsed'
@@ -1076,7 +1086,7 @@ export function WriterIRControl({
           )}
           <span role='status' aria-live='polite'>{documentReadOnly ? t('chat.writerMarkdown.readOnly') : saveError ? t('chat.writerMarkdown.saveFailed') : savePaused && dirty ? t('chat.writerLocal.publishingPendingSave') : saving ? t(draft !== lastSavedDocumentRef.current ? 'chat.writerIR.savingWithEdits' : 'chat.writerIR.saving') : t(dirty ? 'chat.writerLocal.pendingSave' : 'chat.writerIR.saved')}</span>
           {toolbarActions}
-          <WriterDocumentOptions width={pageWidth} onWidth={setPageWidth}>
+          <WriterDocumentOptions width={pageWidth} onWidth={setPageWidth} sourceMode={sourceMode} onSourceMode={toggleSourceMode}>
             {hasOutlineInstructions && !readOnly && <button type='button' onClick={outlineInstructionsExpanded ? collapseAllOutlineInstructions : expandAllOutlineInstructions}>
               {t(outlineInstructionsExpanded ? 'chat.writerIR.collapseAllOutlineInstructions' : 'chat.writerIR.expandAllOutlineInstructions')}
             </button>}
@@ -1101,7 +1111,15 @@ export function WriterIRControl({
           </div>
         )}
 
-        {documentReadOnly ? (
+        {sourceMode ? (
+          <textarea
+            className='writer-source-input'
+            aria-label={t('chat.writerSource.source')}
+            spellCheck={false}
+            readOnly
+            value={JSON.stringify(draft, null, 2)}
+          />
+        ) : documentReadOnly ? (
           <div className='writer-ir__editor-shell'>
             <article
               className='writer-ir__document'

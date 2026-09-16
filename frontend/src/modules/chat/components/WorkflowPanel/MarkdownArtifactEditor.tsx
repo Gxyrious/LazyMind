@@ -656,7 +656,6 @@ export function MarkdownArtifactEditor({
   const serializedBaselineRef = useRef<string | undefined>(normalizeMarkdownForMdxEditor(markdown).trim());
   const sourceEditedRef = useRef(false);
   const richSourceRef = useRef<string>();
-  const awaitingModeBaselineRef = useRef(false);
   const copySnapshotRef = useRef(markdown);
   const dirtyRef = useRef(false);
   const savingRef = useRef(false);
@@ -731,34 +730,6 @@ export function MarkdownArtifactEditor({
   draftMarkdownRef.current = draftMarkdown;
   savingRef.current = saving;
   conflictRef.current = conflict;
-
-  const changeEditorMode = (mode: 'rich' | 'source') => {
-    if (mode === editorMode) return;
-    try {
-      const current = draftMarkdownRef.current;
-      const canonical = sourceEditedRef.current || serializedBaselineRef.current === undefined
-        ? current
-        : preserveMarkdownSource(richSourceRef.current ?? latestSourceRef.current.markdown, serializedBaselineRef.current, current);
-      richSourceRef.current = canonical;
-      sourceEditedRef.current = mode !== 'rich';
-      awaitingModeBaselineRef.current = mode === 'rich';
-      serializedBaselineRef.current = normalizeMarkdownForMdxEditor(canonical).trim();
-      draftMarkdownRef.current = mode === 'rich' ? normalizeMarkdownForMdxEditor(canonical) : canonical;
-      setDraftMarkdown(draftMarkdownRef.current);
-      setRenderErrorSource(undefined);
-      setEditorMode(mode);
-    } catch { setSaveError(t('chat.writerMarkdown.saveFailed')); }
-  };
-
-  useLayoutEffect(() => {
-    if (editorMode !== 'rich' || !awaitingModeBaselineRef.current) return;
-    queueMicrotask(() => {
-      if (editorRef.current && awaitingModeBaselineRef.current) {
-        serializedBaselineRef.current = editorRef.current.getMarkdown();
-        awaitingModeBaselineRef.current = false;
-      }
-    });
-  }, [editorMode]);
 
   useEffect(() => {
     onContentChange?.(
@@ -1284,7 +1255,6 @@ export function MarkdownArtifactEditor({
     const normalizedMarkdown = normalizeMarkdownForMdxEditor(markdown);
     richSourceRef.current = undefined;
     sourceEditedRef.current = false;
-    awaitingModeBaselineRef.current = false;
     serializedBaselineRef.current = normalizedMarkdown.trim();
     if (normalizedMarkdown !== draftMarkdownRef.current) {
       replaceMarkdownSilently(normalizedMarkdown, true);
@@ -1331,21 +1301,24 @@ export function MarkdownArtifactEditor({
         ? result.markdown
         : savedMarkdown;
       const backendMarkdown = normalizeMarkdownForMdxEditor(persistedMarkdown);
+      // An unchanged save receipt confirms the current editor state. Reimporting
+      // its source can discard transient empty paragraphs and move the caret.
+      const acceptedDraft = persistedMarkdown === savedMarkdown ? nextDraft : backendMarkdown;
       const hasNewerDraft = draftMarkdownRef.current !== nextDraft;
-      setBaseMarkdown(backendMarkdown);
-      // A mode switch during this request may have established a newer source
-      // snapshot. The older response must not replace that editing baseline.
+      setBaseMarkdown(acceptedDraft);
+      // Newer edits may have established a different source snapshot while
+      // this request was pending. Preserve that editing baseline.
       if (!hasNewerDraft || richSourceRef.current === richSourceBeforeSave) {
         richSourceRef.current = undefined;
         serializedBaselineRef.current = persistedMarkdown === savedMarkdown ? nextDraft : backendMarkdown.trim();
       }
       if (!hasNewerDraft) {
         sourceEditedRef.current = false;
-        if (backendMarkdown !== draftMarkdownRef.current) {
-          replaceMarkdownSilently(backendMarkdown, persistedMarkdown !== savedMarkdown);
+        if (acceptedDraft !== draftMarkdownRef.current) {
+          replaceMarkdownSilently(acceptedDraft, persistedMarkdown !== savedMarkdown);
         }
-        draftMarkdownRef.current = backendMarkdown;
-        setDraftMarkdown(backendMarkdown);
+        draftMarkdownRef.current = acceptedDraft;
+        setDraftMarkdown(acceptedDraft);
       }
       setBaseRevision(savedRevision);
       setAnchorSourceMarkdown(persistedMarkdown);
@@ -1443,7 +1416,6 @@ export function MarkdownArtifactEditor({
     const nextMarkdown = normalizeMarkdownForMdxEditor(pendingSource.markdown);
     richSourceRef.current = undefined;
     sourceEditedRef.current = false;
-    awaitingModeBaselineRef.current = false;
     serializedBaselineRef.current = nextMarkdown.trim();
     replaceMarkdownSilently(nextMarkdown, true);
     draftMarkdownRef.current = nextMarkdown;
@@ -1464,8 +1436,7 @@ export function MarkdownArtifactEditor({
 
   const handleMarkdownChange = useCallback((nextDraft: string, initialMarkdownNormalize = false) => {
     if (initialMarkdownNormalize) {
-      if (!dirtyRef.current || awaitingModeBaselineRef.current) serializedBaselineRef.current = nextDraft;
-      awaitingModeBaselineRef.current = false;
+      if (!dirtyRef.current) serializedBaselineRef.current = nextDraft;
       return;
     }
     draftMarkdownRef.current = nextDraft;
@@ -2166,15 +2137,19 @@ export function MarkdownArtifactEditor({
             <span role='status' aria-live='polite'>{readOnly ? t('chat.writerMarkdown.readOnly') : saveError ? t('chat.writerMarkdown.saveFailed') : savePaused && dirty ? t('chat.writerLocal.publishingPendingSave') : saving ? t(draftMarkdown !== savingDraftRef.current ? 'chat.writerIR.savingWithEdits' : 'chat.writerIR.saving') : t(dirty ? 'chat.writerLocal.pendingSave' : 'chat.writerMarkdown.saved')}</span>
             {toolbarActions}
             <WriterDocumentOptions width={pageWidth} onWidth={setPageWidth} sourceMode={editorMode === 'source'}
-              onSourceMode={() => changeEditorMode(editorMode === 'rich' ? 'source' : 'rich')}>
+              onSourceMode={() => setEditorMode(editorMode === 'rich' ? 'source' : 'rich')}>
               {hasOutlineInstructions && <button type='button' onClick={outlineInstructionsExpanded ? collapseAllOutlineInstructions : expandAllOutlineInstructions}>
                 {t(outlineInstructionsExpanded ? 'chat.writerIR.collapseAllOutlineInstructions' : 'chat.writerIR.expandAllOutlineInstructions')}
               </button>}
             </WriterDocumentOptions>
           </div>
-          {editorMode === 'source' ? <textarea className='writer-source-input' aria-label={t('chat.writerSource.source')} readOnly={readOnly}
-                value={dirty ? writerMarkdownForSave(draftMarkdown) : anchorSourceMarkdown} onChange={(event) => { sourceEditedRef.current = true; serializedBaselineRef.current = undefined; handleMarkdownChange(event.target.value); }} />
-            : renderErrorSource !== undefined ? (
+          {editorMode === 'source' && <textarea className='writer-source-input' aria-label={t('chat.writerSource.source')} readOnly
+            value={dirty ? writerMarkdownForSave(preserveMarkdownSource(
+              richSourceRef.current ?? anchorSourceMarkdown,
+              serializedBaselineRef.current ?? draftMarkdown,
+              draftMarkdown,
+            )) : anchorSourceMarkdown} />}
+          {renderErrorSource !== undefined ? (
             <div
               className='writer-markdown-editor__parse-fallback'
               role='alert'
@@ -2182,7 +2157,7 @@ export function MarkdownArtifactEditor({
               <span className='writer-markdown-editor__parse-fallback-message'>
                 {t('chat.writerMarkdown.renderFallback')}
               </span>
-              <button type='button' onClick={() => changeEditorMode('source')}>{t('chat.writerSource.source')}</button>
+              <button type='button' onClick={() => setEditorMode('source')}>{t('chat.writerSource.source')}</button>
               <pre>{renderErrorSource}</pre>
             </div>
           ) : <WriterCodeDisplayContext.Provider value={codeDisplayLanguages}><MDXEditor

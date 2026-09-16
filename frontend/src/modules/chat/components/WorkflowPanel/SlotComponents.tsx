@@ -1,3 +1,4 @@
+import { ArtifactSourceButton } from './ArtifactSourceButton';
 import { WriterProviderChoice } from "./DocumentProviderChoice";
 export { WriterProviderChoice } from "./DocumentProviderChoice";
 import { DocumentArtifactEditor } from "./DocumentArtifactEditor";
@@ -1729,6 +1730,7 @@ export function SlotImage({
       <div className='workflow-slot workflow-slot--image-card-wrap'>
         <div className='workflow-slot workflow-slot--image-card'>
           {imagePreview}
+          <ArtifactSourceButton value={raw} fileRecord overlay />
           {alt && <div className='workflow-slot__image-card-caption'>{alt}</div>}
           {overlays}
           {downloadControl}
@@ -1777,6 +1779,7 @@ export function SlotImage({
   return (
     <div className='workflow-slot workflow-slot--image'>
       {imagePreview}
+      <ArtifactSourceButton value={raw} fileRecord overlay />
       {overlays}
       {downloadControl}
       {hasActions && (
@@ -2296,6 +2299,7 @@ export function SlotText({ slot, widget, sessionId, slotId, revisionCount, onRef
 
   const textMeta = (
     <div className='workflow-slot__text-meta'>
+      {!canEditMarkdown && <ArtifactSourceButton value={editing || hasPendingDraft ? displayText : isOffloaded ? offloadedText : currentValue?.text ?? currentValue?.data ?? currentValue} />}
       {revisionCount !== undefined && revisionCount > 0 && sessionId && slotId && (
         <SlotVersionPopover
           sessionId={sessionId}
@@ -3481,6 +3485,7 @@ function SlotWriterDocument({
             onKeyUp={recordRenderedMarkdownSelection}
             tabIndex={canRewrite ? 0 : undefined}
           >
+            <ArtifactSourceButton value={markdown} />
             <div className='writer-artifact__markdown'>
               <MarkdownViewer resolveImageUrl={hasWriterMediaURLs ? resolveWriterMarkdownImage : undefined}>
                 {rendered.export_document ?? markdown}
@@ -4007,7 +4012,10 @@ function SlotJsonFile({
             onRewritePreviewRejected={rejectIRRewrite}
           />
         ) : (
-          <WriterArtifactContent slotId={resolvedSlotId} data={payload} hideDownload={!allowDownload} />
+          <>
+            <ArtifactSourceButton value={payload} />
+            <WriterArtifactContent slotId={resolvedSlotId} data={payload} hideDownload={!allowDownload} />
+          </>
         )}
       </div>
       <WriterWriteBackSummary slot={slot} revision={displayRevision} />
@@ -4336,7 +4344,10 @@ function SlotInlineStructured({
             onRewritePreviewRejected={rejectIRRewrite}
           />
         ) : (
-          <WriterArtifactContent slotId={resolvedSlotId} data={payload} hideDownload={!allowDownload} />
+          <>
+            <ArtifactSourceButton value={payload} />
+            <WriterArtifactContent slotId={resolvedSlotId} data={payload} hideDownload={!allowDownload} />
+          </>
         )}
       </div>
       <WriterWriteBackSummary slot={slot} revision={displayRevision} />
@@ -4836,14 +4847,15 @@ function SlotMarkdownFile({
 
   return (
     <div className='workflow-slot workflow-slot--artifact'>
-      <div className='writer-artifact__output-toolbar' hidden={!allowDownload && !readOnly}>
+      <div className='writer-artifact__output-toolbar' hidden={canEditMarkdown && !allowDownload && !readOnly}>
+        {!canEditMarkdown && <ArtifactSourceButton value={content} />}
         {readOnly && (
           <span className='writer-artifact__readonly-badge' role='status'>
             <span aria-hidden='true'>🔒</span>
             {tr('chat.writerMarkdown.readOnly')}
           </span>
         )}
-        {!canEditMarkdown && (
+        {!canEditMarkdown && allowDownload && (
           <WriterDownloadFormatButton
             markdown={{
               filename: downloadMarkdownFilename,
@@ -5004,6 +5016,8 @@ export function SlotFile({ slot, sessionId, slotId, revisionCount, onRefresh, re
   const url: string = rawPath ? resolveCoreAssetUrl(rawPath) : '';
   const name: string = raw?.filename ?? raw?.name ?? slot.slot;
   const size: number | undefined = raw?.size;
+  const textSource = String(raw?.mime_type ?? slot.content_type ?? '').startsWith('text/')
+    || /\.(?:txt|md|markdown|json|geojson|lmd|csv|tsv|html?|xml|svg|ya?ml|toml|log|css|js|ts|tsx|jsx|py|sql|tex)$/i.test(name);
   const { deleteSlotItem, patchSlotCaption } = useWorkflowStore();
   const [previewOpen, setPreviewOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -5085,6 +5099,7 @@ export function SlotFile({ slot, sessionId, slotId, revisionCount, onRefresh, re
           )}
         </div>
         <div className='workflow-slot__file-card-actions'>
+          <ArtifactSourceButton value={raw} sourceUrl={textSource ? url : undefined} fileRecord={!textSource} />
           <button
             className='workflow-slot__file-action-btn'
             onClick={handlePreview}
@@ -5175,6 +5190,7 @@ export function SlotVideo({ slot, sessionId, slotId, revisionCount, onRefresh }:
 
   return (
     <div className='workflow-slot workflow-slot--video'>
+      <ArtifactSourceButton value={raw} fileRecord overlay />
       <video
         className='workflow-slot__video'
         src={url}
@@ -5288,6 +5304,7 @@ function SlotHtmlFilePreview({
 
   return (
     <div className='workflow-slot workflow-slot--html-preview'>
+      <ArtifactSourceButton value={html} />
       <HtmlBlock code={html} />
       {showVersionBadge && (
         <div className='workflow-slot__artifact-footer'>

@@ -1783,6 +1783,9 @@ const zhCN = {
       "structure": "保留文档结构（.lmd）"
 },
     writerSource: {
+      "showSource": "展示源码",
+      "backToContent": "返回内容",
+      "fileRecord": "以下展示文件的原始数据记录，不包含二进制内容。",
       "mapPreviewFailed": "无法预览此地图数据。当前仅支持面数据，请检查格式、大小或查看源码。",
       "selectionMappingFailed": "无法准确定位到源文，请保存后重新选择。",
       "zoomIn": "放大",

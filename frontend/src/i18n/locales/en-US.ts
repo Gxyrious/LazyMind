@@ -1832,6 +1832,9 @@ const enUS = {
       "structure": "Preserve document structure (.lmd)"
 },
     writerSource: {
+      "showSource": "View source",
+      "backToContent": "Back to content",
+      "fileRecord": "The original file record is shown below, without binary contents.",
       "mapPreviewFailed": "Cannot preview this map. Only area geometries are supported; check its format and size or view the source.",
       "selectionMappingFailed": "Cannot locate this selection in the source. Save and select the text again.",
       "zoomIn": "Zoom in",

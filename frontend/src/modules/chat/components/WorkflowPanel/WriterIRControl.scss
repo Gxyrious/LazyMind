@@ -199,6 +199,25 @@
   grid-column: 1;
 }
 
+.writer-ir__main--source {
+  display: flex;
+  flex-direction: column;
+  align-self: stretch;
+  min-height: 0;
+  overflow: hidden;
+
+  > .writer-source-input {
+    min-height: 240px;
+    resize: none;
+    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  }
+}
+
+.writer-ir--source {
+  height: 100%;
+  grid-template-rows: minmax(0, 1fr);
+}
+
 .writer-ir--outline-open > .writer-ir__main {
   grid-column: 2;
 }
