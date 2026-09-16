@@ -122,12 +122,33 @@ it('builds the generated lookup request from only an artifact ID',async()=>{
  expect(request.url).toBe('/api/core/workflow-artifacts/artifact-fixture/publication');
   expect(request.options.method).toBe('GET');
 });
-it('keeps a compact document link available for read-only success without a footer handler',async()=>{
- api.getPublicationForArtifact.mockResolvedValue(response({...unknown,status:'succeeded',provider_synced:true,artifact_id:'artifact-fixture',target_url:'https://example.test/published-document',actions:[]}));
+it.each(['artifact-fixture','previously-published-artifact'])('keeps a compact document link available for read-only success without a footer handler: %s',async artifactId=>{
+ api.getDocumentArtifact.mockResolvedValue({data:{ok:true,result:{artifact_id:'artifact-fixture',selected:true}}});
+ api.getPublicationForArtifact.mockResolvedValue(response({...unknown,status:'succeeded',provider_synced:true,artifact_id:artifactId,target_url:'https://example.test/published-document',actions:[]}));
  render(<DocumentPublicationRecoveryPanel artifactId='artifact-fixture' slotId='draft_document' itemIndex={-1} refreshKey={0} publishing={false} readOnly canApplyLocal={()=>false} onResolved={vi.fn()} onAvailability={vi.fn()}/>);
  expect(await screen.findByRole('link',{name:'打开云文档'})).toHaveAttribute('href','https://example.test/published-document');
  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
  expect(screen.queryByText('操作信息')).not.toBeInTheDocument();
+ expect(screen.queryByRole('button',{name:'更新成稿'})).not.toBeInTheDocument();
+ expect(api.publishDocument).not.toHaveBeenCalled();
+});
+it('keeps a previous success in the footer without refreshing a newer local draft',async()=>{
+ api.getDocumentArtifact.mockResolvedValue({data:{ok:true,result:{artifact_id:'newer-local-draft',selected:true}}});
+ api.getPublicationForArtifact.mockResolvedValue(response({...unknown,status:'succeeded',provider_synced:true,
+  artifact_id:'previously-published-artifact',target_url:'https://example.test/document',actions:[]}));
+ const onPublished=vi.fn(),onResolved=vi.fn(),onAvailability=vi.fn();
+ const props={artifactId:'newer-local-draft',slotId:'draft_document',itemIndex:-1,publishing:false,
+  canApplyLocal:()=>false,onPublished,onResolved,onAvailability};
+ const view=render(<DocumentPublicationRecoveryPanel {...props} refreshKey={0}/>);
+ await waitFor(()=>expect(onAvailability).toHaveBeenLastCalledWith(true));
+ expect(onPublished).toHaveBeenCalledWith('https://example.test/document','feishu');
+ expect(view.container).toBeEmptyDOMElement();
+ view.rerender(<DocumentPublicationRecoveryPanel {...props} refreshKey={1}/>);
+ await waitFor(()=>expect(api.getPublicationForArtifact).toHaveBeenCalledTimes(2));
+ await waitFor(()=>expect(onAvailability).toHaveBeenLastCalledWith(true));
+ expect(view.container).toBeEmptyDOMElement();
+ expect(onResolved).not.toHaveBeenCalled();
+ expect(api.retryPublicationLocal).not.toHaveBeenCalled();
  expect(api.publishDocument).not.toHaveBeenCalled();
 });
 it.each(['outcome_unknown_released','confirmed_detached','failed_no_write','canceled'])('hides ended publication notices and keeps a known target link: %s',async status=>{

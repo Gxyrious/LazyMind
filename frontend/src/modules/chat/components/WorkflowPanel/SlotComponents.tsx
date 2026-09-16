@@ -886,6 +886,10 @@ interface SlotVersionPopoverProps {
   /** User-visible version number; unlike revision, this excludes mutable Writer drafts. */
   currentVersionNumber?: number;
   currentValue?: any;
+  readCurrentValue?: () => unknown;
+  triggerLabel?: string;
+  readOnly?: boolean;
+  onRollback?: (revision: number) => Promise<boolean>;
   currentChangeSource?: 'ai' | 'human' | 'provider_sync';
   contentType?: string;
   onRollbackDone?: (revision?: number) => void;
@@ -906,6 +910,10 @@ export function SlotVersionPopover({
   currentRevision,
   currentVersionNumber,
   currentValue,
+  readCurrentValue,
+  triggerLabel,
+  readOnly = false,
+  onRollback,
   currentChangeSource,
   contentType,
   onRollbackDone,
@@ -918,6 +926,8 @@ export function SlotVersionPopover({
   const [open, setOpen] = useGlobalPopoverOpen(popoverKey);
   const [versions, setVersions] = useState<SlotVersionEntry[]>([]);
   const [loading, setLoading] = useState(false);
+  const [versionError, setVersionError] = useState('');
+  const [openedValue, setOpenedValue] = useState(currentValue);
   // previewIndex: index into versions[] of the currently previewed version
   const [previewIndex, setPreviewIndex] = useState<number>(0);
   const [rolling, setRolling] = useState(false);
@@ -951,6 +961,8 @@ export function SlotVersionPopover({
     }
     // Always load version history; in draft mode also default-select the draft entry.
     setLoading(true);
+    setVersionError('');
+    setOpenedValue(readCurrentValue ? readCurrentValue() : currentValue);
     try {
       const vs = await getSlotVersions(sessionId, slotId, listIndex);
       const formalVersions = isWriterDraft
@@ -969,10 +981,12 @@ export function SlotVersionPopover({
       // Default selection: draft entry when draft exists, otherwise current version.
       setSelectedRevision(hasDraftEntry ? DRAFT_REVISION : null);
       setOpen(true);
+    } catch {
+      setVersionError(tr('chat.slots.versionActionFailed'));
     } finally {
       setLoading(false);
     }
-  }, [getSlotVersions, hasDraftEntry, isWriterDraft, listIndex, open, sessionId, setOpen, slotId]);
+  }, [getSlotVersions, hasDraftEntry, isWriterDraft, listIndex, open, sessionId, setOpen, slotId, readCurrentValue, currentValue]);
 
   const handleClose = useCallback(() => setOpen(false), [setOpen]);
 
@@ -981,15 +995,23 @@ export function SlotVersionPopover({
   }, [handleClose]);
 
   const handleRollback = useCallback(async (revision: number) => {
+    if (readOnly || rolling) return;
     setRolling(true);
+    setVersionError('');
     try {
-      await rollbackSlotItem(sessionId, slotId, listIndex, revision);
+      if (onRollback) {
+        if (!await onRollback(revision)) return;
+      } else {
+        await rollbackSlotItem(sessionId, slotId, listIndex, revision);
+      }
       setOpen(false);
       onRollbackDone?.(revision);
+    } catch {
+      setVersionError(tr('chat.slots.versionActionFailed'));
     } finally {
       setRolling(false);
     }
-  }, [sessionId, slotId, listIndex, rollbackSlotItem, setOpen, onRollbackDone]);
+  }, [sessionId, slotId, listIndex, rollbackSlotItem, setOpen, onRollbackDone, onRollback, readOnly, rolling]);
 
   const handleFlushDraft = useCallback(async () => {
     if (!draftText) return;
@@ -1009,8 +1031,9 @@ export function SlotVersionPopover({
 
   const handleVersionUploadClick = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
+    if (readOnly) return;
     versionUploadRef.current?.click();
-  }, []);
+  }, [readOnly]);
 
   const isImage = contentType === 'image';
   const isFile = contentType === 'file';
@@ -1073,7 +1096,7 @@ export function SlotVersionPopover({
   const previewedVersion = versions[previewIndex] ?? null;
   // The currently-selected (active) version
   const currentVersion = versions.find((v) => v.selected) ?? versions[0] ?? null;
-  const activeCurrentValue = currentVersion?.content_snapshot ?? currentValue;
+  const activeCurrentValue = currentVersion?.content_snapshot ?? openedValue;
   // Whether the previewed version is already the current one
   const isPreviewingCurrent = previewedVersion?.selected ?? false;
 
@@ -1097,7 +1120,7 @@ export function SlotVersionPopover({
     ? (versions.find((version) => version.revision < effectiveSelectedVersion.revision) ?? null)
     : null;
   const effectiveSelectedSnapshot = effectiveSelectedVersion?.content_snapshot
-    ?? (effectiveSelectedVersion?.selected ? currentValue : undefined);
+    ?? (effectiveSelectedVersion?.selected ? openedValue : undefined);
   // When draft is selected (DRAFT_REVISION), the right pane shows draft vs current diff.
   const isDraftSelected = selectedRevision === DRAFT_REVISION;
 
@@ -1126,6 +1149,7 @@ export function SlotVersionPopover({
           >×</button>
         </div>
 
+        {versionError && <div className='workflow-slot__version-compare-hint' role='alert'>{versionError}</div>}
         {isImage ? (
           /* ── Image mode: top-down layout ── */
           <>
@@ -1203,7 +1227,7 @@ export function SlotVersionPopover({
               <button
                 className='workflow-slot__version-thumb workflow-slot__version-thumb--upload'
                 onClick={handleVersionUploadClick}
-                disabled={uploading}
+                disabled={uploading || readOnly}
                 aria-label={tr('chat.slots.uploadAndSelect')}
                 type='button'
               >
@@ -1227,7 +1251,7 @@ export function SlotVersionPopover({
                 <button className='workflow-slot__version-footer-cancel' onClick={handleClose}>{tr('common.cancel')}</button>
                 <button
                   className='workflow-slot__version-footer-apply'
-                  disabled={rolling || isPreviewingCurrent || !previewedVersion}
+                  disabled={rolling || readOnly || isPreviewingCurrent || !previewedVersion}
                   onClick={() => previewedVersion && handleRollback(previewedVersion.revision)}
                 >
                   {rolling ? tr('chat.slots.rollingBack') : tr('chat.slots.setCurrentVersion')}
@@ -1290,7 +1314,7 @@ export function SlotVersionPopover({
                 />
                 <button
                   className='workflow-slot__version-apply-btn'
-                  disabled={rolling}
+                  disabled={rolling || readOnly}
                   onClick={() => handleRollback(effectiveSelectedVersion.revision)}
                   aria-label={tr('chat.slots.applyVersionAria', { version: entryVersionLabel(effectiveSelectedVersion) })}
                 >
@@ -1369,12 +1393,12 @@ export function SlotVersionPopover({
               <div className='workflow-slot__version-compare'>
                 <SnapshotTextDiffView
                   currentSnapshot={activeCurrentValue}
-                  otherSnapshot={hasPersistedWriterDraft ? currentValue : undefined}
+                  otherSnapshot={hasPersistedWriterDraft ? openedValue : undefined}
                   otherText={draftText}
                   otherLabel={tr('chat.slots.draft')}
                   reversed={true}
                 />
-                {draftText !== undefined && (
+                {draftText !== undefined && !readOnly && (
                   <div className='workflow-slot__version-draft-actions'>
                   <button
                     className='workflow-slot__version-discard-btn'
@@ -1415,7 +1439,7 @@ export function SlotVersionPopover({
                 {!effectiveSelectedVersion.selected && (
                   <button
                     className='workflow-slot__version-apply-btn'
-                    disabled={rolling}
+                    disabled={rolling || readOnly}
                     onClick={() => handleRollback(effectiveSelectedVersion.revision)}
                     aria-label={tr('chat.slots.applyVersionAria', { version: entryVersionLabel(effectiveSelectedVersion) })}
                   >
@@ -1438,19 +1462,20 @@ export function SlotVersionPopover({
   return (
     <div className='workflow-slot__version-wrap'>
       <button
-        className={`workflow-slot__version-btn${hasDraftEntry ? ' workflow-slot__version-btn--draft' : ''}`}
+        className={`workflow-slot__version-btn${hasDraftEntry && !triggerLabel ? ' workflow-slot__version-btn--draft' : ''}`}
         onClick={handleOpen}
-        title={hasDraftEntry ? tr('chat.slots.draftCompareHint') : isWriterDraft ? historyTitle : tr('chat.slots.versionHistoryCount', { count: revisionCount })}
-        aria-label={hasDraftEntry ? tr('chat.slots.draft') : isWriterDraft ? historyTitle : tr('chat.slots.versionHistoryCount', { count: revisionCount })}
+        title={triggerLabel ?? (hasDraftEntry ? tr('chat.slots.draftCompareHint') : isWriterDraft ? historyTitle : tr('chat.slots.versionHistoryCount', { count: revisionCount }))}
+        aria-label={triggerLabel ?? (hasDraftEntry ? tr('chat.slots.draft') : isWriterDraft ? historyTitle : tr('chat.slots.versionHistoryCount', { count: revisionCount }))}
         disabled={loading}
       >
         <span className='workflow-slot__version-count'>
-          {hasDraftEntry
+          {triggerLabel ?? (hasDraftEntry
             ? tr('chat.slots.draft')
-            : versionLabel(currentRevision ?? (revisionCount > 1 ? revisionCount : 1), currentVersionNumber)}
+            : versionLabel(currentRevision ?? (revisionCount > 1 ? revisionCount : 1), currentVersionNumber))}
         </span>
       </button>
       {popoverContent}
+      {!open && versionError && <span role='alert'>{versionError}</span>}
     </div>
   );
 }
@@ -5327,7 +5352,8 @@ export function SlotRenderer({
   }
 
   if (slot.artifact_id && slot.document) {
-    return <DocumentArtifactEditor slot={slot} sessionId={sessionId ?? ''} readOnly={readOnly || widget?.readOnly} onRefresh={onRefresh} />;
+    return <DocumentArtifactEditor slot={slot} sessionId={sessionId ?? ''} readOnly={readOnly || widget?.readOnly} onRefresh={onRefresh}
+      revisionCount={revisionCount} VersionHistory={SlotVersionPopover} />;
   }
   const effectiveReadOnly = readOnly || widget?.readOnly;
   const resolvedWidgetSlotId = slotId ?? slot.slot;

@@ -2,6 +2,25 @@ import { describe, expect, it } from 'vitest';
 import { markdownParagraphAtRange, markdownSelectionRange, preserveMarkdownSource } from './writerMarkdownSource';
 
 describe('source positions and untouched Markdown', () => {
+ it.each([
+  ['## 😀 **Same**\n\nSame\n\n## 😀 **Same**', '<h2>😀 <strong>Same</strong></h2><p>Same</p><h2>😀 <strong>Same</strong></h2>', 'h2', 1, 'Same', 3],
+  ['3. Same\n4. Same', '<ol start="3"><li>Same</li><li>Same</li></ol>', 'li', 1, 'Same', 0],
+  ['- Parent\n  - **Child**\n- Last', '<ul><li>Parent<ul><li><strong>Child</strong></li></ul></li><li>Last</li></ul>', 'li', 1, 'Child', 0],
+  ['- First\n  second', '<ul><li>First\nsecond</li></ul>', 'li', 0, 'First\nsecond', 0],
+  ['### # ###', '<h3>#</h3>', 'h3', 0, '#', 0],
+  ['Setext\n======', '<h1>Setext</h1>', 'h1', 0, 'Setext', 0],
+ ] as const)('maps heading/list text to its exact source span: %s', (source, html, tag, index, selectedText, startOffset) => {
+  const root = document.createElement('div'); root.className = 'mdxeditor-root-contenteditable'; root.innerHTML = html;
+  const paragraph = root.querySelectorAll<HTMLElement>(tag)[index];
+  const result = markdownSelectionRange(source, { selectedText, paragraph, startOffset });
+  expect(Array.from(source).slice(result.start, result.end).join('')).toBe(result.selected_text);
+  expect(result.selected_text).toBe(selectedText === 'First\nsecond' ? 'First\n  second' : selectedText);
+  const from = Array.from(source).slice(0, result.start).join('').length;
+  const to = Array.from(source).slice(0, result.end).join('').length;
+  expect(markdownParagraphAtRange(root, source, from, to)).toBe(paragraph);
+  if (index === 1 && selectedText === 'Same') expect(from).toBe(source.lastIndexOf('Same'));
+ });
+
  it('reattaches the correct repeated paragraph after the editor DOM is rebuilt', () => {
   const source = 'Accepted and expanded\n\n😀 **Same**\n\nMiddle edit\n\n😀 **Same**';
   const root = document.createElement('div');
@@ -66,4 +85,12 @@ it('keeps edited link destinations with parentheses while preserving unrelated s
  const before=`Visit [${url}](${url}) A \\& B.`;
  const after=before.replace('/old)','/new)');
  expect(preserveMarkdownSource(source,before,after)).toBe(`Visit [${url}](https://example.org/a(b)/new) A & B.\n`);
+});
+
+
+it('maps task text after the checkbox marker even when both contain x', () => {
+ const root = document.createElement('div'); root.className = 'mdxeditor-root-contenteditable';
+ root.innerHTML = '<ul><li aria-checked="true">x</li></ul>';
+ expect(markdownSelectionRange('- [x] x', { selectedText: 'x', paragraph: root.querySelector('li')! }))
+  .toEqual({ selected_text: 'x', start: 6, end: 7 });
 });

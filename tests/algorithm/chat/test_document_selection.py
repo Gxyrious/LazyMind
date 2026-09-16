@@ -153,3 +153,33 @@ def test_bad_markdown_model_response_returns_upstream_failure(monkeypatch, tmp_p
     with pytest.raises(DocumentActionError) as error:
         preview('原文。', [{'selected_text': '原文'}], tmp_path)
     assert error.value.status_code == 502
+
+
+def test_markdown_heading_and_nested_list_preview_commit_preserve_markers(monkeypatch, tmp_path):
+    monkeypatch.setattr(selection, 'AutoModel', lambda **_: fake_model)
+    source = '## 标题原文\n\n3. 保持父项\n   - 列表原文\n4. 不改'
+    result = preview(source, [{'selected_text': '标题原文'}, {'selected_text': '列表原文'}], tmp_path)
+    assert [item['target']['block_type'] for item in result['results']] == ['heading', 'list_item']
+    assert result['artifact']['value'] == source.replace('原文', '润色')
+    committed = invoke_document_action(ACTION, 'execute', {'commit_token': result['commit']['token']},
+                                      artifact=source, artifact_store=str(tmp_path), slot='draft_document')
+    assert committed['artifact'] == result['artifact']
+
+
+def test_ir_heading_and_list_polish_keep_types_numbering_and_children(monkeypatch, tmp_path):
+    monkeypatch.setattr('lazymind.document_tools.selection.AutoModel', lambda **_: object())
+    monkeypatch.setattr(WriterRevisionTools, '_call_llm_structured', lambda self, prompt, model: model.model_validate({
+        'changes': {'rewrite-selection-0': [{'content': '标题润色'}],
+                    'rewrite-selection-1': [{'content': '列表润色'}]},
+    }))
+    source = {'document_id': 'doc', 'blocks': [
+        {'node_id': 'h', 'type': 'heading', 'content': '标题原文', 'level': 2},
+        {'node_id': 'li', 'type': 'list_item', 'content': '列表原文', 'numbering': {'ordered': True, 'start': 3},
+         'children': [{'node_id': 'child', 'type': 'list_item', 'content': '保持子项'}]},
+    ]}
+    result = preview(source, [{'node_id': 'h'}, {'node_id': 'li'}], tmp_path)
+    blocks = result['artifact']['value']['blocks']
+    assert blocks[0]['type'] == 'heading' and blocks[0]['content'] == '标题润色'
+    assert blocks[1]['type'] == 'list_item' and blocks[1]['content'] == '列表润色'
+    assert blocks[1]['numbering'] == source['blocks'][1]['numbering']
+    assert blocks[1]['children'][0]['content'] == '保持子项'

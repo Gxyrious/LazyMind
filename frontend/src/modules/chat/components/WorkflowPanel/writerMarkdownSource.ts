@@ -1,35 +1,56 @@
 import MarkdownIt from 'markdown-it';
 import { diffChars } from 'diff';
+import { markdownBlockText, markdownTextBlocks } from './artifactRewriteSelection';
 const parser = new MarkdownIt({ html: true, linkify: true });
 interface Token { type: string; content: string; map?: [number, number]; level: number; children?: Token[] }
 
-function sourceBlocks(source: string, paragraphsOnly = false) {
+function sourceBlocks(source: string) {
   const offsets = [0];
   for (const line of source.split('\n')) offsets.push(offsets[offsets.length - 1] + line.length + 1);
   const tokens = parser.parse(source, {}) as Token[];
-  return tokens.flatMap((token, index) => {
-    if (!token.map) return [];
-    if (paragraphsOnly ? token.type !== 'inline' || tokens[index - 1]?.type !== 'paragraph_open' || tokens[index - 1].level !== 0
-      : token.level !== 0 || token.type === 'inline' || token.type.endsWith('_close')) return [];
-    const start = offsets[token.map[0]], rawEnd = Math.min(source.length, offsets[token.map[1]] - 1);
-    const raw = source.slice(start, rawEnd).replace(/[\r\n]+$/, '');
-    const end = start + raw.length;
-    if (/^<a\s+id=[^>]+><\/a>\s*$/.test(raw)) return [];
-    const inline = token.children ?? [];
+  const parents: string[] = [];
+  return tokens.flatMap(token => {
+    if (token.type.endsWith('_open')) { parents.push(token.type); return []; }
+    if (token.type.endsWith('_close')) { parents.pop(); return []; }
+    if (!token.map || token.type !== 'inline'
+      || parents.some(type => !['paragraph_open', 'heading_open', 'list_item_open', 'bullet_list_open', 'ordered_list_open'].includes(type))) return [];
+    const kind = parents.includes('heading_open') ? 'heading' : parents.includes('list_item_open') ? 'list_item' : 'paragraph';
+    const content = kind === 'list_item' ? token.content.replace(/^\[[ xX]\][ \t]+/, '') : token.content;
+    const positions: number[] = [];
+    const contentLines = content.split('\n');
+    for (let index = 0; index < contentLines.length; index++) {
+      const lineStart = offsets[token.map[0] + index];
+      const line = source.slice(lineStart, offsets[token.map[0] + index + 1] - 1).replace(/\r$/, '');
+      let prefix: RegExpMatchArray | null = null;
+      if (index === 0 && kind === 'heading') prefix = line.match(/^ {0,3}#{1,6}(?:\s+|$)/);
+      if (index === 0 && kind === 'list_item') prefix = line.match(/^\s*(?:[-+*]|\d+[.)])\s+(?:\[[ xX]\][ \t]+)?/);
+      const at = line.indexOf(contentLines[index], prefix?.[0].length ?? 0);
+      if (at < 0) return [];
+      for (let j = 0; j < contentLines[index].length; j++) positions.push(lineStart + at + j);
+      if (index < contentLines.length - 1) positions.push(offsets[token.map[0] + index + 1] - 1);
+    }
+    if (!positions.length) return [];
+    const start = positions[0], end = positions[positions.length - 1] + 1;
+    const raw = source.slice(start, end);
+    const inline = (content === token.content ? token.children : parser.parseInline(content, {})[0]?.children) ?? [];
     const text = inline.map((item) => ['text', 'code_inline'].includes(item.type) ? item.content : ['softbreak','hardbreak'].includes(item.type) ? '\n' : '').join('');
-    return [{ start, end, raw, text }];
+    return [{ start, end, raw, text, kind, content, positions }];
   });
+}
+
+function blockKind(element: HTMLElement): string {
+  return /^H[1-6]$/.test(element.tagName) ? 'heading' : element.closest('li') ? 'list_item' : 'paragraph';
 }
 
 /** Reattach a reviewed paragraph after the rich editor rebuilds its DOM. */
 export function markdownParagraphAtRange(root: HTMLElement, source: string, start: number, end: number): HTMLElement | null {
-  const paragraphs = sourceBlocks(source, true);
+  const paragraphs = sourceBlocks(source);
   const block = paragraphs.find(item => item.start <= start && item.end >= end);
   if (!block) return null;
   const normalize = (text: string) => text.replace(/\u00a0/g, ' ');
-  const matches = paragraphs.filter(item => normalize(item.text) === normalize(block.text));
-  const elements = Array.from(root.querySelectorAll<HTMLElement>('.mdxeditor-root-contenteditable p'))
-    .filter(element => !element.closest('li, blockquote, pre, td, th') && normalize(element.textContent ?? '') === normalize(block.text));
+  const matches = paragraphs.filter(item => item.kind === block.kind && normalize(item.text) === normalize(block.text));
+  const elements = markdownTextBlocks(root.querySelector<HTMLElement>('.mdxeditor-root-contenteditable') ?? root)
+    .filter(element => blockKind(element) === block.kind && normalize(markdownBlockText(element)) === normalize(block.text));
   return matches.length === elements.length ? elements[matches.indexOf(block)] ?? null : null;
 }
 
@@ -94,14 +115,15 @@ export function markdownSelectionRange(source: string, selection: {
   selectedText: string; paragraph?: HTMLElement; startOffset?: number;
 }) {
   const paragraph = selection.paragraph;
-  const visible = paragraph?.textContent?.replace(/\u00a0/g, ' ');
-  const paragraphs = sourceBlocks(source, true);
+  const visible = paragraph ? markdownBlockText(paragraph).replace(/\u00a0/g, ' ') : undefined;
+  const paragraphs = sourceBlocks(source);
   let target: (typeof paragraphs)[number] | undefined;
   if (paragraph && visible !== undefined) {
     const editor = paragraph.closest('.mdxeditor-root-contenteditable, [data-writer-source-preview]');
-    const siblings = editor ? Array.from(editor.querySelectorAll<HTMLElement>('p'))
-      .filter((p) => !p.closest('li, blockquote, pre, td, th') && p.textContent?.replace(/\u00a0/g, ' ') === visible) : [paragraph];
-    const candidates = paragraphs.filter((p) => p.text.replace(/\u00a0/g, ' ') === visible);
+    const kind = blockKind(paragraph);
+    const siblings = editor ? markdownTextBlocks(editor)
+      .filter(p => blockKind(p) === kind && markdownBlockText(p).replace(/\u00a0/g, ' ') === visible) : [paragraph];
+    const candidates = paragraphs.filter(p => p.kind === kind && p.text.replace(/\u00a0/g, ' ') === visible);
     if (candidates.length !== siblings.length) throw new Error('selection is missing or ambiguous');
     target = candidates[siblings.indexOf(paragraph)];
   } else {
@@ -109,12 +131,12 @@ export function markdownSelectionRange(source: string, selection: {
     if (candidates.length === 1) target = candidates[0];
   }
   if (!target) throw new Error('selection is missing or ambiguous');
-  const map = inlinePositions(target.raw);
+  const map = inlinePositions(target.content);
   if (map.text !== target.text) throw new Error('selection mapping unavailable');
   const local = selection.startOffset ?? map.text.indexOf(selection.selectedText);
   if (local < 0 || map.text.slice(local, local + selection.selectedText.length) !== selection.selectedText) throw new Error('selection changed');
   if (selection.startOffset === undefined && map.text.indexOf(selection.selectedText, local + 1) >= 0) throw new Error('selection is ambiguous');
-  const from = target.start + map.starts[local], to = target.start + map.ends[local + selection.selectedText.length - 1];
+  const from = target.positions[map.starts[local]], to = target.positions[map.ends[local + selection.selectedText.length - 1] - 1] + 1;
   return { selected_text: source.slice(from, to), start: Array.from(source.slice(0, from)).length, end: Array.from(source.slice(0, to)).length };
 }
 
@@ -219,7 +241,7 @@ export function preserveMarkdownSource(original: string, previousExport: string,
 /** Source-authoritative paragraph set for a batch; response ranges cannot expand it. */
 export function markdownRewriteTargets(source: string, selections: Array<{start:number;end:number;selected_text:string}>) {
   const runes=Array.from(source);
-  const paragraphs=sourceBlocks(source,true).map(block=>({...block,
+  const paragraphs=sourceBlocks(source).map(block=>({...block,
     start:Array.from(source.slice(0,block.start)).length,end:Array.from(source.slice(0,block.end)).length}));
   const selected=new Map<number,(typeof paragraphs)[number]>();
   for(const range of selections) {

@@ -44,6 +44,10 @@
   text-align: left;
 }
 
+.writer-markdown-editor--chat.writer-markdown-editor--editable .writer-markdown-editor__surface .mdxeditor-root-contenteditable {
+  padding-inline-start: 60px;
+}
+
 .writer-markdown-editor--chat .mdxeditor-root-contenteditable strong,
 .writer-markdown-editor--chat .mdxeditor-root-contenteditable b {
   font-weight: 700;
@@ -56,8 +60,8 @@
 
 .writer-markdown-editor__document-layout {
   display: grid;
-  grid-template-columns: 32px minmax(0, 1fr);
-  column-gap: 8px;
+  grid-template-columns: minmax(0, 1fr);
+  column-gap: 0;
   align-items: start;
   min-width: 0;
   min-height: 0;
@@ -80,6 +84,10 @@
 .writer-markdown-editor__main {
   container: writer-markdown-editor-main / inline-size;
   min-width: 0;
+  grid-column: 1;
+}
+
+.writer-markdown-editor--outline-open .writer-markdown-editor__main {
   grid-column: 2;
 }
 
@@ -161,7 +169,7 @@
   position: sticky;
   top: 0;
   min-width: 0;
-  min-height: 34px;
+  min-height: 30px;
   max-height: 480px;
   grid-column: 1;
 }
@@ -204,7 +212,8 @@
 }
 
 .writer-markdown-editor .writer-markdown-editor__outline-toggle--collapsed {
-  margin-top: 4px;
+  min-height: 26px;
+  flex-shrink: 0;
   color: #2563eb;
 }
 
@@ -460,12 +469,25 @@
   }
 
   .writer-markdown-editor__outline-rail,
-  .writer-markdown-editor__main {
+  .writer-markdown-editor--outline-open .writer-markdown-editor__main {
     grid-column: 1 / -1;
   }
 
+  .writer-markdown-editor--outline-open .writer-markdown-editor__document-layout {
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
   .writer-markdown-editor__outline-rail {
-    display: none;
+    position: static;
+    max-height: none;
+    margin-bottom: 10px;
+  }
+
+  .writer-markdown-editor__outline {
+    max-height: 180px;
+    padding: 3px 4px 10px;
+    border-right: 0;
+    border-bottom: 1px solid #e5eaf0;
   }
 }
 
@@ -883,18 +905,16 @@
   width: min(100%, var(--writer-markdown-page-max-width));
   margin: 0 auto;
   min-height: 300px;
-  padding: 20px 24px;
+  padding: 6px 0 28px;
 }
 
-@container writer-markdown-editor (max-width: 680px) {
-  .writer-markdown-editor__surface .mdxeditor-root-contenteditable {
-    padding: 0;
-  }
+.writer-markdown-editor--editable:not(.writer-markdown-editor--chat) .writer-markdown-editor__surface .mdxeditor-root-contenteditable {
+  // Match the IR editor's compact block-control gutter.
+  padding-inline-start: 22px;
 }
 
-.writer-markdown-editor--editable .writer-markdown-editor__surface .mdxeditor-root-contenteditable {
-  // The editable adds 12px: leave a 64px control gutter and an 8px edge inset.
-  padding-inline-start: 60px;
+.writer-markdown-editor:not(.writer-markdown-editor--chat) .writer-markdown-editor__content {
+  padding: 0;
 }
 
 .writer-markdown-editor__surface a[href^='#block-'] {

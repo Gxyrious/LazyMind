@@ -1,3 +1,4 @@
+vi.mock('./writerListNumberingPlugin', () => ({ writerListNumberingPlugin: () => ({}) }));
 vi.mock('./writerLocalSourcePlugin', () => ({ writerLocalSourcePlugin: () => ({}), writerLocalCodeEditor: {} }));
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useState } from 'react';
@@ -365,6 +366,31 @@ describe('MarkdownArtifactEditor MDX compatibility', () => {
     await waitFor(() => expect(heading).toHaveAttribute('data-writer-heading-placeholder', 'chat.writerMarkdown.headingPlaceholders.h2'));
   });
 
+  it('keeps the empty-heading control visible above the heading in a compact gutter', async () => {
+    const { container } = render(<MarkdownArtifactEditor markdown='# Title' sourceRevision={1} onSave={async () => 1} />);
+    const editable = screen.getByTestId('markdown-editable');
+    const heading = document.createElement('h2');
+    heading.innerHTML = '<br>';
+    editable.append(heading);
+    const surface = container.querySelector<HTMLElement>('.writer-markdown-editor__surface')!;
+    vi.spyOn(surface, 'getBoundingClientRect').mockReturnValue({ ...rect(), width: 300, right: 400 });
+    vi.spyOn(heading, 'getBoundingClientRect').mockReturnValue({ ...rect(), left: 122, top: 200 });
+    const range = document.createRange();
+    range.selectNodeContents(heading);
+    range.collapse(true);
+    window.getSelection()?.addRange(range);
+    fireEvent.mouseUp(heading);
+
+    const root = container.querySelector<HTMLElement>('.writer-markdown-editor')!;
+    await waitFor(() => expect(root).toHaveClass('writer-markdown-editor--empty-heading-toolbar'));
+    const left = parseFloat(root.style.getPropertyValue('--writer-markdown-selection-toolbar-left'));
+    const top = parseFloat(root.style.getPropertyValue('--writer-markdown-selection-toolbar-top'));
+    expect(left).toBeGreaterThanOrEqual(0);
+    expect(left + 56).toBeLessThanOrEqual(300);
+    expect(top).toBeGreaterThanOrEqual(0);
+    expect(top + 26).toBeLessThanOrEqual(100);
+  });
+
   it('renders PDF text without passing HTML page comments to the MDX parser', () => {
     const { container } = render(
       <MarkdownArtifactEditor
@@ -418,9 +444,14 @@ describe('MarkdownArtifactEditor MDX compatibility', () => {
       />,
     );
 
-    expect(
-      screen.getByRole('button', { name: 'chat.writerIR.expandOutline' }),
-    ).toBeInTheDocument();
+    const expand = screen.getByRole('button', { name: 'chat.writerIR.expandOutline' });
+    const outline = document.getElementById(expand.getAttribute('aria-controls')!)!;
+    expect(outline).not.toBeVisible();
+    fireEvent.click(expand);
+    expect(outline).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'chat.writerIR.collapseOutline' }));
+    expect(outline).not.toBeVisible();
+    expect(screen.getByRole('button', { name: 'chat.writerIR.expandOutline' })).toBeVisible();
   });
 
   it('renders plain-text JSON braces without changing inline or fenced code', () => {

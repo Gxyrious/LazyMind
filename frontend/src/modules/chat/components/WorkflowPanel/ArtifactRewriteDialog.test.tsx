@@ -204,11 +204,11 @@ describe('ArtifactRewriteDialog', () => {
     expect(requestPreview).not.toHaveBeenCalled();
   });
 
-  it('prepares a selected preset without submitting and clears its selected state after a custom edit', () => {
+  it.each(['concise', 'fluent', 'formal'])('prepares the full %s instruction without submitting and clears its selected state after a custom edit', key => {
     const requestPreview = renderDialog();
-    const preset = screen.getByRole('button', { name: 'chat.writerLocal.concise' });
+    const preset = screen.getByRole('button', { name: `chat.writerLocal.${key}` });
     fireEvent.click(preset);
-    expect(screen.getByRole('textbox')).toHaveValue('chat.writerLocal.concise');
+    expect(screen.getByRole('textbox')).toHaveValue(`chat.writerLocal.${key}Instruction`);
     expect(preset).toHaveAttribute('aria-pressed', 'true');
     expect(requestPreview).not.toHaveBeenCalled();
     expect(fireEvent.keyDown(preset, { key: 'Enter' })).toBe(true);

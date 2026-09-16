@@ -71,6 +71,7 @@ type WriterIRPageWidth = 'default' | 'wide' | 'reading';
 
 export interface WriterIRControlProps {
   savePaused?: boolean;
+  toolbarActions?: ReactNode;
   document: WriterDocument;
   numbering?: WriterNumberingState;
   sourceRevision?: string | number;
@@ -302,6 +303,7 @@ function BlockSequence({ blocks }: { blocks: WriterBlock[] }) {
 
 export function WriterIRControl({
   savePaused = false,
+  toolbarActions,
   document,
   numbering,
   sourceRevision,
@@ -995,9 +997,10 @@ export function WriterIRControl({
       <aside
         className='writer-ir__outline-rail'
         id={outlineId}
+        hidden={!outlineOpen}
         onClick={(event) => event.stopPropagation()}
       >
-        {outlineOpen ? (
+        {outlineOpen && (
           <nav className='writer-ir__outline' aria-label={t('chat.writerIR.outline')}>
             <button
               type='button'
@@ -1054,23 +1057,25 @@ export function WriterIRControl({
               </div>
             )}
           </nav>
-        ) : (
-          <button
-            type='button'
-            className='writer-ir__outline-toggle writer-ir__outline-toggle--collapsed'
-            title={t('chat.writerIR.expandOutline')}
-            aria-label={t('chat.writerIR.expandOutline')}
-            aria-controls={outlineId}
-            aria-expanded='false'
-            onClick={() => setOutlineOpen(true)}
-          >
-            <MenuUnfoldOutlined aria-hidden />
-          </button>
         )}
       </aside>
       <div className='writer-ir__main'>
         <div className='writer-document-toolbar'>
+          {!outlineOpen && (
+            <button
+              type='button'
+              className='writer-ir__outline-toggle writer-ir__outline-toggle--collapsed'
+              title={t('chat.writerIR.expandOutline')}
+              aria-label={t('chat.writerIR.expandOutline')}
+              aria-controls={outlineId}
+              aria-expanded='false'
+              onClick={(event) => { event.stopPropagation(); setOutlineOpen(true); }}
+            >
+              <MenuUnfoldOutlined aria-hidden />
+            </button>
+          )}
           <span role='status' aria-live='polite'>{documentReadOnly ? t('chat.writerMarkdown.readOnly') : saveError ? t('chat.writerMarkdown.saveFailed') : savePaused && dirty ? t('chat.writerLocal.publishingPendingSave') : saving ? t(draft !== lastSavedDocumentRef.current ? 'chat.writerIR.savingWithEdits' : 'chat.writerIR.saving') : t(dirty ? 'chat.writerLocal.pendingSave' : 'chat.writerIR.saved')}</span>
+          {toolbarActions}
           <WriterDocumentOptions width={pageWidth} onWidth={setPageWidth}>
             {hasOutlineInstructions && !readOnly && <button type='button' onClick={outlineInstructionsExpanded ? collapseAllOutlineInstructions : expandAllOutlineInstructions}>
               {t(outlineInstructionsExpanded ? 'chat.writerIR.collapseAllOutlineInstructions' : 'chat.writerIR.expandAllOutlineInstructions')}

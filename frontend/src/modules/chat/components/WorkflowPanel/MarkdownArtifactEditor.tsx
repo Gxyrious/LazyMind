@@ -46,6 +46,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type ReactNode,
   type MouseEvent as ReactMouseEvent,
 } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -73,6 +74,7 @@ import {
 } from '@/modules/knowledge/utils/imageUrl';
 import { WriterHeadingNumberingMenu } from './WriterHeadingNumberingMenu';
 import { writerEmptyHeadingPlugin } from './writerEmptyHeadingPlugin';
+import { writerListNumberingPlugin } from './writerListNumberingPlugin';
 import {
   applyWriterMarkdownInternalReference,
   collectWriterMarkdownDomAnchors,
@@ -495,6 +497,7 @@ export type MarkdownSaveMode = 'draft' | 'checkpoint';
 
 interface MarkdownArtifactEditorProps {
   savePaused?: boolean;
+  toolbarActions?: ReactNode;
   markdown: string;
   resolveImageUrl?: MarkdownImageResolver;
   numbering?: WriterNumberingState;
@@ -569,6 +572,7 @@ function isMarkdownToolbarDropdownOpen(): boolean {
 
 export function MarkdownArtifactEditor({
   savePaused = false,
+  toolbarActions,
   markdown,
   renderContext,
   resolveImageUrl,
@@ -1020,10 +1024,13 @@ export function MarkdownArtifactEditor({
       const headingRect = emptyHeading.getBoundingClientRect();
       const style = window.getComputedStyle(emptyHeading);
       const lineHeight = parseFloat(style.lineHeight) || parseFloat(style.fontSize) * 1.2;
+      const headingLeft = headingRect.left - surfaceRect.left;
+      const headingTop = headingRect.top - surfaceRect.top + surface.scrollTop;
+      const fitsInGutter = headingLeft >= 64;
       setEmptyHeadingLevel(emptyHeading.tagName);
       setSelectionToolbar({
-        top: headingRect.top - surfaceRect.top + surface.scrollTop + (lineHeight - 26) / 2,
-        left: headingRect.left - surfaceRect.left + surface.scrollLeft - 64,
+        top: fitsInGutter ? headingTop + (lineHeight - 26) / 2 : Math.max(surface.scrollTop, headingTop - 30),
+        left: (fitsInGutter ? headingLeft - 64 : Math.max(4, headingLeft)) + surface.scrollLeft,
         maxWidth: 56,
         placement: 'above',
       });
@@ -1627,6 +1634,7 @@ export function MarkdownArtifactEditor({
   }, [draftMarkdown, selection]);
   const referenceDisabled = readOnly
     || !selection?.supported || Boolean(selection.paragraphSelections?.length)
+    || selection?.paragraph?.tagName !== 'P' || Boolean(selection.paragraph?.closest('li'))
     || saving
     || conflict
     || Boolean(removableReferenceMarkdown)
@@ -2067,9 +2075,10 @@ export function MarkdownArtifactEditor({
         {!chatPresentation && hasOutline && <aside
           className='writer-markdown-editor__outline-rail'
           id={outlineId}
+          hidden={!outlineOpen}
           onClick={(event) => event.stopPropagation()}
         >
-          {outlineOpen ? (
+          {outlineOpen && (
             <nav
               className='writer-markdown-editor__outline'
               aria-label={t('chat.writerIR.outline')}
@@ -2137,26 +2146,25 @@ export function MarkdownArtifactEditor({
                 </div>
               )}
             </nav>
-          ) : (
-            <button
-              type='button'
-              className={
-                'writer-markdown-editor__outline-toggle '
-                + 'writer-markdown-editor__outline-toggle--collapsed'
-              }
-              title={t('chat.writerIR.expandOutline')}
-              aria-label={t('chat.writerIR.expandOutline')}
-              aria-controls={outlineId}
-              aria-expanded='false'
-              onClick={() => setOutlineOpen(true)}
-            >
-              <MenuUnfoldOutlined aria-hidden />
-            </button>
           )}
         </aside>}
         <div className={`writer-markdown-editor__main${editorMode !== 'rich' ? ' writer-markdown-editor__main--source' : ''}`}>
           <div className='writer-document-toolbar'>
+            {!chatPresentation && hasOutline && !outlineOpen && (
+              <button
+                type='button'
+                className='writer-markdown-editor__outline-toggle writer-markdown-editor__outline-toggle--collapsed'
+                title={t('chat.writerIR.expandOutline')}
+                aria-label={t('chat.writerIR.expandOutline')}
+                aria-controls={outlineId}
+                aria-expanded='false'
+                onClick={(event) => { event.stopPropagation(); setOutlineOpen(true); }}
+              >
+                <MenuUnfoldOutlined aria-hidden />
+              </button>
+            )}
             <span role='status' aria-live='polite'>{readOnly ? t('chat.writerMarkdown.readOnly') : saveError ? t('chat.writerMarkdown.saveFailed') : savePaused && dirty ? t('chat.writerLocal.publishingPendingSave') : saving ? t(draftMarkdown !== savingDraftRef.current ? 'chat.writerIR.savingWithEdits' : 'chat.writerIR.saving') : t(dirty ? 'chat.writerLocal.pendingSave' : 'chat.writerMarkdown.saved')}</span>
+            {toolbarActions}
             <WriterDocumentOptions width={pageWidth} onWidth={setPageWidth} sourceMode={editorMode === 'source'}
               onSourceMode={() => changeEditorMode(editorMode === 'rich' ? 'source' : 'rich')}>
               {hasOutlineInstructions && <button type='button' onClick={outlineInstructionsExpanded ? collapseAllOutlineInstructions : expandAllOutlineInstructions}>
@@ -2180,6 +2188,7 @@ export function MarkdownArtifactEditor({
           ) : <WriterCodeDisplayContext.Provider value={codeDisplayLanguages}><MDXEditor
             ref={editorRef}
             className='writer-markdown-editor__surface'
+            contentEditableClassName='writer-markdown-editor__content'
             markdown={normalizeMarkdownForMdxEditor(draftMarkdown)}
             translation={editorTranslation}
             readOnly={readOnly}
@@ -2191,6 +2200,7 @@ export function MarkdownArtifactEditor({
               writerEmptyHeadingPlugin(),
               writerLocalSourcePlugin(),
               listsPlugin(),
+              writerListNumberingPlugin(),
               quotePlugin(),
               thematicBreakPlugin(),
               linkPlugin(),

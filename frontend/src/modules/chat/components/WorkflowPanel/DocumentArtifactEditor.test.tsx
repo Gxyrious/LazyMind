@@ -166,16 +166,58 @@ it.each([
   api.publishDocument.mockResolvedValue({ data: { data: { artifact_id: 'saved', revision: 2, draft_version: 1,
     document: '# Draft', provider_synced: true, artifact_saved: true, target_document: { adapter: provider, ...target } } } });
   let action: SlotFooterAction | undefined;
+  const onRefresh = vi.fn();
   const slot = { artifact_id: 'publication-link', slot_id: 'draft_document', revision: 1, artifact_value: { text: '# Draft' },
     document: { representation: 'markdown', editable: true, capabilities: ['save', 'publish_document'] } } as SlotRevision;
   render(<SlotEditingContext.Provider value={{ setEditing: vi.fn(), registerFlush: () => () => {},
     registerFooterAction: (_key, next) => { if (next?.icon === 'write-back') action = next; return () => {}; },
-  }}><DocumentArtifactEditor slot={slot} sessionId='fixture' /></SlotEditingContext.Provider>);
+  }}><DocumentArtifactEditor slot={slot} sessionId='fixture' onRefresh={onRefresh} /></SlotEditingContext.Provider>);
   await waitFor(() => expect(action?.disabled).toBe(false));
   await act(async () => action!.onClick());
   await waitFor(() => expect(action?.statusLink).toEqual({ href: url, label: '打开云文档' }));
   expect(action?.statusText).toBe('已写回云文档');
   expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  expect(confirm).not.toHaveBeenCalled();
+  expect(onRefresh).toHaveBeenCalledTimes(1);
+  expect(api.publishDocument).toHaveBeenCalledTimes(1);
+});
+
+it.each(['success', 'failure'])('shows the requested platform throughout publication and clears it after %s', async outcome => {
+  await i18n.changeLanguage('zh-CN');
+  localStorage.clear();
+  api.listDocumentProviders.mockResolvedValue({ data: { data: { providers: [{ id: 'feishu' }, { id: 'notion' }, { id: 'github' }] } } });
+  let finish!: (response: unknown) => void;
+  let fail!: (error: unknown) => void;
+  api.publishDocument.mockImplementation(() => new Promise((resolve, reject) => { finish = resolve; fail = reject; }));
+  let action: SlotFooterAction | undefined;
+  const onRefresh = vi.fn();
+  const slot = { artifact_id: 'feishu-bound', slot_id: 'draft_document', revision: 1, draft_version: 1,
+    provider: 'feishu', provider_document_id: 'feishu-document', write_back_ready: true,
+    artifact_value: { text: '# Draft' }, document: { representation: 'markdown', editable: true, capabilities: ['save', 'publish_document'] } } as SlotRevision;
+  render(<SlotEditingContext.Provider value={{ setEditing: vi.fn(), registerFlush: () => () => {},
+    registerFooterAction: (_key, next) => { if (next?.icon === 'write-back') action = next; return () => {}; },
+  }}><DocumentArtifactEditor slot={slot} sessionId='fixture' onRefresh={onRefresh} /></SlotEditingContext.Provider>);
+  await waitFor(() => expect(action?.disabled).toBe(false));
+  act(() => action!.menu!.find(item => item.key === 'notion')!.onClick());
+  expect(api.publishDocument).toHaveBeenCalledWith('feishu-bound', expect.objectContaining({ input: expect.objectContaining({ provider: 'notion' }) }), expect.anything());
+  expect(action?.label).toBe('正在写入Notion…');
+  expect(action?.disabled).toBe(true);
+  const success = { data: { data: { artifact_id: 'notion-published', revision: 2, draft_version: 1,
+    provider_synced: true, artifact_saved: true, document: '# Draft', target_document: { uri: 'https://example.test/notion' } } } };
+  await act(async () => {
+    if (outcome === 'success') finish(success);
+    else fail({ response: { data: { data: { code: 'DOCUMENT_CONVERSION_FAILED' } } } });
+  });
+  await waitFor(() => expect(action?.disabled).toBe(false));
+  expect(action?.label).toBe('发布');
+  expect(onRefresh).toHaveBeenCalledTimes(outcome === 'success' ? 1 : 0);
+  if (outcome === 'failure') expect(action?.statusText).toContain('Notion');
+  act(() => action!.menu!.find(item => item.key === 'github')!.onClick());
+  expect(action?.label).toBe('正在写入GitHub…');
+  expect(api.publishDocument.mock.calls[1][1].input.provider).toBe('github');
+  await act(async () => finish(success));
+  await waitFor(() => expect(action?.disabled).toBe(false));
+  expect(action?.label).toBe('发布');
   expect(confirm).not.toHaveBeenCalled();
 });
 
