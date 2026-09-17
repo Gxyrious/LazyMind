@@ -116,6 +116,37 @@ func TestEnrichWriterWriteBackSlots_UsesGitHubTarget(t *testing.T) {
 	}
 }
 
+func TestEnrichWriterWriteBackSlots_CurrentTargetSurvivesEditorCheckpoint(t *testing.T) {
+	db := newTestDB(t)
+	mustCreateWriterRecord(t, db.AutoMigrate(&orm.WorkflowHumanArtifact{}))
+	mustCreateWriterRecord(t, db.Create(&orm.WorkflowSession{ID: "session", WorkflowID: "writer-workflow"}).Error)
+	mustCreateWriterRecord(t, db.Create(&orm.WorkflowHumanArtifact{
+		ID: "edited", SessionID: "session", Slot: "draft_document", ContentType: "text/markdown",
+		Value: json.RawMessage(`{"text":"# Edited draft"}`),
+	}).Error)
+	draft := writerRevision("draft", "session", "draft_document", 3, "human", nil)
+	humanID := "edited"
+	draft.HumanArtifactID = &humanID
+	target := writerRevision("target", "session", "target_document", 2, "provider_sync",
+		json.RawMessage(`{"data":{"adapter":"github","doc_id":"acme/docs:branch:README.md","meta":{"pull_request_url":"https://github.com/acme/docs/pull/7"}}}`))
+	old := writerRevision("old-target", "session", "target_document", 1, "host",
+		json.RawMessage(`{"data":{"adapter":"github","doc_id":"acme/docs:main:README.md","meta":{"browser_url":"https://github.com/acme/docs/blob/main/README.md"}}}`))
+	old.Selected = false
+	for _, revision := range []*orm.WorkflowSlotRevision{&draft, &target, &old} {
+		mustCreateWriterRecord(t, db.Create(revision).Error)
+	}
+	old.Selected = false
+	mustCreateWriterRecord(t, db.Model(&old).Update("selected", false).Error)
+	// Session reads append historical step outputs after the selected artifacts.
+	slots := []slotDTO{toSlotDTO(&draft), toSlotDTO(&target), toSlotDTO(&old)}
+	enrichSlots(t.Context(), db.DB, "session", slots)
+	got := slots[0]
+	if got.Provider != "github" || !got.WriteBackReady || got.ProviderDocumentID != "acme/docs:branch:README.md" ||
+		got.WriteBackURL != "https://github.com/acme/docs/pull/7" {
+		t.Fatalf("checkpoint lost its current publication target: %+v", got)
+	}
+}
+
 func TestEnrichWriterWriteBackSlots_UsesObsidianTarget(t *testing.T) {
 	db := newTestDB(t)
 	mustCreateWriterRecord(t, db.DB.Create(&orm.WorkflowSession{

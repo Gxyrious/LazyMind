@@ -8,7 +8,7 @@ import { resolveCoreAssetUrl, resolveMarkdownImageUrlFromMap } from '@/modules/k
 import i18n from '@/i18n';
 import { MarkdownArtifactEditor, type MarkdownSaveMode } from './MarkdownArtifactEditor';
 import { WriterIRControl, type WriterIRSaveMode } from './WriterIRControl';
-import { isWriterDocument, type WriterDocument } from './writerIR';
+import { isWriterDocument, normalizeWriterDocumentForSync, type WriterDocument } from './writerIR';
 import { SlotEditingContext, WorkflowPanelTabActiveContext } from './slotEditingContext';
 import { ArtifactRewriteDialog, type ArtifactRewriteSelection } from './ArtifactRewriteDialog';
 import { useDocumentCopy } from './useDocumentCopy';
@@ -107,7 +107,11 @@ export function DocumentArtifactEditor({ slot: incomingSlot, sessionId, readOnly
   const publicationAvailable=useCallback((allowed:boolean)=>setPublicationBlocked(!allowed),[]);
   const publicationResolved=useCallback(()=>{attempt.current=undefined;setError('');onRefresh?.();},[onRefresh]);
   const draftContent = useRef(initial.value);
-  const [numbering, setNumbering] = useState<WriterNumberingState>();
+  const [numberingView, setNumberingView] = useState<{ source: unknown; id: string; revision: number; draft?: number; result: DocumentNumberingResult }>();
+  const currentNumbering = numberingView && numberingView.source === value && numberingView.id === latest.current.id
+    && numberingView.revision === latest.current.revision && numberingView.draft === latest.current.draft
+    ? numberingView.result : undefined;
+  const numbering = currentNumbering?.numbering as WriterNumberingState | undefined;
   const [selection, setSelection] = useState<ArtifactRewriteSelection | null>(null);
   const [preview, setPreview] = useState<{ id: string; selection: ArtifactRewriteSelection; value: RewriteSelectionPreview } | null>(null);
   const [downloading, setDownloading] = useState(false);
@@ -265,7 +269,7 @@ export function DocumentArtifactEditor({ slot: incomingSlot, sessionId, readOnly
     const current = latest.current;
     const ir = isWriterDocument(content);
     const artifact = ir
-      ? { schema: 'application/vnd.lazymind.writer+json', data: content }
+      ? { schema: 'application/vnd.lazymind.writer+json', data: normalizeWriterDocumentForSync(content) }
       : { text: content, ...(isWriterDocument(current.value) ? { schema: 'text/markdown' } : {}) };
     const response = await WorkflowSessionApi().saveDocumentArtifact(current.id, {
       base_revision: base, base_draft_version: current.draft, mode,
@@ -284,10 +288,14 @@ export function DocumentArtifactEditor({ slot: incomingSlot, sessionId, readOnly
     let canceled = false; const current = latest.current;
     void WorkflowSessionApi().previewDocumentAction(current.id, { action: 'numbering', base_revision: current.revision,
       base_draft_version: current.draft, input: {} }).then((response) => {
-        if (!canceled) setNumbering((response.data.data as DocumentNumberingResult).numbering as WriterNumberingState);
+        if (!canceled && latest.current.id === current.id && latest.current.revision === current.revision
+          && latest.current.draft === current.draft) {
+          setNumberingView({ source: value, id: current.id, revision: current.revision, draft: current.draft,
+            result: response.data.data as DocumentNumberingResult });
+        }
       }).catch(() => {});
     return () => { canceled = true; };
-  }, [loaded, version, value, descriptor.capabilities]);
+  }, [loaded, version, value, slot.artifact_id, slot.draft_version, descriptor.capabilities]);
   useDocumentCopy({ enabled: loaded, editingKey, sessionId, slotId: slot.slot_id, listIndex: slot.list_index ?? -1,
     revision: latest.current.revision, draftVersion: latest.current.draft,
     document: value as string | WriterDocument, pendingReview: Boolean(preview) });
@@ -425,6 +433,7 @@ export function DocumentArtifactEditor({ slot: incomingSlot, sessionId, readOnly
     <div className={`workflow-slot__artifact-body${representation === 'markdown' ? ' workflow-slot__artifact-body--markdown' : ''}`}>
     {representation === 'markdown' && typeof value === 'string'
       ? <MarkdownArtifactEditor renderContext={descriptor.render_context} markdown={value} sourceRevision={version} editingKey={editingKey} readOnly={!writable} savePaused={busy} allowMultipleParagraphs
+        numberingDocument={typeof currentNumbering?.document === 'string' ? currentNumbering.document : undefined}
         resolveImageUrl={resolveImageUrl} onContentChange={edit} numbering={numbering} toolbarActions={versionHistory}
         onRewriteSelection={canRewrite ? (picked) => { if (picked.supported) setSelection({ type: 'markdown', selected_text: picked.text, selectedText: picked.text, paragraph: picked.paragraph, paragraphs: picked.paragraphSelections?.map(item => item.paragraph), startOffset: picked.startOffset, sourceRange: picked.sourceRange, sourceRanges: picked.sourceRanges, anchor: picked.anchor }); } : undefined}
         rewriteDialogOpen={selection !== null}

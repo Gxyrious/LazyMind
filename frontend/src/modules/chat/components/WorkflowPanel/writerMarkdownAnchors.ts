@@ -168,7 +168,10 @@ function writerMarkdownImageTarget(line: string): WriterMarkdownImageTarget | un
   return { source, label: attributes.get('alt')?.trim() ?? '' };
 }
 
-function writerMarkdownTargetBindings(markdown: string): WriterMarkdownTargetBinding[] {
+function writerMarkdownTargetBindings(
+  markdown: string,
+  anchorLines?: Map<number, string>,
+): WriterMarkdownTargetBinding[] {
   const bindings: WriterMarkdownTargetBinding[] = [];
   let pendingAnchor: {
     id: string;
@@ -204,6 +207,7 @@ function writerMarkdownTargetBindings(markdown: string): WriterMarkdownTargetBin
     }
     const anchor = trimmed.match(SYSTEM_ANCHOR_LINE_RE);
     if (anchor) {
+      anchorLines?.set(lineIndex, anchor[2]);
       pendingAnchor = {
         id: anchor[2],
         lineIndex,
@@ -269,7 +273,8 @@ export function protectWriterMarkdownAnchors(
   const configLine = headingNumberingConfigLine(nextMarkdown)
     ?? headingNumberingConfigLine(previousMarkdown);
   const previous = writerMarkdownTargetBindings(previousMarkdown);
-  const next = writerMarkdownTargetBindings(nextMarkdown);
+  const nextAnchorLines = new Map<number, string>();
+  const next = writerMarkdownTargetBindings(nextMarkdown, nextAnchorLines);
   if (next.length === 0) {
     return withHeadingNumberingConfigLine(nextMarkdown, configLine, preserveWhitespace);
   }
@@ -286,9 +291,7 @@ export function protectWriterMarkdownAnchors(
       usedAnchorIds.add(target.anchorId);
     }
   });
-  next.forEach((target) => {
-    if (target.anchorId) usedAnchorIds.add(target.anchorId);
-  });
+  nextAnchorLines.forEach((anchorId) => usedAnchorIds.add(anchorId));
 
   const matchedPrevious = next.map((target) => previousBySignature.get(target.signature)?.shift());
   const consumedPrevious = new Set(
@@ -346,6 +349,14 @@ export function protectWriterMarkdownAnchors(
       .map((target) => target.anchorLineIndex)
       .filter((lineIndex): lineIndex is number => lineIndex !== undefined),
   );
+  // Restoring an existing target's identity moves its sidecar; it must not
+  // leave the old occurrence attached to an inserted paragraph. Only move
+  // ids owned by previous targets, preserving unrelated paragraph anchors.
+  nextAnchorLines.forEach((anchorId, lineIndex) => {
+    if (previousAnchorOwner.has(anchorId) && assignedAnchorIds.has(anchorId)) {
+      targetAnchorLines.add(lineIndex);
+    }
+  });
   const insertBefore = new Map<number, string>();
   const insertAfter = new Map<number, string>();
   next.forEach((target, index) => {

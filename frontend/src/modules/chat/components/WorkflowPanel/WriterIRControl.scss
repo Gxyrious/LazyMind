@@ -376,6 +376,7 @@
 }
 
 .writer-ir__document[contenteditable='true'] .writer-ir__heading[data-writer-heading-placeholder] {
+  min-block-size: 1lh;
   position: relative;
   display: block;
   font-size: revert;

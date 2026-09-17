@@ -501,6 +501,7 @@ interface MarkdownArtifactEditorProps {
   markdown: string;
   resolveImageUrl?: MarkdownImageResolver;
   numbering?: WriterNumberingState;
+  numberingDocument?: string;
   sourceRevision: number;
   maxHeight?: number;
   /** Compact chat presentation hides Workflow-only document chrome. */
@@ -577,6 +578,7 @@ export function MarkdownArtifactEditor({
   renderContext,
   resolveImageUrl,
   numbering,
+  numberingDocument,
   sourceRevision,
   maxHeight,
   presentation = 'workflow',
@@ -678,11 +680,11 @@ export function MarkdownArtifactEditor({
       || writerMarkdownPersistenceIdentity(draftMarkdown) !== writerMarkdownPersistenceIdentity(baseMarkdown);
   const materializedDraftMarkdown = useMemo(
     () => protectWriterMarkdownAnchors(
-      anchorSourceMarkdown,
+      numberingDocument ?? anchorSourceMarkdown,
       draftMarkdown,
       false,
     ),
-    [anchorSourceMarkdown, draftMarkdown],
+    [anchorSourceMarkdown, draftMarkdown, numberingDocument],
   );
   copySnapshotRef.current = dirty
     ? writerMarkdownForSave(materializedDraftMarkdown)

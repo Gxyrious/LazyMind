@@ -19,6 +19,7 @@ import (
 	corestore "lazymind/core/store"
 	"lazymind/core/subagent"
 	"lazymind/core/workflow/document"
+	workflowstore "lazymind/core/workflow/store"
 )
 
 type DocumentPublishInput struct {
@@ -253,7 +254,10 @@ func PublishDocumentArtifact(ctx context.Context, db *gorm.DB, owner, id string,
 	if err != nil || session.CreateUserID != owner || strings.TrimSpace(owner) == "" || session.Dismissed {
 		return nil, nil, documentFailure("ARTIFACT_NOT_FOUND", 404)
 	}
-	shared := session.WorkflowID == "writer-workflow" && revision.ListIndex == nil && (revision.SlotID == "draft_document" || revision.SlotID == "flat_draft_document")
+	if !workflowstore.ArtifactPublicationAllowed(session.WorkflowID, revision.SlotID, revision.ListIndex) {
+		return nil, nil, documentFailure("DOCUMENT_ACTION_UNSUPPORTED", 422)
+	}
+	shared := session.WorkflowID == "writer-workflow"
 	in := DocumentPublicationInput{ArtifactID: id, OwnerUserID: owner, SessionID: session.ID, SlotID: revision.SlotID, ListIndex: revision.ListIndex, BaseRevision: *body.BaseRevision, BaseDraftVersion: body.BaseDraftVersion, Provider: body.Input.Provider, IdempotencyKey: body.Input.IdempotencyKey, Title: body.Input.Title, ParentURI: body.Input.ParentURI, Template: body.Input.Template, AllowBound: true, SharedTarget: shared, CandidateValue: options.Candidate}
 	op, created, err := prepareDocumentPublication(ctx, db, in)
 	if err != nil {

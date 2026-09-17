@@ -47,6 +47,9 @@ func enrichWriterWriteBackSlots(ctx context.Context, db *gorm.DB, sessionID stri
 	var source *slotDTO
 	var target *slotDTO
 	for i := range slots {
+		if !slots[i].Selected {
+			continue
+		}
 		if slots[i].SlotID == "source_document" && slots[i].ListIndex == nil {
 			source = &slots[i]
 		}
@@ -60,7 +63,7 @@ func enrichWriterWriteBackSlots(ctx context.Context, db *gorm.DB, sessionID stri
 			_, bound := writerProviderBindingFromTargetArtifact(targetValue)
 			if bound {
 				sourceValue, sourceErr := loadWriterSlotDTOValue(ctx, db, sessionID, *source)
-				if sourceErr == nil && writerArtifactIsMarkdown(sourceValue) {
+				if sourceErr == nil && writerArtifactIsMarkdown(sourceValue, source.ContentType) {
 					source.EditorProfile = writerMarkdownSourceEditor
 				}
 			}
@@ -111,7 +114,7 @@ func writerWriteBackState(
 	}
 	var binding writerProviderBinding
 	hasBinding := false
-	draftIsMarkdown := writerArtifactIsMarkdown(draftValue)
+	draftIsMarkdown := writerArtifactIsMarkdown(draftValue, draft.ContentType)
 	if !draftIsMarkdown {
 		binding, hasBinding = writerProviderBindingFromArtifact(draftValue)
 	}
@@ -137,7 +140,7 @@ func writerWriteBackState(
 		binding, hasBinding = writerProviderBindingFromArtifact(draftValue)
 	}
 	if !hasBinding && source != nil {
-		if sourceIsUnboundIR || writerArtifactIsMarkdown(draftValue) {
+		if sourceIsUnboundIR || draftIsMarkdown {
 			info.State = writerWriteBackInitialDelivery
 		}
 		return info
@@ -179,7 +182,7 @@ func writerWriteBackState(
 			return info
 		}
 	}
-	if hasBinding || writerArtifactIsMarkdown(draftValue) {
+	if hasBinding || draftIsMarkdown {
 		info.State = writerWriteBackInitialDelivery
 	}
 	return info
@@ -330,7 +333,20 @@ func resolveWriterArtifact(value json.RawMessage) (json.RawMessage, bool) {
 	return content, true
 }
 
-func writerArtifactIsMarkdown(value json.RawMessage) bool {
+func writerArtifactIsMarkdown(value json.RawMessage, contentType string) bool {
+	// Editor checkpoints store explicitly typed Markdown as a text carrier.
+	if strings.EqualFold(strings.TrimSpace(strings.SplitN(contentType, ";", 2)[0]), "text/markdown") {
+		var text string
+		if json.Unmarshal(value, &text) == nil {
+			return strings.TrimSpace(text) != ""
+		}
+		var carrier struct {
+			Text string `json:"text"`
+		}
+		if json.Unmarshal(value, &carrier) == nil && strings.TrimSpace(carrier.Text) != "" {
+			return true
+		}
+	}
 	var artifact struct {
 		Schema string          `json:"schema"`
 		Data   json.RawMessage `json:"data"`

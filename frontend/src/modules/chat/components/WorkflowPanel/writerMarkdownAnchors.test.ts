@@ -15,6 +15,35 @@ import {
 } from './writerMarkdownAnchors';
 
 describe('Writer Markdown system anchors', () => {
+  it.each(['新增段落', '新增段落\n\n第二段'])('moves the old sidecar when inserting %s before a heading', (inserted) => {
+    const anchor = '<a id="block-sec-1" numbering="restart"></a>';
+    const source = `${anchor}\n## 原标题\n\n[引用](#block-sec-1)`;
+    const edited = `${anchor}\n${inserted}\n\n## 原标题\n\n[引用](#block-sec-1)`;
+    const saved = writerMarkdownForSave(protectWriterMarkdownHeadingAnchors(source, edited, true, true));
+    expect(saved).toBe(`${inserted}\n\n${anchor}\n## 原标题\n\n[引用](#block-sec-1)`);
+    expect(writerMarkdownForSave(protectWriterMarkdownHeadingAnchors(saved, saved, true, true))).toBe(saved);
+  });
+
+  it('moves an image sidecar without touching paragraph, custom, or fenced anchors', () => {
+    const anchor = '<a id="block-image-1"></a>';
+    const untouched = '<a id="custom"></a>\n<a id="block-paragraph-1"></a>\n正文\n\n```html\n'
+      + anchor + '\n```\n\n';
+    const image = '![图](image.png)';
+    const source = `${untouched}${anchor}\n${image}`;
+    const edited = `${untouched}${anchor}\n新增段落\n\n${image}`;
+    expect(writerMarkdownForSave(protectWriterMarkdownHeadingAnchors(source, edited, true, true)))
+      .toBe(`${untouched}新增段落\n\n${anchor}\n${image}`);
+  });
+
+  it('gives a pasted duplicate heading its own id while keeping the original reference target', () => {
+    const source = '<a id="block-sec-1"></a>\n## 标题';
+    const saved = writerMarkdownForSave(protectWriterMarkdownHeadingAnchors(source, `${source}\n\n${source}`));
+    const ids = [...saved.matchAll(/<a id="([^"]+)"/g)].map(match => match[1]);
+    expect(ids).toHaveLength(2);
+    expect(ids[0]).toBe('block-sec-1');
+    expect(ids[1]).not.toBe(ids[0]);
+  });
+
   it('preserves source whitespace and mixed line endings when adding navigation anchors', () => {
     const source = '# Title\r\n\r\n\r\n## Section\n\n\n![Image](image.png)\r\n\r\n';
     const saved = writerMarkdownForSave(protectWriterMarkdownHeadingAnchors(source, source, true, true));

@@ -17,6 +17,7 @@ import {
   type RewriteSelectionPreview,
 } from '@/modules/chat/utils/request';
 import { selectionActionAnchor, type SelectionActionAnchor } from './artifactRewriteSelection';
+import { captureRewriteScrollAnchor } from './rewriteScrollAnchor';
 import './ArtifactRewriteDialog.scss';
 import './ArtifactRewriteSelectionHighlight.scss';
 
@@ -487,12 +488,14 @@ export function ArtifactRewriteInlineDiff({
 
   const apply = useCallback(async () => {
     if (applying) return;
+    const restoreScroll = captureRewriteScrollAnchor([target]);
     setApplying(true);
     setError(undefined);
     try {
       if (applyPreview) {
         const revision = await applyPreview();
         onApplied(revision);
+        restoreScroll();
         return;
       }
       if (preview.commit?.token) {
@@ -505,6 +508,7 @@ export function ArtifactRewriteInlineDiff({
           throw new Error('invalid commit response');
         }
         onApplied(response.data.data.revision, response.data.data.draft_version);
+        restoreScroll();
         return;
       }
       const response = await WorkflowSessionApi().patchSlotItem(
@@ -528,11 +532,12 @@ export function ArtifactRewriteInlineDiff({
         throw new Error('invalid patch response');
       }
       onApplied(result.revision, result.draft_version);
+      restoreScroll();
     } catch (applyError) {
       setError(t(errorMessage(errorCode(applyError), 'chat.artifactRewrite.errors.applyFailed')));
       setApplying(false);
     }
-  }, [applyPreview, applying, listIndex, onApplied, preview, sessionId, slotId, t]);
+  }, [applyPreview, applying, listIndex, onApplied, preview, sessionId, slotId, t, target]);
 
   if (!layer) return null;
   return ReactDOM.createPortal(
