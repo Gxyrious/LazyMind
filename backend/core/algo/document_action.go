@@ -22,7 +22,7 @@ type DocumentActionInvokeResponse struct {
 	Result json.RawMessage `json:"result"`
 }
 
-const DocumentActionTimeout = 2 * time.Minute
+const DocumentActionTimeout = 10 * time.Minute
 
 func InvokeDocumentAction(ctx context.Context, request DocumentActionInvokeRequest) (*DocumentActionInvokeResponse, int, error) {
 	var response DocumentActionInvokeResponse
