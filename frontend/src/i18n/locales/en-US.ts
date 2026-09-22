@@ -2687,6 +2687,7 @@ const enUS = {
       },
     },
     writerIR: {
+      referenceTargetMissing: "The reference target is missing. Check the generated heading or paragraph format.",
       documentRegion: "Structured document",
       displaySettings: "Document display settings",
       outline: "Table of contents",
