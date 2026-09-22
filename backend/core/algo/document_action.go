@@ -16,17 +16,18 @@ type DocumentActionInvokeRequest struct {
 	ArtifactStore string          `json:"artifact_store"`
 	ToolConfig    map[string]any  `json:"tool_config,omitempty"`
 	LLMConfig     map[string]any  `json:"llm_config,omitempty"`
+	Timeout       time.Duration   `json:"-"`
 }
 
 type DocumentActionInvokeResponse struct {
 	Result json.RawMessage `json:"result"`
 }
 
-const DocumentActionTimeout = 10 * time.Minute
+const DocumentActionTimeout = 2 * time.Minute
 
 func InvokeDocumentAction(ctx context.Context, request DocumentActionInvokeRequest) (*DocumentActionInvokeResponse, int, error) {
 	var response DocumentActionInvokeResponse
-	err := common.ApiPost(ctx, common.JoinURL(common.ChatServiceEndpoint(), "/api/document/actions:invoke"), request, nil, &response, DocumentActionTimeout)
+	err := common.ApiPost(ctx, common.JoinURL(common.ChatServiceEndpoint(), "/api/document/actions:invoke"), request, nil, &response, max(DocumentActionTimeout, request.Timeout))
 	if err != nil {
 		return nil, workflowActionHTTPStatus(err), err
 	}

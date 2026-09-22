@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"gorm.io/gorm"
 	"lazymind/core/algo"
@@ -352,7 +353,7 @@ func runDocumentRewrite(w http.ResponseWriter, r *http.Request, phase, owner str
 	}
 	artifact, _ := json.Marshal(artifactPayload)
 	response, status, err := algo.InvokeDocumentAction(r.Context(), algo.DocumentActionInvokeRequest{
-		Reference: documentRewriteReference, Phase: phase, Artifact: artifact, Arguments: request.arguments, ArtifactStore: artifactStore, LLMConfig: config,
+		Reference: documentRewriteReference, Phase: phase, Artifact: artifact, Arguments: request.arguments, ArtifactStore: artifactStore, LLMConfig: config, Timeout: 10 * time.Minute,
 	})
 	if err != nil {
 		replyDocumentFailure(w, documentUpstreamFailure(status, err))
