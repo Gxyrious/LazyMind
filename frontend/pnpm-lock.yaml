@@ -92,12 +92,21 @@ importers:
       markdown-it:
         specifier: ^14.1.1
         version: 14.1.1
+      mdast-util-from-markdown:
+        specifier: ^2.0.2
+        version: 2.0.3
+      mdast-util-frontmatter:
+        specifier: ^2.0.1
+        version: 2.0.1
       mdast-util-to-markdown:
         specifier: 2.1.2
         version: 2.1.2
       mermaid:
         specifier: ^11.15.0
         version: 11.15.0
+      micromark-extension-frontmatter:
+        specifier: ^2.0.0
+        version: 2.0.0
       moment:
         specifier: ^2.30.1
         version: 2.30.1

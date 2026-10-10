@@ -1,4 +1,7 @@
 import { writerOutlineDescription } from './writerOutlineDescription';
+import { irImageCandidates, imageGroups, imageGroupKey, imageGroupLayout, setImageGroup } from './writerImageGroups';
+import { WriterImageGroupControls } from './WriterImageGroupControls';
+import './writerImageGroups.css';
 import { mergeIRRewrite } from './mergeRewritePreview';
 import { createPortal } from 'react-dom';
 import { WriterLocalSourceEditor } from './WriterLocalSourceEditor';
@@ -121,7 +124,8 @@ const WRITER_CODE_LANGUAGES = [
 
 function imageReferencePath(block: WriterBlock): string {
   const reference = block.references?.find((item) => item.type === 'preview_asset')
-    ?? block.references?.find((item) => item.type === 'media_asset');
+    ?? block.references?.find((item) => item.type === 'media_asset')
+    ?? block.references?.find((item) => item.type === 'wechat_image');
   const value = reference?.url ?? reference?.path;
   return typeof value === 'string' ? resolveCoreAssetUrl(value) : '';
 }
@@ -920,6 +924,10 @@ function parseEditorDocument(editor: HTMLElement, source: WriterDocument): Write
       if (child.matches('[data-writer-document-title]')) continue;
       if (child.matches('[data-writer-fold-toggle]')) continue;
       if (child.matches('[data-writer-drag-handle]')) continue;
+      if (child.matches('.writer-image-group-host')) continue;
+      if (child.matches('.writer-image-group, .writer-image-group-images')) {
+        blocks.push(...parseSequence(child)); continue;
+      }
       if (child.matches('[data-writer-document-root]')) {
         blocks.push(...parseSequence(child));
         continue;
@@ -951,6 +959,7 @@ function parseEditorDocument(editor: HTMLElement, source: WriterDocument): Write
   const nextTopLevel: WriterBlock[] = [];
   for (const child of Array.from(editor.children)) {
     if (!(child instanceof HTMLElement) || child.matches('[data-writer-document-title]')) continue;
+    if (child.matches('.writer-image-group')) { nextTopLevel.push(...parseSequence(child)); continue; }
     const documentRootId = child.dataset.writerDocumentRoot;
     if (documentRootId) {
       const existingRoot = findWriterBlock(titledDocument.blocks, documentRootId);
@@ -1287,6 +1296,7 @@ export function WriterIRDocumentEditor({
   const editorRef = useRef<HTMLElement | null>(null);
   const formatToolbarRef = useRef<HTMLDivElement | null>(null);
   const [localHosts, setLocalHosts] = useState<HTMLElement[]>([]);
+  const [imageGroupHosts, setImageGroupHosts] = useState<Array<{ host: HTMLElement; images: ReturnType<typeof irImageCandidates>[number] }>>([]);
   const [rewriteLayer, setRewriteLayer] = useState<HTMLDivElement | null>(null);
   const [rewriteTargets, setRewriteTargets] = useState<Array<HTMLElement | null>>([]);
   const [rewriteTarget, setRewriteTarget] = useState<HTMLElement | null>(null);
@@ -1332,6 +1342,29 @@ export function WriterIRDocumentEditor({
   }), [t]);
   const dragLabel = t('chat.writerIR.dragBlock');
 
+  const syncImageGroups = () => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    for (const group of editor.querySelectorAll<HTMLElement>('.writer-image-group')) {
+      const children = group.querySelector('.writer-image-group-images');
+      if (children) group.replaceWith(...Array.from(children.children));
+    }
+    const hosts: typeof imageGroupHosts = [];
+    const settings = imageGroups(document.metadata?.image_groups);
+    for (const images of irImageCandidates(document)) {
+      const elements = images.nodeIds!.map(id => Array.from(editor.querySelectorAll<HTMLElement>('[data-writer-block]')).find(element => element.dataset.nodeId === id));
+      if (elements.some(element => !element) || elements.some(element => element?.parentElement !== elements[0]?.parentElement)) continue;
+      const group = window.document.createElement('section'); group.className = 'writer-image-group';
+      group.dataset.layout = imageGroupLayout(settings, images.images) ?? 'vertical';
+      group.dataset.imageGroupKey = imageGroupKey(images.images);
+      const host = window.document.createElement('div'); host.className = 'writer-image-group-host'; host.contentEditable = 'false';
+      const children = window.document.createElement('div'); children.className = 'writer-image-group-images';
+      elements[0]!.before(group); group.append(host, children); elements.forEach(element => children.append(element!));
+      hosts.push({ host, images });
+    }
+    setImageGroupHosts(hosts);
+  };
+
   useLayoutEffect(() => {
     const editor = editorRef.current;
     if (!editor) return;
@@ -1351,6 +1384,7 @@ export function WriterIRDocumentEditor({
         restoreEditorSelection(editor, pendingSelection, { scrollIntoView: true });
       }
       syncBlockControlPositions(editor);
+      syncImageGroups();
       return;
     }
 
@@ -1371,6 +1405,7 @@ export function WriterIRDocumentEditor({
     lastRenderedNumberingRef.current = numbering;
     lastCollapseVersionRef.current = collapseVersion;
     syncBlockControlPositions(editor);
+    syncImageGroups();
     if (scrollContainer && previousScrollTop != null) {
       scrollContainer.scrollTop = previousScrollTop;
     }
@@ -2890,6 +2925,24 @@ export function WriterIRDocumentEditor({
         onMouseUp={recordSelection}
         onKeyUp={handleKeyUp}
       />
+      {imageGroupHosts.map(({ host, images }) => host.isConnected && createPortal(<WriterImageGroupControls
+        count={images.images.length} layout={imageGroupLayout(imageGroups(document.metadata?.image_groups), images.images)} readOnly={disabled}
+        onLayout={layout => onChange({ ...document, metadata: { ...document.metadata,
+          image_groups: setImageGroup(imageGroups(document.metadata?.image_groups), images.images, layout) } })}
+        onMove={(index, direction) => {
+          const next = structuredClone(document);
+          const visit = (blocks: WriterBlock[]): boolean => {
+            const current = blocks.findIndex(block => block.node_id === images.nodeIds![index]);
+            if (current >= 0) {
+              const target = blocks.findIndex(block => block.node_id === images.nodeIds![index + direction]);
+              if (target < 0) throw new Error('图片移动位置无效');
+              [blocks[current], blocks[target]] = [blocks[target], blocks[current]]; return true;
+            }
+            return blocks.some(block => visit(block.children ?? []));
+          };
+          if (!visit(next.blocks)) throw new Error('图片组已经发生变化');
+          onChange(next);
+        }} />, host, images.nodeIds![0]))}
       {localHosts.map(host => {
         const inline = Boolean(host.dataset.writerInlineMath);
         const id = host.dataset.writerLocalHost ?? host.dataset.writerInlineMath!;

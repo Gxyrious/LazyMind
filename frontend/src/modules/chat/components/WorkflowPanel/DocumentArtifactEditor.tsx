@@ -20,6 +20,7 @@ import { documentPublicationErrorMessage } from './documentPublicationError';
 import { DocumentPublicationRecoveryPanel } from './DocumentPublicationRecoveryPanel';
 import { documentPublicationTargetUrl } from './documentPublicationUrl';
 import { WriterProviderIcon } from './DocumentProviderChoice';
+import { pendingImageGroups, keepVerticalImageGroups, imageGroupKey } from './writerImageGroups';
 import type { SlotVersionPopover } from './SlotComponents';
 
 function unwrap(value: unknown): unknown {
@@ -403,6 +404,7 @@ export function DocumentArtifactEditor({ slot: incomingSlot, sessionId, readOnly
     } finally { publishPending.current = false; setPublishingProvider(null);setPublicationRefresh(value=>value+1); }
   }, [accept, busy, publicationBlocked, onRefresh, availability.refresh]);
   const publishRef = useRef(publish); publishRef.current = publish;
+  const imageGroupReminders = useRef(new Set<string>());
 
   const providerLabel = (provider: string) => i18n.exists(`chat.writerIR.providers.${provider}`) ? String(i18n.t(`chat.writerIR.providers.${provider}`)) : provider;
   const chooseProvider = (provider: string) => {
@@ -414,6 +416,31 @@ export function DocumentArtifactEditor({ slot: incomingSlot, sessionId, readOnly
       return;
     }
     setAuthorizationNeeded(''); setError(''); setErrorAction(null);
+    const content = draftContent.current;
+    if (provider === 'wechat' && (typeof content === 'string' || isWriterDocument(content))) {
+      const pending = pendingImageGroups(content).filter(group => !imageGroupReminders.current.has(imageGroupKey(group.images)));
+      if (pending.length) {
+        pending.forEach(group => imageGroupReminders.current.add(imageGroupKey(group.images)));
+        Modal.confirm({ title: '图片展示方式',
+          content: `正文中有 ${pending.length} 组连续图片包含三张及以上图片，可以设为横向滑动图组。`,
+          okText: '保持纵向继续发布', cancelText: '返回正文设置',
+          onCancel: () => {
+            const groups = Array.from(window.document.querySelectorAll<HTMLElement>('.writer-image-group'));
+            const pendingKeys = new Set(pending.map(candidate => imageGroupKey(candidate.images)));
+            const group = groups.find(element => pendingKeys.has(element.dataset.imageGroupKey ?? ''));
+            group?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+            group?.querySelector<HTMLButtonElement>('button')?.focus();
+          },
+          onOk: async () => {
+            const current = draftContent.current;
+            if (typeof current !== 'string' && !isWriterDocument(current)) throw new Error('文档内容不可用');
+            await save(keepVerticalImageGroups(current), latest.current.revision, 'draft');
+            await publishRef.current(provider);
+          },
+        });
+        return;
+      }
+    }
     try { localStorage.setItem('writer-publish-provider', provider); } catch { /* Storage preferences are optional. */ }
     if (slot.provider === provider && (slot.provider_document_id || slot.write_back_ready)) {
       const safeTarget = documentPublicationTargetUrl({ uri: slot.write_back_url, doc_id: slot.provider_document_id }, slot.provider);

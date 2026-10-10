@@ -1,4 +1,5 @@
 import { writerOutlineDescription } from './writerOutlineDescription';
+import { writerImageGroupPlugin } from './writerImageGroupPlugin';
 import {
   BlockTypeSelect,
   BoldItalicUnderlineToggles,
@@ -2093,6 +2094,7 @@ export function MarkdownArtifactEditor({
               linkDialogPlugin(),
               tablePlugin(),
               frontmatterPlugin(),
+              writerImageGroupPlugin(),
               jsxPlugin({
                 jsxComponentDescriptors: [{
                   name: 'a',
