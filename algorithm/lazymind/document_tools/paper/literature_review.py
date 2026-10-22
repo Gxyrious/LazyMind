@@ -4,13 +4,14 @@ import unicodedata
 from datetime import date
 from pathlib import Path
 from time import sleep
-from typing import Annotated, Literal
+from typing import Annotated, Callable, Literal
 from urllib.parse import unquote, urlsplit
 
 import lazyllm
 import httpx
 from filelock import FileLock
 from lazyllm import AutoModel, ThreadPoolExecutor
+from lazyllm.common import KeyAuthError
 from lazyllm.tools.writer.tools.base import WriterToolBase
 from pydantic import BaseModel, ConfigDict, Field, create_model
 
@@ -33,6 +34,7 @@ from .prompts.literature_review_prompt import (
 class _SearchPlan(BaseModel):
     model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
     queries: dict[str, Annotated[int, Field(ge=1)]]
+    knowledge_base_only: bool = False
     year_from: int | None = None
     year_to: int | None = None
     paper_limit: int | None = Field(
@@ -44,6 +46,50 @@ class _ReadingNote(BaseModel):
     model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
     note: str = Field(min_length=1)
     citation: str
+
+
+def _progress(callback, key: str, title: str, status: str = 'running', **details) -> None:
+    if callback is not None:
+        callback({'subtask_id': key, 'node_id': 'literature_review', 'node_title': title,
+                  'status': status, **details})
+
+
+def _input_budget() -> int:
+    injected = lazyllm.globals['config'].get('dynamic_model_configs', {})
+    role = injected.get('llm', {}).get('chat') or _role_entry(load_model_config().get('llm'))
+    return build_context_budget(llm_config={'llm': role}).effective_input_budget
+
+
+def _prompt(instruction: str, data: dict) -> str:
+    data = copy.deepcopy(data)
+    for candidate in data.get('candidates', []):
+        candidate.pop('snippet', None)
+
+    def render(value):
+        return INPUT_PROMPT.format(instruction=instruction, data=json.dumps(value, ensure_ascii=False))
+
+    limit = _input_budget()
+    prompt = render(data)
+    if estimate_tokens(prompt) <= limit:
+        return prompt
+    data['truncated'] = True
+    passages = []
+    for key in ('papers', 'sources', 'candidates'):
+        for paper in data.get(key, []):
+            field = max((name for name in ('note', 'text', 'abstract', 'snippet') if paper.get(name)),
+                        key=lambda name: estimate_tokens(paper[name]), default=None)
+            if field:
+                passages.append((paper, field, paper[field]))
+                paper[field] = ''
+    available = limit - estimate_tokens(render(data))
+    if not passages or available < len(passages):
+        raise ValueError('研究要求和文献信息超出模型输入预算，请缩短要求或减少材料。')
+    for paper, field, text in passages:
+        paper[field] = _chunks(text, available // len(passages))[0]
+    prompt = render(data)
+    if estimate_tokens(prompt) > limit:
+        raise ValueError('文献材料截断后仍超出模型输入预算。')
+    return prompt
 
 
 def _chunks(text: str, max_tokens: int) -> list[str]:
@@ -65,9 +111,13 @@ def _chunks(text: str, max_tokens: int) -> list[str]:
 
 def _read_note(source: dict, context: dict, input_tokens: int) -> dict:
     writer = WriterToolBase(llm=AutoModel(model='llm'))
-    data = {**source, 'research': context, 'source_id': source['id'],
+    text = source.get('text') or ''
+    if not text.strip():
+        text = source['abstract']
+        source['reading'] = {'content_type': 'abstract'}
+    data = {**{key: value for key, value in source.items() if key not in ('text', 'abstract')},
+            'research': context, 'source_id': source['id'],
             'citation': source.get('citation', ''), 'text': ''}
-    text = source['text']
     while True:
         overhead = estimate_tokens(INPUT_PROMPT.format(
             instruction=READING_NOTE_PROMPT, data=json.dumps(data, ensure_ascii=False),
@@ -84,21 +134,26 @@ def _read_note(source: dict, context: dict, input_tokens: int) -> dict:
                 data['citation'] = reading.citation
         if len(notes) == 1:
             source['citation'] = data['citation']
-            return {**{key: value for key, value in source.items() if key != 'text'}, 'note': notes[0]}
+            return {**{key: source[key] for key in ('id', 'title', 'citation')}, 'note': notes[0]}
         condensed = '\n\n'.join(notes)
         if estimate_tokens(condensed) >= estimate_tokens(text):
             raise ValueError('阅读笔记未能缩短输入内容，无法继续合并。')
         text = condensed
 
 
-def _notes(sources: list[dict], context: dict) -> list[dict]:
-    injected = lazyllm.globals['config'].get('dynamic_model_configs', {})
-    role = injected.get('llm', {}).get('chat') or _role_entry(load_model_config().get('llm'))
-    budget = build_context_budget(llm_config={'llm': role})
+def _notes(sources: list[dict], context: dict, on_progress=None) -> list[dict]:
+    input_tokens = _input_budget()
+
+    def read(source):
+        key = f'note-{source["id"]}'
+        _progress(on_progress, key, '阅读论文', question=source['title'], tools_used=['llm'])
+        note = _read_note(source, context, input_tokens)
+        _progress(on_progress, key, '阅读论文', 'completed', question=source['title'],
+                  result_summary='已整理阅读笔记和 citation。')
+        return note
+
     with ThreadPoolExecutor() as executor:
-        return list(executor.map(
-            lambda source: _read_note(source, context, budget.effective_input_budget), sources,
-        ))
+        return list(executor.map(read, sources))
 
 
 def _identity(source: dict) -> set[tuple[str, str]]:
@@ -125,16 +180,15 @@ def _identity(source: dict) -> set[tuple[str, str]]:
     return {key for key in keys if key[1]}
 
 
-def _provider(request: str):
+def _providers(request: str) -> list:
     from lazymind.chat.service.component.tool_policy import select_search_provider
     from lazymind.chat.service.component.tool_registry import DEFAULT_TOOLS
 
     config = next(item for item in DEFAULT_TOOLS if item.name == 'academic_search')
     _, definition = select_search_provider(config, request)
-    for provider in definition['tools']:
-        if provider.__key_source__():
-            return type(provider)(timeout=httpx.Timeout(None, connect=15))
-    raise ValueError('所选学术检索服务缺少凭据，请在工具配置中填写。')
+    providers = {provider.source_name: provider
+                 for provider in [*definition['tools'], *config.tool['tools']] if provider.__key_source__()}
+    return [type(provider)(timeout=httpx.Timeout(None, connect=15)) for provider in providers.values()]
 
 
 def _arxiv_request(call, *args, **kwargs):
@@ -204,9 +258,11 @@ def _content(provider, source: dict) -> dict:
     return source
 
 
-def _retrieve(provider, plan: _SearchPlan, sources: list[dict],
-              seen: dict, used_ids: set[str], context: dict) -> list[dict]:
+def _retrieve(providers: list, plan: _SearchPlan, sources: list[dict],
+              seen: dict, used_ids: set[str], context: dict, on_progress=None,
+              round_number: int = 1) -> list[dict]:
     candidates = []
+    provider = providers[0] if providers else None
 
     def register(source):
         keys = _identity(source)
@@ -228,13 +284,33 @@ def _retrieve(provider, plan: _SearchPlan, sources: list[dict],
         seen.update((key, source) for key in keys)
         candidates.append(source)
 
-    if provider.source_name == 'arxiv':
-        batches = [_search(provider, query, count, plan) for query, count in plan.queries.items()]
-    else:
-        with ThreadPoolExecutor() as executor:
-            batches = list(executor.map(
-                lambda item: _search(provider, item[0], item[1], plan), plan.queries.items(),
-            ))
+    def search(item):
+        index, (query, count) = item
+        key = f'search-{round_number}-{index}'
+        title = f'第 {round_number} 轮文献检索'
+        _progress(on_progress, key, title, question=query, subtask_type='retrieve',
+                  tools_used=[provider.source_name])
+        batch = _search(provider, query, count, plan)
+        _progress(on_progress, key, title, 'completed', question=query, subtask_type='retrieve',
+                  result_summary=f'返回 {len(batch)} 条候选记录。')
+        return batch
+
+    queries = list(enumerate(plan.queries.items(), 1))
+    batches = []
+    if provider is not None:
+        try:
+            if provider.source_name == 'arxiv':
+                batches = [search(item) for item in queries]
+            else:
+                with ThreadPoolExecutor() as executor:
+                    batches = list(executor.map(search, queries))
+        except (httpx.HTTPError, KeyAuthError, json.JSONDecodeError) as error:
+            if provider.source_name != 'sciverse':
+                raise
+            lazyllm.LOG.warning(f'Sciverse 检索失败，改用 arXiv：{type(error).__name__}')
+            providers.pop(0)
+            provider = providers[0]
+            batches = [search(item) for item in queries]
     for batch in batches:
         for item in batch:
             if item.get('title', '').strip():
@@ -248,8 +324,13 @@ def _retrieve(provider, plan: _SearchPlan, sources: list[dict],
         from lazymind.chat.engine.tools.lazy_kb import KBToolkit
 
         toolkit = KBToolkit()
-        for query, count in plan.queries.items():
+        for index, (query, count) in queries:
+            key = f'kb-{round_number}-{index}'
+            _progress(on_progress, key, '检索知识库', question=query,
+                      subtask_type='retrieve', tools_used=['kb_search'])
             batch = toolkit.kb_search(query, k_max=count)['items']
+            _progress(on_progress, key, '检索知识库', 'completed', question=query,
+                      subtask_type='retrieve', result_summary=f'返回 {len(batch)} 条知识库记录。')
             for item in batch:
                 if item.get('text', '').strip():
                     register({**item, 'title': item.get('file_name') or item['docid'], 'url': '',
@@ -265,75 +346,94 @@ def _retrieve(provider, plan: _SearchPlan, sources: list[dict],
         'CandidateSelection', __base__=BaseModel,
         source_ids=(list[Literal[tuple(by_id)]], ...),
     )
+    key = f'select-{round_number}'
+    _progress(on_progress, key, '筛选文献', question=f'本轮去重后有 {len(candidates)} 篇候选文献。',
+              tools_used=['llm'])
     selection = WriterToolBase(llm=AutoModel(model='llm'))._call_llm_structured(
-        INPUT_PROMPT.format(instruction=CANDIDATE_SELECTION_PROMPT, data=json.dumps(
+        _prompt(CANDIDATE_SELECTION_PROMPT,
             {'research': context,
              'paper_count': len(sources),
              'existing_titles': [item['title'] for item in sources],
-             'candidates': candidates},
-            ensure_ascii=False,
-        )),
+             'candidates': candidates}),
         selection_schema,
     )
     selected = [by_id[source_id] for source_id in dict.fromkeys(selection.source_ids)]
-    if provider.source_name == 'arxiv':
-        return [_content(provider, item) for item in selected]
+    _progress(on_progress, key, '筛选文献', 'completed', result_summary=f'采用 {len(selected)} 篇文献。')
+
+    def content(source):
+        key = f'content-{source["id"]}'
+        _progress(on_progress, key, '读取文献内容', question=source['title'], subtask_type='retrieve',
+                  tools_used=['read_document' if source['kind'] == 'knowledge_base' else provider.source_name])
+        result = _content(provider, source)
+        _progress(on_progress, key, '读取文献内容', 'completed', question=source['title'],
+                  subtask_type='retrieve', result_summary=f'取得 {len(result["text"])} 个字符的材料。')
+        return result
+
+    if provider is None or provider.source_name == 'arxiv':
+        return [content(item) for item in selected]
     with ThreadPoolExecutor() as executor:
-        return list(executor.map(lambda item: _content(provider, item), selected))
+        return list(executor.map(content, selected))
 
 
 def _render(inputs: dict, notes: list[dict]) -> str:
     return WriterToolBase(llm=AutoModel(model='llm'))._call_llm_text(
-        INPUT_PROMPT.format(instruction=SYNTHESIS_PROMPT, data=json.dumps(
-            {'sources': [{key: note[key] for key in ('id', 'title', 'citation', 'note')} for note in notes],
-             'research': {k: inputs.get(k) for k in ('topic', 'request', 'question')}},
-            ensure_ascii=False,
-        )),
+        _prompt(SYNTHESIS_PROMPT,
+            {'sources': notes,
+             'research': {k: inputs.get(k) for k in ('topic', 'request', 'question')}}),
     ).strip()
 
 
-def run(inputs: dict) -> dict:
+def run(inputs: dict, *, on_progress: Callable[[dict], None] | None = None) -> dict:
     inputs = validate_input('literature_review', inputs)
     sources = copy.deepcopy(inputs['papers'] or [])
     context = {key: inputs.get(key) for key in ('topic', 'request', 'question')}
     context['knowledge_base_ids'] = ((lazyllm.globals.get('agentic_config') or {}).get('filters') or {}).get('kb_id', [])
     writer = WriterToolBase(llm=AutoModel(model='llm'))
-    notes = _notes(sources, context)
+    notes = _notes(sources, context, on_progress)
+    _progress(on_progress, 'plan', '制定检索计划', tools_used=['llm'])
     plan = writer._call_llm_structured(
-        INPUT_PROMPT.format(instruction=SEARCH_PLAN_PROMPT, data=json.dumps(
+        _prompt(SEARCH_PLAN_PROMPT,
             {'research': context, 'previous_evidence': inputs.get('evidence'), 'papers': notes,
-             'paper_count': len(sources), 'today': date.today().isoformat()}, ensure_ascii=False,
-        )),
+             'paper_count': len(sources), 'today': date.today().isoformat()}),
         _SearchPlan,
     )
+    _progress(on_progress, 'plan', '制定检索计划', 'completed',
+              result_summary=f'已有 {len(sources)} 篇材料，计划执行 {len(plan.queries)} 个查询。')
     context['paper_limit'] = plan.paper_limit
     if plan.queries:
-        provider = _provider(inputs.get('request', ''))
+        providers = [] if plan.knowledge_base_only else _providers(inputs.get('request', ''))
         seen = {key: source for source in sources for key in _identity(source)}
         used_ids = {paper['id'] for paper in sources}
         searched = set()
         for round_index in range(2):
             if plan.year_from and plan.year_to and plan.year_from > plan.year_to:
                 raise ValueError('模型生成的检索年份范围无效。')
-            added = _retrieve(provider, plan, sources, seen, used_ids, context)
+            added = _retrieve(providers, plan, sources, seen, used_ids, context, on_progress, round_index + 1)
             sources.extend(added)
-            notes.extend(_notes(added, context))
+            notes.extend(_notes(added, context, on_progress))
             searched.update(plan.queries)
             if round_index == 1:
                 break
+            _progress(on_progress, 'coverage', '检查材料覆盖情况',
+                      question=f'当前共有 {len(sources)} 篇材料。', tools_used=['llm'])
             plan = writer._call_llm_structured(
-                INPUT_PROMPT.format(instruction=COVERAGE_PROMPT, data=json.dumps(
+                _prompt(COVERAGE_PROMPT,
                     {'research': context, 'previous_evidence': inputs.get('evidence'), 'sources': notes,
                      'paper_count': len(sources),
-                     'searched_queries': sorted(searched), 'provider': provider.source_name,
-                     'today': date.today().isoformat()}, ensure_ascii=False,
-                )),
+                     'searched_queries': sorted(searched),
+                     'provider': providers[0].source_name if providers else 'knowledge_base',
+                     'today': date.today().isoformat()}),
                 _SearchPlan,
             )
             plan.queries = {query: count for query, count in plan.queries.items() if query not in searched}
+            _progress(on_progress, 'coverage', '检查材料覆盖情况', 'completed',
+                      result_summary=f'补充检索 {len(plan.queries)} 个查询。' if plan.queries else '无需补充检索。')
             if not plan.queries:
                 break
     if not sources:
         raise MissingMaterials('没有可用于综述的论文或知识库材料，请调整研究范围或提供论文。')
+    _progress(on_progress, 'synthesis', '生成文献综述',
+              question=f'根据 {len(notes)} 篇阅读笔记生成综述。', tools_used=['llm'])
     evidence = _render(inputs, notes)
+    _progress(on_progress, 'synthesis', '生成文献综述', 'completed', result_summary='综述已生成。')
     return {'evidence': evidence, 'papers': sources, 'is_demo': False}

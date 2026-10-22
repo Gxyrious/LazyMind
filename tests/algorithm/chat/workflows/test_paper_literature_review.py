@@ -1,9 +1,12 @@
 import copy
+import json
 import os
 
+import lazyllm
 import pytest
 
-from lazymind.document_tools.paper import api, contracts, workflow
+from lazymind.common.token_estimation import estimate_tokens
+from lazymind.document_tools.paper import api, contracts, literature_review, workflow
 
 
 TOPIC = '时间同步系统的组合学习（形式化方法与时间自动机的组合式主动学习）'
@@ -35,16 +38,12 @@ def test_input_preserves_paper_fields_and_does_not_share_nested_values(paper, wi
     assert paper['user_annotations']['focus'] == '同步并行系统的组合学习'
 
 
-@pytest.mark.parametrize('field', ['id', 'title', 'text', 'citation'])
-def test_rejects_empty_paper_fields(paper, field):
-    paper[field] = ''
-    with pytest.raises(ValueError, match=rf'paper\.{field}'):
-        contracts.validate_input('literature_review', {'topic': TOPIC, 'papers': [paper]})
-
-
-def test_rejects_duplicate_paper_ids(paper):
-    with pytest.raises(ValueError, match='论文 id 重复'):
-        contracts.validate_input('literature_review', {'topic': TOPIC, 'papers': [paper, copy.deepcopy(paper)]})
+def test_accepts_abstract_without_full_text_and_preserves_fields(paper):
+    paper['abstract'] = paper.pop('text')
+    pool = workflow.pool_from_business({'topic': TOPIC, 'papers': [paper]})
+    inputs = contracts.validate_input('literature_review', workflow.business_input('literature_review', pool))
+    assert inputs['papers'] == [paper]
+    assert 'text' not in inputs['papers'][0]
 
 
 def test_materials_preserve_papers_and_citations_for_downstream_steps(paper):
@@ -62,14 +61,80 @@ def test_materials_preserve_papers_and_citations_for_downstream_steps(paper):
             assert workflow.material(pool, 'papers')['content'] == [paper]
 
 
+@pytest.mark.parametrize('instruction,group,field', [
+    (literature_review.SEARCH_PLAN_PROMPT, 'papers', 'note'),
+    (literature_review.COVERAGE_PROMPT, 'sources', 'note'),
+    (literature_review.SYNTHESIS_PROMPT, 'sources', 'note'),
+    (literature_review.CANDIDATE_SELECTION_PROMPT, 'candidates', 'text'),
+])
+def test_prompts_share_text_budget_and_preserve_source_fields(paper, instruction, group, field):
+    data = {group: [
+        {'id': paper['id'], 'citation': paper['citation'], field: paper['text']},
+        {'id': 'SRC-007', 'citation': 'Xu R, An J, Zhan B. arXiv:2208.00412, 2022.',
+         field: "Active automata learning in the framework of Angluin's $L^{*}$ algorithm has been applied "
+                'to learning many kinds of automata models.'},
+    ]}
+    if group == 'candidates':
+        for item in data[group]:
+            item['snippet'] = item[field]
+    before = copy.deepcopy(data)
+    empty = copy.deepcopy(data)
+    for item in empty[group]:
+        item[field] = ''
+        item.pop('snippet', None)
+    empty['truncated'] = True
+    fixed = literature_review.INPUT_PROMPT.format(instruction=instruction, data=json.dumps(empty, ensure_ascii=False))
+    limit = estimate_tokens(fixed) + min(estimate_tokens(item[field]) for item in data[group])
+    settings = lazyllm.globals['config']
+    previous = settings.get('dynamic_model_configs')
+    settings['dynamic_model_configs'] = {'llm': {'chat': {'max_input_tokens': limit * 2}}}
+    try:
+        prompt = literature_review._prompt(instruction, data)
+    finally:
+        if previous is None:
+            settings.pop('dynamic_model_configs', None)
+        else:
+            settings['dynamic_model_configs'] = previous
+    bounded = json.loads(prompt.split('Input JSON:\n', 1)[1])
+    assert data == before
+    assert estimate_tokens(prompt) <= limit
+    assert bounded['truncated'] is True
+    for original, item in zip(data[group], bounded[group]):
+        assert item['id'] == original['id']
+        assert item['citation'] == original['citation']
+        assert 'snippet' not in item
+        assert 0 < len(item[field]) < len(original[field])
+        assert original[field].startswith(item[field])
+    sizes = [estimate_tokens(item[field]) for item in bounded[group]]
+    assert max(sizes) - min(sizes) <= 2
+
+
 @pytest.mark.skipif(
     os.environ.get('PAPER_REVIEW_LIVE') != '1',
     reason='设置 PAPER_REVIEW_LIVE=1，并配置真实模型后执行。',
 )
-def test_real_search_generates_citations():
+def test_real_abstract_only_review(paper):
+    paper['abstract'] = paper.pop('text')
+    inputs = {'topic': TOPIC, 'papers': [paper],
+              'request': '只综述给定论文摘要，不开展检索，正文约200字。'}
+    before = copy.deepcopy(inputs)
+    result = api.run_algorithm('literature_review', inputs)
+    assert inputs == before
+    assert len(result['papers']) == 1
+    assert {key: result['papers'][0][key] for key in paper} == paper
+    assert result['papers'][0]['reading']['content_type'] == 'abstract'
+    assert result['evidence'].strip()
+    assert paper['citation'] in result['evidence']
+
+
+@pytest.mark.skipif(
+    os.environ.get('PAPER_REVIEW_LIVE') != '1',
+    reason='设置 PAPER_REVIEW_LIVE=1，并配置真实模型后执行。',
+)
+def test_real_search_generates_citations(paper):
     inputs = {
         'topic': TOPIC,
-        'request': '使用 arXiv 检索1篇相关论文并综述，正文约200字。',
+        'request': f'使用 arXiv 检索论文“{paper["title"]}”并综述，正文约200字。',
     }
     before = copy.deepcopy(inputs)
     result = api.run_algorithm('literature_review', inputs)
