@@ -4,7 +4,7 @@ import unicodedata
 from datetime import date
 from pathlib import Path
 from time import sleep
-from typing import Annotated, Callable, Literal
+from typing import Annotated, Iterator, Literal
 from urllib.parse import unquote, urlsplit
 
 import lazyllm
@@ -48,12 +48,6 @@ class _ReadingNote(BaseModel):
     citation: str
 
 
-def _progress(callback, key: str, title: str, status: str = 'running', **details) -> None:
-    if callback is not None:
-        callback({'subtask_id': key, 'node_id': 'literature_review', 'node_title': title,
-                  'status': status, **details})
-
-
 def _input_budget() -> int:
     injected = lazyllm.globals['config'].get('dynamic_model_configs', {})
     role = injected.get('llm', {}).get('chat') or _role_entry(load_model_config().get('llm'))
@@ -85,15 +79,14 @@ def _prompt(instruction: str, data: dict) -> str:
     if not passages or available < len(passages):
         raise ValueError('研究要求和文献信息超出模型输入预算，请缩短要求或减少材料。')
     for paper, field, text in passages:
-        paper[field] = _chunks(text, available // len(passages))[0]
+        paper[field] = next(_chunks(text, available // len(passages)))
     prompt = render(data)
     if estimate_tokens(prompt) > limit:
         raise ValueError('文献材料截断后仍超出模型输入预算。')
     return prompt
 
 
-def _chunks(text: str, max_tokens: int) -> list[str]:
-    chunks = []
+def _chunks(text: str, max_tokens: int) -> Iterator[str]:
     while text:
         low, high = 0, len(text)
         while low < high:
@@ -104,9 +97,8 @@ def _chunks(text: str, max_tokens: int) -> list[str]:
                 high = middle - 1
         if low == 0:
             raise ValueError('研究要求和资料信息已占满模型的可用输入空间。')
-        chunks.append(text[:low])
+        yield text[:low]
         text = text[low:]
-    return chunks
 
 
 def _read_note(source: dict, context: dict, input_tokens: int) -> dict:
@@ -141,19 +133,10 @@ def _read_note(source: dict, context: dict, input_tokens: int) -> dict:
         text = condensed
 
 
-def _notes(sources: list[dict], context: dict, on_progress=None) -> list[dict]:
+def _notes(sources: list[dict], context: dict) -> list[dict]:
     input_tokens = _input_budget()
-
-    def read(source):
-        key = f'note-{source["id"]}'
-        _progress(on_progress, key, '阅读论文', question=source['title'], tools_used=['llm'])
-        note = _read_note(source, context, input_tokens)
-        _progress(on_progress, key, '阅读论文', 'completed', question=source['title'],
-                  result_summary='已整理阅读笔记和 citation。')
-        return note
-
     with ThreadPoolExecutor() as executor:
-        return list(executor.map(read, sources))
+        return list(executor.map(lambda source: _read_note(source, context, input_tokens), sources))
 
 
 def _identity(source: dict) -> set[tuple[str, str]]:
@@ -259,8 +242,7 @@ def _content(provider, source: dict) -> dict:
 
 
 def _retrieve(providers: list, plan: _SearchPlan, sources: list[dict],
-              seen: dict, used_ids: set[str], context: dict, on_progress=None,
-              round_number: int = 1) -> list[dict]:
+              seen: dict, used_ids: set[str], context: dict) -> list[dict]:
     candidates = []
     provider = providers[0] if providers else None
 
@@ -285,17 +267,10 @@ def _retrieve(providers: list, plan: _SearchPlan, sources: list[dict],
         candidates.append(source)
 
     def search(item):
-        index, (query, count) = item
-        key = f'search-{round_number}-{index}'
-        title = f'第 {round_number} 轮文献检索'
-        _progress(on_progress, key, title, question=query, subtask_type='retrieve',
-                  tools_used=[provider.source_name])
-        batch = _search(provider, query, count, plan)
-        _progress(on_progress, key, title, 'completed', question=query, subtask_type='retrieve',
-                  result_summary=f'返回 {len(batch)} 条候选记录。')
-        return batch
+        query, count = item
+        return _search(provider, query, count, plan)
 
-    queries = list(enumerate(plan.queries.items(), 1))
+    queries = plan.queries.items()
     batches = []
     if provider is not None:
         try:
@@ -314,7 +289,7 @@ def _retrieve(providers: list, plan: _SearchPlan, sources: list[dict],
     for batch in batches:
         for item in batch:
             if item.get('title', '').strip():
-                register({**item, 'title': item['title'], 'url': item.get('url', ''),
+                register({**item, 'url': item.get('url', ''),
                           'text': item.get('snippet', ''), 'source': provider.source_name,
                           'metadata': item.get('extra', {}),
                           'kind': 'paper', 'reading': '检索预览'})
@@ -324,13 +299,8 @@ def _retrieve(providers: list, plan: _SearchPlan, sources: list[dict],
         from lazymind.chat.engine.tools.lazy_kb import KBToolkit
 
         toolkit = KBToolkit()
-        for index, (query, count) in queries:
-            key = f'kb-{round_number}-{index}'
-            _progress(on_progress, key, '检索知识库', question=query,
-                      subtask_type='retrieve', tools_used=['kb_search'])
+        for query, count in queries:
             batch = toolkit.kb_search(query, k_max=count)['items']
-            _progress(on_progress, key, '检索知识库', 'completed', question=query,
-                      subtask_type='retrieve', result_summary=f'返回 {len(batch)} 条知识库记录。')
             for item in batch:
                 if item.get('text', '').strip():
                     register({**item, 'title': item.get('file_name') or item['docid'], 'url': '',
@@ -346,9 +316,6 @@ def _retrieve(providers: list, plan: _SearchPlan, sources: list[dict],
         'CandidateSelection', __base__=BaseModel,
         source_ids=(list[Literal[tuple(by_id)]], ...),
     )
-    key = f'select-{round_number}'
-    _progress(on_progress, key, '筛选文献', question=f'本轮去重后有 {len(candidates)} 篇候选文献。',
-              tools_used=['llm'])
     selection = WriterToolBase(llm=AutoModel(model='llm'))._call_llm_structured(
         _prompt(CANDIDATE_SELECTION_PROMPT,
             {'research': context,
@@ -358,21 +325,11 @@ def _retrieve(providers: list, plan: _SearchPlan, sources: list[dict],
         selection_schema,
     )
     selected = [by_id[source_id] for source_id in dict.fromkeys(selection.source_ids)]
-    _progress(on_progress, key, '筛选文献', 'completed', result_summary=f'采用 {len(selected)} 篇文献。')
-
-    def content(source):
-        key = f'content-{source["id"]}'
-        _progress(on_progress, key, '读取文献内容', question=source['title'], subtask_type='retrieve',
-                  tools_used=['read_document' if source['kind'] == 'knowledge_base' else provider.source_name])
-        result = _content(provider, source)
-        _progress(on_progress, key, '读取文献内容', 'completed', question=source['title'],
-                  subtask_type='retrieve', result_summary=f'取得 {len(result["text"])} 个字符的材料。')
-        return result
 
     if provider is None or provider.source_name == 'arxiv':
-        return [content(item) for item in selected]
+        return [_content(provider, item) for item in selected]
     with ThreadPoolExecutor() as executor:
-        return list(executor.map(content, selected))
+        return list(executor.map(lambda source: _content(provider, source), selected))
 
 
 def _render(inputs: dict, notes: list[dict]) -> str:
@@ -383,22 +340,19 @@ def _render(inputs: dict, notes: list[dict]) -> str:
     ).strip()
 
 
-def run(inputs: dict, *, on_progress: Callable[[dict], None] | None = None) -> dict:
+def run(inputs: dict) -> dict:
     inputs = validate_input('literature_review', inputs)
-    sources = copy.deepcopy(inputs['papers'] or [])
+    sources = inputs['papers'] or []
     context = {key: inputs.get(key) for key in ('topic', 'request', 'question')}
     context['knowledge_base_ids'] = ((lazyllm.globals.get('agentic_config') or {}).get('filters') or {}).get('kb_id', [])
     writer = WriterToolBase(llm=AutoModel(model='llm'))
-    notes = _notes(sources, context, on_progress)
-    _progress(on_progress, 'plan', '制定检索计划', tools_used=['llm'])
+    notes = _notes(sources, context)
     plan = writer._call_llm_structured(
         _prompt(SEARCH_PLAN_PROMPT,
             {'research': context, 'previous_evidence': inputs.get('evidence'), 'papers': notes,
              'paper_count': len(sources), 'today': date.today().isoformat()}),
         _SearchPlan,
     )
-    _progress(on_progress, 'plan', '制定检索计划', 'completed',
-              result_summary=f'已有 {len(sources)} 篇材料，计划执行 {len(plan.queries)} 个查询。')
     context['paper_limit'] = plan.paper_limit
     if plan.queries:
         providers = [] if plan.knowledge_base_only else _providers(inputs.get('request', ''))
@@ -408,14 +362,12 @@ def run(inputs: dict, *, on_progress: Callable[[dict], None] | None = None) -> d
         for round_index in range(2):
             if plan.year_from and plan.year_to and plan.year_from > plan.year_to:
                 raise ValueError('模型生成的检索年份范围无效。')
-            added = _retrieve(providers, plan, sources, seen, used_ids, context, on_progress, round_index + 1)
+            added = _retrieve(providers, plan, sources, seen, used_ids, context)
             sources.extend(added)
-            notes.extend(_notes(added, context, on_progress))
+            notes.extend(_notes(added, context))
             searched.update(plan.queries)
             if round_index == 1:
                 break
-            _progress(on_progress, 'coverage', '检查材料覆盖情况',
-                      question=f'当前共有 {len(sources)} 篇材料。', tools_used=['llm'])
             plan = writer._call_llm_structured(
                 _prompt(COVERAGE_PROMPT,
                     {'research': context, 'previous_evidence': inputs.get('evidence'), 'sources': notes,
@@ -426,14 +378,9 @@ def run(inputs: dict, *, on_progress: Callable[[dict], None] | None = None) -> d
                 _SearchPlan,
             )
             plan.queries = {query: count for query, count in plan.queries.items() if query not in searched}
-            _progress(on_progress, 'coverage', '检查材料覆盖情况', 'completed',
-                      result_summary=f'补充检索 {len(plan.queries)} 个查询。' if plan.queries else '无需补充检索。')
             if not plan.queries:
                 break
     if not sources:
         raise MissingMaterials('没有可用于综述的论文或知识库材料，请调整研究范围或提供论文。')
-    _progress(on_progress, 'synthesis', '生成文献综述',
-              question=f'根据 {len(notes)} 篇阅读笔记生成综述。', tools_used=['llm'])
     evidence = _render(inputs, notes)
-    _progress(on_progress, 'synthesis', '生成文献综述', 'completed', result_summary='综述已生成。')
     return {'evidence': evidence, 'papers': sources, 'is_demo': False}
