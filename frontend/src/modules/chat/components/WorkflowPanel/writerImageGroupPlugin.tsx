@@ -6,17 +6,19 @@ import {
   $applyNodeReplacement, $createParagraphNode, $getRoot, $isElementNode, $isParagraphNode, $getNodeByKey, $getNearestNodeFromDOMNode, $isLineBreakNode, $isTextNode,
   ElementNode, RootNode, setDOMUnmanaged, type LexicalNode, type NodeKey, type SerializedElementNode,
 } from 'lexical';
-import { useEffect, useState } from 'react';
+import { createContext, useContext, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { createPortal } from 'react-dom';
 import { WriterImageGroupControls } from './WriterImageGroupControls';
-import { imageGroupKey, imageGroupLayout, setImageGroup, type WriterImageGroup, type WriterImageRef } from './writerImageGroups';
+import { imageGroupKey, imageGroupLayout, normalizeImageSource, setImageGroup, type WriterImageGroup, type WriterImageRef } from './writerImageGroups';
 import './writerImageGroups.scss';
 
 interface ImageGroupSettings {
-  getGroups: () => WriterImageGroup[];
+  groups: WriterImageGroup[];
   onChange: (groups: WriterImageGroup[]) => void;
 }
+
+export const WriterImageGroupContext = createContext<ImageGroupSettings | null>(null);
 
 class WriterImageGroupNode extends ElementNode {
   static getType() { return 'writer-image-group'; }
@@ -37,7 +39,7 @@ class WriterImageGroupNode extends ElementNode {
 
 function imageParagraph(node: LexicalNode) {
   return $isParagraphNode(node) && node.getChildren().some(child => child instanceof ImageNode)
-    && node.getChildren().every(child => child instanceof ImageNode || $isLineBreakNode(child)
+    && node.getChildren().every(child => (child instanceof ImageNode && Boolean(child.getSrc())) || $isLineBreakNode(child)
       || ($isTextNode(child) && !child.getTextContent().trim()));
 }
 
@@ -58,22 +60,25 @@ function normalizeImageParagraphs(node: WriterImageGroupNode) {
   }
 }
 
-function groupState(groups: WriterImageGroup[]) {
+function groupState() {
   const counts = new Map<string, number>();
-  const result: Array<{ key: string; images: WriterImageRef[]; layout?: 'sliding' | 'vertical' }> = [];
+  const result: Array<{ key: string; images: WriterImageRef[] }> = [];
   const visit = (node: LexicalNode): WriterImageRef[] => {
     if (node instanceof ImageNode) {
-      const source = node.getSrc(), occurrence = counts.get(source) ?? 0;
+      const source = normalizeImageSource(node.getSrc()), occurrence = counts.get(source) ?? 0;
       counts.set(source, occurrence + 1); return [{ source, occurrence }];
     }
     const images = $isElementNode(node) ? node.getChildren().flatMap(visit) : [];
-    if (node instanceof WriterImageGroupNode) result.push({ key: node.getKey(), images, layout: imageGroupLayout(groups, images) });
+    if (node instanceof WriterImageGroupNode) result.push({ key: node.getKey(), images });
     return images;
   };
   visit($getRoot()); return result;
 }
 
-function GroupControls({ getGroups, onChange }: ImageGroupSettings) {
+function GroupControls() {
+  const settings = useContext(WriterImageGroupContext);
+  if (!settings) throw new Error('Image group settings are required.');
+  const { groups: configuredGroups, onChange } = settings;
   const [editor] = useCellValues(rootEditor$);
   const { t } = useTranslation();
   const [groups, setGroups] = useState<ReturnType<typeof groupState>>([]);
@@ -81,15 +86,15 @@ function GroupControls({ getGroups, onChange }: ImageGroupSettings) {
   useEffect(() => {
     for (const group of groups) {
       const element = editor?.getElementByKey(group.key);
-      element?.setAttribute('data-layout', group.layout ?? 'vertical');
+      element?.setAttribute('data-layout', imageGroupLayout(configuredGroups, group.images) ?? 'vertical');
       element?.setAttribute('data-image-group-key', imageGroupKey(group.images));
       element?.setAttribute('data-image-count', String(group.images.length));
       element?.setAttribute('data-image-group-hint', t('chat.writerImageGroups.hint', { count: group.images.length }));
     }
-  }, [editor, groups, t]);
+  }, [editor, groups, configuredGroups, t]);
   useEffect(() => {
     if (!editor) return;
-    const refresh = () => setGroups(editor.getEditorState().read(() => groupState(getGroups())));
+    const refresh = () => setGroups(editor.getEditorState().read(groupState));
     refresh(); setEditable(editor.isEditable());
     const unsubscribe = editor.registerUpdateListener(refresh);
     const unsubscribeEditable = editor.registerEditableListener(setEditable);
@@ -124,26 +129,25 @@ function GroupControls({ getGroups, onChange }: ImageGroupSettings) {
     window.addEventListener('mouseup', finishDrag);
     editor.update(() => $getRoot().markDirty());
     return () => { unsubscribe(); unsubscribeEditable(); unsubscribeRoot(); window.removeEventListener('mouseup', finishDrag); };
-  }, [editor, getGroups]);
+  }, [editor]);
   if (!editor) return null;
   return <>{groups.map(group => {
     const host = editor.getElementByKey(group.key)?.querySelector<HTMLElement>('.writer-image-group-host');
-    return host && createPortal(<WriterImageGroupControls layout={group.layout} readOnly={!editable}
+    return host && createPortal(<WriterImageGroupControls layout={imageGroupLayout(configuredGroups, group.images)} readOnly={!editable}
       onLayout={layout => editor.update(() => {
         const node = $getNodeByKey(group.key);
         if (!(node instanceof WriterImageGroupNode)) throw new Error('The image group has changed.');
         if (layout === 'sliding') normalizeImageParagraphs(node);
-        onChange(setImageGroup(getGroups(), group.images, layout));
+        onChange(setImageGroup(configuredGroups, group.images, layout));
         $getRoot().markDirty();
       })} />, host, group.key);
   })}</>;
 }
 
-export const writerImageGroupPlugin = realmPlugin<ImageGroupSettings>({
-  init(realm, settings) {
-    if (!settings) throw new Error('Image group settings are required.');
+export const writerImageGroupPlugin = realmPlugin({
+  init(realm) {
     realm.pub(addLexicalNode$, WriterImageGroupNode);
-    realm.pub(addComposerChild$, () => <GroupControls {...settings} />);
+    realm.pub(addComposerChild$, GroupControls);
     realm.pub(addExportVisitor$, {
       testLexicalNode: (node): node is WriterImageGroupNode => node instanceof WriterImageGroupNode,
       visitLexicalNode({ lexicalNode, mdastParent, actions }) { actions.visitChildren(lexicalNode, mdastParent); },

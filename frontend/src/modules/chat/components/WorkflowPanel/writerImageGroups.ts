@@ -5,7 +5,12 @@ import { writerMarkdownForEditing } from './writerMarkdownAnchors';
 export interface WriterImageRef { source: string; occurrence: number }
 export interface WriterImageGroup { images: WriterImageRef[]; layout: 'sliding' | 'vertical' }
 export interface WriterImageCandidate { images: WriterImageRef[]; nodeIds?: string[] }
-interface MarkdownToken { type: string; content: string; map?: [number, number]; children?: MarkdownToken[]; attrGet: (name: string) => string | null }
+interface MarkdownToken { type: string; content: string; map?: [number, number] }
+const markdownParser = new MarkdownIt({ html: true });
+
+export function normalizeImageSource(source: string): string {
+  return markdownParser.normalizeLink(source);
+}
 
 function parseImageGroupComment(html: string): WriterImageGroup[] | undefined {
   const comment = new DOMParser().parseFromString(html.trim(), 'text/html').firstChild;
@@ -23,7 +28,7 @@ function imageGroupComment(groups: WriterImageGroup[]): string {
 }
 
 function parseGroupMarkdown(markdown: string) {
-  const tokens = new MarkdownIt({ html: true }).parse(markdown, {}) as MarkdownToken[];
+  const tokens = markdownParser.parse(markdown, {}) as MarkdownToken[];
   const token = tokens[tokens.length - 1];
   const groups = token?.type === 'html_block' ? parseImageGroupComment(token.content) : undefined;
   return {
@@ -42,7 +47,7 @@ export function imageGroupMarkdown(markdown: string, groups: WriterImageGroup[])
 }
 
 export function imageGroupKey(images: WriterImageRef[]): string {
-  return JSON.stringify(images.map(image => JSON.stringify(image)).sort());
+  return JSON.stringify(images.map(image => JSON.stringify({ source: normalizeImageSource(image.source), occurrence: image.occurrence })).sort());
 }
 
 export function imageGroups(value: unknown): WriterImageGroup[] {
@@ -51,7 +56,7 @@ export function imageGroups(value: unknown): WriterImageGroup[] {
   return value.map(group => {
     if (!group || !['sliding', 'vertical'].includes(group.layout) || !Array.isArray(group.images) || group.images.length < 2
       || group.images.some((image: WriterImageRef) => typeof image.source !== 'string' || !image.source || !Number.isInteger(image.occurrence) || image.occurrence < 0)
-      || new Set(group.images.map((image: WriterImageRef) => JSON.stringify(image))).size !== group.images.length) throw new Error('Invalid image group settings.');
+      || new Set(group.images.map((image: WriterImageRef) => imageGroupKey([image]))).size !== group.images.length) throw new Error('Invalid image group settings.');
     return { images: group.images.map((image: WriterImageRef) => ({ source: image.source, occurrence: image.occurrence })), layout: group.layout };
   });
 }
@@ -68,7 +73,7 @@ export function imageSource(block: WriterBlock): string {
   const reference = block.references?.find(item => item.type === 'media_asset')
     ?? block.references?.find(item => item.type === 'preview_asset')
     ?? block.references?.find(item => item.type === 'wechat_image');
-  return String(reference?.url ?? reference?.path ?? reference?.id ?? '');
+  return normalizeImageSource(String(reference?.url ?? reference?.path ?? reference?.id ?? ''));
 }
 
 export function irImageCandidates(document: WriterDocument): WriterImageCandidate[] {
@@ -80,6 +85,7 @@ export function irImageCandidates(document: WriterDocument): WriterImageCandidat
     for (const block of blocks) {
       if (block.type === 'image' && !block.children?.length) {
         const source = imageSource(block);
+        if (!source) { finish(); continue; }
         const occurrence = counts.get(source) ?? 0;
         counts.set(source, occurrence + 1);
         current.images.push({ source, occurrence }); current.nodeIds!.push(block.node_id);
@@ -92,27 +98,29 @@ export function irImageCandidates(document: WriterDocument): WriterImageCandidat
 }
 
 export function markdownImageCandidates(markdown: string): WriterImageCandidate[] {
-  const tokens = new MarkdownIt({ html: true }).parse(writerMarkdownForEditing(stripImageGroupMarkdown(markdown)), {}) as MarkdownToken[];
+  const html = markdownParser.render(writerMarkdownForEditing(stripImageGroupMarkdown(markdown)));
+  const body = new DOMParser().parseFromString(html, 'text/html').body;
   const counts = new Map<string, number>();
   const result: WriterImageCandidate[] = [];
   let current: WriterImageRef[] = [];
   const finish = () => { if (current.length >= 2) result.push({ images: current }); current = []; };
-  for (let index = 0; index < tokens.length; index++) {
-    const token = tokens[index];
-    if (token.type === 'paragraph_open' && tokens[index + 1]?.type === 'inline') {
-      const children = tokens[index + 1].children ?? [];
-      const images = children.filter(child => child.type === 'image').map(child => {
-        const source = child.attrGet('src') ?? '';
-        const occurrence = counts.get(source) ?? 0; counts.set(source, occurrence + 1);
-        return { source, occurrence };
-      });
-      if (images.length && children.every(child => child.type === 'image' || child.type === 'softbreak' || child.type === 'hardbreak'
-        || (child.type === 'html_inline' && isWriterSystemAnchorBlock({ node_id: '', type: 'paragraph', content: child.content })))) current.push(...images);
-      else finish();
-      index += 2; continue;
-    }
-    if (token.type === 'html_block' && isWriterSystemAnchorBlock({ node_id: '', type: 'paragraph', content: token.content })) continue;
-    finish();
+  const isAnchor = (node: Node) => node instanceof Element
+    && isWriterSystemAnchorBlock({ node_id: '', type: 'paragraph', content: node.outerHTML });
+  const isWhitespace = (node: Node) => node.nodeType === Node.TEXT_NODE && !node.textContent?.trim();
+  for (const node of Array.from(body.childNodes)) {
+    if (isWhitespace(node) || isAnchor(node)) continue;
+    if (!(node instanceof Element)) { finish(); continue; }
+    const elements = node.tagName === 'IMG' ? [node] : Array.from(node.querySelectorAll('img'));
+    const images = elements.flatMap(element => {
+      const source = normalizeImageSource(element.getAttribute('src') ?? '');
+      if (!source) return [];
+      const occurrence = counts.get(source) ?? 0; counts.set(source, occurrence + 1);
+      return [{ source, occurrence }];
+    });
+    const imageOnly = node.tagName === 'IMG' || (node.tagName === 'P' && Array.from(node.childNodes).every(child =>
+      isWhitespace(child) || isAnchor(child) || (child instanceof Element && ['IMG', 'BR'].includes(child.tagName))));
+    if (imageOnly && images.length && images.length === elements.length) current.push(...images);
+    else finish();
   }
   finish(); return result;
 }

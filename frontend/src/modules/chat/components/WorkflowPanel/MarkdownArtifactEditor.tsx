@@ -1,5 +1,5 @@
 import { writerOutlineDescription } from './writerOutlineDescription';
-import { writerImageGroupPlugin } from './writerImageGroupPlugin';
+import { WriterImageGroupContext, writerImageGroupPlugin } from './writerImageGroupPlugin';
 import { documentImageGroups, imageGroupMarkdown, stripImageGroupMarkdown } from './writerImageGroups';
 import {
   BlockTypeSelect,
@@ -2076,7 +2076,10 @@ export function MarkdownArtifactEditor({
               <button type='button' onClick={() => setEditorMode('source')}>{t('chat.writerSource.source')}</button>
               <pre>{renderErrorSource}</pre>
             </div>
-          ) : <WriterCodeDisplayContext.Provider value={codeDisplayLanguages}><MDXEditor
+          ) : <WriterCodeDisplayContext.Provider value={codeDisplayLanguages}><WriterImageGroupContext.Provider value={{
+            groups: documentImageGroups(draftMarkdown),
+            onChange: groups => handleMarkdownChange(editorRef.current!.getMarkdown(), false, groups),
+          }}><MDXEditor
             ref={editorRef}
             className='writer-markdown-editor__surface'
             contentEditableClassName='writer-markdown-editor__content'
@@ -2100,10 +2103,7 @@ export function MarkdownArtifactEditor({
               linkDialogPlugin(),
               tablePlugin(),
               frontmatterPlugin(),
-              writerImageGroupPlugin({
-                getGroups: () => documentImageGroups(draftMarkdownRef.current),
-                onChange: groups => handleMarkdownChange(editorRef.current!.getMarkdown(), false, groups),
-              }),
+              writerImageGroupPlugin(),
               jsxPlugin({
                 jsxComponentDescriptors: [{
                   name: 'a',
@@ -2316,7 +2316,7 @@ export function MarkdownArtifactEditor({
                 ),
               }),
             ]}
-          /></WriterCodeDisplayContext.Provider>}
+          /></WriterImageGroupContext.Provider></WriterCodeDisplayContext.Provider>}
         </div>
       </div>
       <div className='writer-markdown-editor__rewrite-layer' ref={setRewriteLayer} />

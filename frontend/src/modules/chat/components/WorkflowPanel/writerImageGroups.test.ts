@@ -2,7 +2,7 @@ import { expect, it } from 'vitest';
 import { documentImageGroups, imageGroupMarkdown, keepVerticalImageGroups, markdownImageCandidates, pendingImageGroups, stripImageGroupMarkdown } from './writerImageGroups';
 
 it('ends consecutive image groups at headings, text and other content', () => {
-  const markdown = '# Title\n\n![a](a.png)\n\n![b](b.png)\n\n## Chapter\n\n![c](c.png)\n![d](d.png)\n![e](e.png)\n\nBody\n\n![f](f.png)\n\nBody\n\n![g](g.png)';
+  const markdown = '# Title\n\n![a](a.png)\n\n![b](b.png)\n\n## Chapter\n\n![c](c.png)\n![d](d.png)\n![e](e.png)\n\nBody\n\n![f](f.png)\n\n```html\n<img src="g.png" />\n```\n\n![g](g.png)';
   expect(markdownImageCandidates(markdown).map(group => group.images.length)).toEqual([2, 3]);
   expect(pendingImageGroups(markdown)).toHaveLength(1);
   const chosen = keepVerticalImageGroups(markdown) as string;
@@ -12,8 +12,8 @@ it('ends consecutive image groups at headings, text and other content', () => {
 });
 
 it('tracks repeated image occurrences separately', () => {
-  expect(markdownImageCandidates('![a](same.png)\n\n![b](same.png)')[0].images).toEqual([
-    { source: 'same.png', occurrence: 0 }, { source: 'same.png', occurrence: 1 },
+  expect(markdownImageCandidates('Text <img src="same.png" />\n\n![a](same.png)\n\n<img src="same.png" width="120" />')[0].images).toEqual([
+    { source: 'same.png', occurrence: 1 }, { source: 'same.png', occurrence: 2 },
   ]);
 });
 
