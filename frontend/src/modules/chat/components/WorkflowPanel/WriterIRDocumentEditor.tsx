@@ -1378,6 +1378,7 @@ export function WriterIRDocumentEditor({
       || sameWriterDocumentForSync(lastRenderedDocumentRef.current, document);
 
     if (documentUnchanged && !collapseChanged && !numberingChanged) {
+      if (lastRenderedDocumentRef.current !== document) syncImageGroups();
       lastEmittedDocumentRef.current = document;
       lastRenderedDocumentRef.current = document;
       const pendingSelection = pendingSelectionRef.current;
@@ -1386,7 +1387,6 @@ export function WriterIRDocumentEditor({
         restoreEditorSelection(editor, pendingSelection, { scrollIntoView: true });
       }
       syncBlockControlPositions(editor);
-      syncImageGroups();
       return;
     }
 

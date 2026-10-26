@@ -79,18 +79,17 @@ function GroupControls({ getGroups, onChange }: ImageGroupSettings) {
   const [groups, setGroups] = useState<ReturnType<typeof groupState>>([]);
   const [editable, setEditable] = useState(false);
   useEffect(() => {
+    for (const group of groups) {
+      const element = editor?.getElementByKey(group.key);
+      element?.setAttribute('data-layout', group.layout ?? 'vertical');
+      element?.setAttribute('data-image-group-key', imageGroupKey(group.images));
+      element?.setAttribute('data-image-count', String(group.images.length));
+      element?.setAttribute('data-image-group-hint', t('chat.writerImageGroups.hint', { count: group.images.length }));
+    }
+  }, [editor, groups, t]);
+  useEffect(() => {
     if (!editor) return;
-    const refresh = () => {
-      const state = editor.getEditorState().read(() => groupState(getGroups()));
-      for (const group of state) {
-        const element = editor.getElementByKey(group.key);
-        element?.setAttribute('data-layout', group.layout ?? 'vertical');
-        element?.setAttribute('data-image-group-key', imageGroupKey(group.images));
-        element?.setAttribute('data-image-count', String(group.images.length));
-        element?.setAttribute('data-image-group-hint', t('chat.writerImageGroups.hint', { count: group.images.length }));
-      }
-      setGroups(state);
-    };
+    const refresh = () => setGroups(editor.getEditorState().read(() => groupState(getGroups())));
     refresh(); setEditable(editor.isEditable());
     const unsubscribe = editor.registerUpdateListener(refresh);
     const unsubscribeEditable = editor.registerEditableListener(setEditable);
@@ -125,7 +124,7 @@ function GroupControls({ getGroups, onChange }: ImageGroupSettings) {
     window.addEventListener('mouseup', finishDrag);
     editor.update(() => $getRoot().markDirty());
     return () => { unsubscribe(); unsubscribeEditable(); unsubscribeRoot(); window.removeEventListener('mouseup', finishDrag); };
-  }, [editor, getGroups, t]);
+  }, [editor, getGroups]);
   if (!editor) return null;
   return <>{groups.map(group => {
     const host = editor.getElementByKey(group.key)?.querySelector<HTMLElement>('.writer-image-group-host');
