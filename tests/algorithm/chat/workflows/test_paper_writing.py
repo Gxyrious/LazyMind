@@ -195,6 +195,7 @@ def runtime(monkeypatch, tmp_path):
     artifact_module.save_artifacts = lambda items: batches.append(copy.deepcopy(items)) or {'status': 'ok'}
     monkeypatch.setitem(sys.modules, context_module.__name__, context_module)
     monkeypatch.setitem(sys.modules, artifact_module.__name__, artifact_module)
+    monkeypatch.setattr(tools, '_load_f7_handoff', lambda: None)
     return ctx, batches
 
 
@@ -308,6 +309,163 @@ def reflection_calls(monkeypatch):
 
     monkeypatch.setattr(api.ALGORITHMS['reading_reflection'], 'AutoModel', lambda **_: model)
     return calls
+
+
+@pytest.mark.parametrize('topic', ['', '用户指定方向'])
+@pytest.mark.parametrize('original_request,current_input,expected_request', [
+    ('比较实验设置', None, '比较实验设置'),
+    ('比较实验设置', '重点比较实验局限', '比较实验设置\n\n本轮补充要求（优先于上述要求）：\n重点比较实验局限'),
+    ('比较实验设置', '重试', '比较实验设置'),
+    ('', None, ''),
+    ('', '重点比较实验局限', '重点比较实验局限'),
+])
+def test_f7_library_entry_uses_frozen_selection_and_current_request(
+    topic, original_request, current_input, expected_request, runtime, reflection_calls, monkeypatch, tmp_path,
+):
+    ctx, batches = runtime
+    refs = [{'paper_id': 'kb-1', 'title': '第一篇', 'abstract': None, 'doi': '10.1/test'},
+            {'paper_id': 'kb-2', 'title': '第二篇', 'abstract': '原始摘要'}]
+    handoff = {'kind': 'reflection', 'input': {'papers': refs, 'user_instruction': original_request}}
+    before = copy.deepcopy(handoff)
+    monkeypatch.setattr(tools, '_load_f7_handoff', lambda: handoff)
+    monkeypatch.setattr(tools, '_conversation_papers', lambda *_: pytest.fail('history was scanned'))
+    reads = []
+
+    def read(paper_id):
+        reads.append(paper_id)
+        return {'status': 'ready', 'text': '完整正文'} if paper_id == 'kb-1' else {'status': 'unavailable'}
+
+    monkeypatch.setattr(tools, '_read_f7_paper', read)
+    bound = {}
+    if topic:
+        path = tmp_path / 'topic.txt'
+        path.write_text(topic)
+        bound['paper_topic'] = str(path)
+    ctx.params = {'step_id': 'reading_reflection', 'remote_inputs': bound,
+                  'user_input': 'Injected launch context: use paper-writing',
+                  'launch_user_input': 'Injected launch context: use paper-writing',
+                  'current_user_input': 'Injected launch context: use paper-writing' if current_input is None
+                  else current_input,
+                  'history_files_per_turn': {'1': ['/uploads/unselected.pdf']}}
+    params_before = copy.deepcopy(ctx.params)
+    tools.run_paper_step()
+    outputs = {item['key']: item['value'] for item in batches[-1]}
+    pool = tools._read_bound(outputs['reading_reflection_pool'])
+    selected = tools.material(pool, 'papers')['content']
+    assert reads == ['kb-1', 'kb-2']
+    assert selected == [{**refs[0], 'id': 'kb-1', 'text': '完整正文'}, {**refs[1], 'id': 'kb-2'}]
+    assert pool['topic'] == (topic or '第一篇；第二篇')
+    assert pool['request'] == original_request
+    assert pool['history'][-1]['request'] == reflection_calls[0]['request'] == expected_request
+    assert reflection_calls[0]['papers'] == [{'id': 'kb-1', 'title': '第一篇', 'text': '完整正文'},
+                                            {'id': 'kb-2', 'title': '第二篇', 'abstract': '原始摘要'}]
+    assert tools._read_bound(outputs['reading_reflection_document']) == '# 阅读心得\n\nkb-1、kb-2'
+    assert handoff == before
+    assert ctx.params == params_before
+
+
+@pytest.mark.parametrize('source', ['seed_pool', 'paper_input'])
+def test_f7_explicit_source_does_not_query_library(source, runtime, reflection_calls, monkeypatch, tmp_path):
+    ctx, _ = runtime
+    value = {'topic': '明确主题', 'papers': [{'id': 'P1', 'title': '明确选文', 'abstract': '摘要'}]}
+    path = tmp_path / 'input.json'
+    path.write_text(json.dumps(tools.pool_from_business(value) if source == 'seed_pool' else value))
+    monkeypatch.setattr(tools, '_load_f7_handoff', lambda: pytest.fail('library was queried'))
+    ctx.params = {'step_id': 'reading_reflection', 'remote_inputs': {source: str(path)}}
+    tools.run_paper_step()
+    assert reflection_calls[0]['papers'] == value['papers']
+
+
+@pytest.mark.parametrize('reference', [
+    {'paper_id': '', 'title': '标题'}, {'paper_id': 'kb-1', 'title': ''},
+    {'paper_id': 'invalid/id', 'title': '标题'},
+])
+def test_f7_invalid_library_identity_stops_before_reading(reference, runtime, reflection_calls, monkeypatch):
+    ctx, batches = runtime
+    monkeypatch.setattr(tools, '_load_f7_handoff', lambda: {
+        'kind': 'reflection', 'input': {'papers': [reference], 'user_instruction': ''},
+    })
+    monkeypatch.setattr(tools, '_read_f7_paper', lambda *_: pytest.fail('invalid identity was read'))
+    ctx.params = {'step_id': 'reading_reflection'}
+    with pytest.raises(ValueError, match='paper\\.'):
+        tools.run_paper_step()
+    assert not batches and not reflection_calls
+
+
+@pytest.mark.parametrize('status, code, absent', [
+    (404, 'PAPER_TASK_NOT_FOUND', True), (404, 'NOT_FOUND', False),
+    (403, 'FORBIDDEN', False), (500, 'READ_FAILED', False),
+])
+def test_f7_optional_handoff_only_accepts_explicit_absence(status, code, absent, monkeypatch):
+    import httpx
+
+    response = httpx.Response(status, json={'code': code}, request=httpx.Request('GET', 'http://core/context'))
+
+    def context():
+        response.raise_for_status()
+
+    monkeypatch.setitem(sys.modules, 'lazymind.chat.service.academic_handoff',
+                        SimpleNamespace(academic_handoff_context=context))
+    if absent:
+        assert tools._load_f7_handoff() is None
+    else:
+        with pytest.raises(httpx.HTTPStatusError):
+            tools._load_f7_handoff()
+
+
+@pytest.mark.parametrize('kind', ['reflection', 'expansion', 'review', 'ppt'])
+def test_f7_handoff_lookup_only_selects_reflection(kind, monkeypatch):
+    handoff = {'kind': kind}
+    monkeypatch.setitem(sys.modules, 'lazymind.chat.service.academic_handoff',
+                        SimpleNamespace(academic_handoff_context=lambda: handoff))
+    assert tools._load_f7_handoff() == (handoff if kind == 'reflection' else None)
+
+
+@pytest.mark.parametrize('failure', ['', 'network', 'processing', 'empty'])
+def test_f7_library_fulltext_reads_all_pages_or_fails(failure, monkeypatch):
+    calls = []
+
+    def read(**kwargs):
+        calls.append(kwargs)
+        if len(calls) == 1:
+            return {'status': 'ready', 'pages': [{'page': 0, 'text': '无页码正文'}] + [
+                {'page': i, 'text': f'正文{i}'} for i in range(1, 5)], 'next_cursor': 'next'}
+        if failure == 'network':
+            raise OSError('pagination failed')
+        if failure == 'processing':
+            return {'status': 'processing'}
+        return {'status': 'ready', 'pages': [{'page': 5, 'text': '正文5'}, {'page': 6, 'text': '正文6'}]}
+
+    if failure == 'empty':
+        read = lambda **_: {'status': 'ready', 'pages': []}
+    monkeypatch.setitem(sys.modules, 'lazymind.chat.service.academic_handoff',
+                        SimpleNamespace(academic_read_paper=read))
+    if failure:
+        with pytest.raises((ValueError, OSError)):
+            tools._read_f7_paper('kb-1')
+    else:
+        result = tools._read_f7_paper('kb-1')
+        assert result == {'status': 'ready', 'text': '无页码正文\n\n' + '\n\n'.join(
+            f'<!-- page:{i} -->\n正文{i}' for i in range(1, 7))}
+        assert calls == [{'paper_id': 'kb-1'}, {'cursor': 'next'}]
+
+
+def test_f7_library_read_failure_publishes_nothing(runtime, reflection_calls, monkeypatch):
+    ctx, batches = runtime
+    monkeypatch.setattr(tools, '_load_f7_handoff', lambda: {
+        'kind': 'reflection', 'input': {'papers': [
+            {'paper_id': 'kb-1', 'title': '标题', 'abstract': '不可用于掩盖网络错误的摘要'},
+        ], 'user_instruction': '生成心得'},
+    })
+
+    def read(_):
+        raise OSError('permission or pagination failed')
+
+    monkeypatch.setattr(tools, '_read_f7_paper', read)
+    ctx.params = {'step_id': 'reading_reflection'}
+    with pytest.raises(OSError, match='failed'):
+        tools.run_paper_step()
+    assert not reflection_calls and not batches
 
 
 @pytest.mark.parametrize('count', [1, 2])

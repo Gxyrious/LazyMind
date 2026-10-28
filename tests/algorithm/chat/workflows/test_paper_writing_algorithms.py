@@ -41,6 +41,63 @@ def mock_reflection_model(monkeypatch):
                         lambda **_kwargs: lambda _prompt: REFLECTION_MARKDOWN)
 
 
+@pytest.mark.parametrize('status', ['ready', 'failed', 'unavailable'])
+def test_f7_prepare_papers_preserves_input_and_uses_available_content(status, monkeypatch):
+    papers = [{'id': 'P1', 'title': '选中论文', 'abstract': '原始摘要', 'doi': '10.1/test'}]
+    before = copy.deepcopy(papers)
+    calls = []
+
+    def read(paper_id):
+        calls.append(paper_id)
+        return {'status': status, 'text': '完整正文'}
+
+    monkeypatch.setattr(reading_reflection.time, 'sleep', lambda _: pytest.fail('unexpected wait'))
+    result = reading_reflection.prepare_papers(papers, read)
+    assert result == ([{**papers[0], 'text': '完整正文'}] if status == 'ready' else papers)
+    assert calls == ['P1'] and papers == before
+
+
+def test_f7_prepare_papers_uses_one_wait_window_and_caches_ready_papers(monkeypatch):
+    clock = [0]
+    monkeypatch.setattr(reading_reflection.time, 'monotonic', lambda: clock[0])
+    monkeypatch.setattr(reading_reflection.time, 'sleep', lambda seconds: clock.__setitem__(0, clock[0] + seconds))
+    calls = []
+
+    def read(paper_id):
+        calls.append(paper_id)
+        if paper_id == 'P1' or (paper_id == 'P2' and clock[0] >= 2):
+            return {'status': 'ready', 'text': f'全文{paper_id}'}
+        return {'status': 'processing'}
+
+    papers = [{'id': f'P{i}', 'title': f'论文{i}', 'abstract': f'摘要{i}'} for i in range(1, 5)]
+    result = reading_reflection.prepare_papers(papers, read)
+    assert clock[0] == 60
+    assert calls[:4] == ['P1', 'P2', 'P3', 'P4']
+    assert calls.count('P1') == 1 and calls.count('P2') == 2
+    assert calls.count('P3') == calls.count('P4') == 30
+    assert [paper.get('text') for paper in result] == ['全文P1', '全文P2', None, None]
+    assert result[2:] == papers[2:]
+
+
+@pytest.mark.parametrize('failure', ['missing', 'empty_ready', 'network', 'duplicate'])
+def test_f7_prepare_papers_does_not_hide_missing_or_invalid_content(failure, monkeypatch):
+    papers = [{'id': 'P1', 'title': '必须阅读的论文', 'abstract': None}]
+    calls = []
+
+    def read(paper_id):
+        calls.append(paper_id)
+        if failure == 'network':
+            raise OSError('read failed')
+        return {'status': 'ready', 'text': ''} if failure == 'empty_ready' else {'status': 'unavailable'}
+
+    if failure == 'duplicate':
+        papers *= 2
+    monkeypatch.setattr(reading_reflection.time, 'sleep', lambda _: pytest.fail('unexpected wait'))
+    with pytest.raises((ValueError, OSError), match='必须阅读的论文|read failed|重复'):
+        reading_reflection.prepare_papers(papers, read)
+    assert calls == ([] if failure == 'duplicate' else ['P1'])
+
+
 @pytest.mark.usefixtures('mock_topic_model', 'mock_reflection_model')
 @pytest.mark.parametrize('step', list(tools.STEP_NODE))
 def test_independent_algorithm_contract(step):

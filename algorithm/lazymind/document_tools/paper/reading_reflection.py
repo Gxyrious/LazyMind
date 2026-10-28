@@ -2,11 +2,13 @@
 
 import json
 import re
+import time
 
 from lazyllm import AutoModel, ThreadPoolExecutor
 
 from lazymind.common.token_estimation import estimate_tokens
 
+from .contracts import MissingMaterials, normalize_papers, validate_value
 from .research_topic import _prompt_token_limit, group_texts_by_prompt_budget, split_text_by_prompt_budget
 from .prompts.reading_reflection_prompt import (
     CONDENSED_PAPER_GUIDANCE,
@@ -19,6 +21,43 @@ from .prompts.reading_reflection_prompt import (
 
 
 _MAX_WORKERS = 4
+
+
+def prepare_papers(papers: list[dict], read_paper) -> list[dict]:
+    """Prepare selected papers with one shared wait window and abstract fallback."""
+    from .runtime_events import report_progress
+
+    papers = normalize_papers(papers)
+    if not papers:
+        raise MissingMaterials('请先选择至少一篇论文，再生成阅读心得。')
+    report_progress(10, '正在准备论文正文')
+    deadline = time.monotonic() + 60
+    results = {paper['id']: read_paper(paper['id']) for paper in papers}
+    while any(result['status'] == 'processing' for result in results.values()):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        time.sleep(min(2, remaining))
+        for paper_id, result in results.items():
+            if time.monotonic() >= deadline:
+                break
+            if result['status'] == 'processing':
+                results[paper_id] = read_paper(paper_id)
+    for paper in papers:
+        result = results[paper['id']]
+        status = result['status']
+        if status == 'ready':
+            if not (result.get('text') or '').strip():
+                raise MissingMaterials(f'论文《{paper["title"]}》的全文为空。')
+            paper['text'] = result['text']
+        elif status in {'processing', 'failed', 'unavailable'}:
+            paper.pop('text', None)
+            if not (paper.get('abstract') or '').strip():
+                raise MissingMaterials(f'论文《{paper["title"]}》暂无可用全文或摘要，请等待解析完成或补充材料。')
+        else:
+            raise ValueError(f'论文《{paper["title"]}》的正文状态无效：{status}')
+    validate_value('papers', papers)
+    return papers
 
 
 def _paper_chunks(text: str, topic: str, request: str, paper: dict, prompt_limit: int) -> list[str]:
