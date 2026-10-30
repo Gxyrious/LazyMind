@@ -130,5 +130,5 @@ def prepare(inputs: dict, knowledge_bases: list[str], *, fixed_scope: bool = Fal
                     'content_type': 'knowledge_base_document', 'truncated': content['truncated'],
                 })
     if not any(paper.get('review_role') != 'background' for paper in selected):
-        raise MissingMaterials('指定范围内没有可综述的论文，请补充论文或调整知识库内的选文范围。')
+        raise MissingMaterials('没有可用于本次综述的论文，请上传论文附件或调整材料选择。')
     return selected
