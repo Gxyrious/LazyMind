@@ -785,6 +785,10 @@ def _run_paper_step(context, stream=None) -> dict:
                         contracts.text(paper.get('title'), 'paper.title')
                         papers.append({**paper, 'id': paper['paper_id']})
                     papers = reading_reflection.prepare_papers(papers, read_paper=_read_f7_paper)
+                    for paper in papers:
+                        notes = [note for note in selected.get('notes', []) if note['paper_id'] == paper['id']]
+                        if notes:
+                            paper['notes'] = notes
                     handoff_request = selected['user_instruction']
                     value['request'] = handoff_request
                     value.setdefault('topic', '；'.join(paper['title'] for paper in papers))

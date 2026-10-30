@@ -90,7 +90,10 @@ def test_single_multiple_paper_reflection(count, reflection_calls):
     tools.material(pool, 'papers')['content'] = tools.material(pool, 'papers')['content'][:count]
     result = tools.execute_mock('F7', pool)
     papers = tools.material(pool, 'papers')['content']
-    assert reflection_calls[0]['papers'] == papers
+    assert reflection_calls[0]['papers'] == [
+        {'id': paper['id'], 'title': paper['title'], 'text': paper['text'], 'source_kind': 'partial_text'}
+        for paper in papers
+    ]
     assert all(paper['id'] in result['document'] for paper in papers)
 
 
@@ -311,6 +314,7 @@ def reflection_calls(monkeypatch):
     return calls
 
 
+@pytest.mark.parametrize('with_notes', [False, True])
 @pytest.mark.parametrize('topic', ['', '用户指定方向'])
 @pytest.mark.parametrize('original_request,current_input,expected_request', [
     ('比较实验设置', None, '比较实验设置'),
@@ -320,12 +324,17 @@ def reflection_calls(monkeypatch):
     ('', '重点比较实验局限', '重点比较实验局限'),
 ])
 def test_f7_library_entry_uses_frozen_selection_and_current_request(
-    topic, original_request, current_input, expected_request, runtime, reflection_calls, monkeypatch, tmp_path,
+    with_notes, topic, original_request, current_input, expected_request,
+    runtime, reflection_calls, monkeypatch, tmp_path,
 ):
     ctx, batches = runtime
     refs = [{'paper_id': 'kb-1', 'title': '第一篇', 'abstract': None, 'doi': '10.1/test'},
             {'paper_id': 'kb-2', 'title': '第二篇', 'abstract': '原始摘要'}]
     handoff = {'kind': 'reflection', 'input': {'papers': refs, 'user_instruction': original_request}}
+    notes = [{'id': 'n-1', 'paper_id': 'kb-1', 'title': '第一篇笔记', 'content': '需要核实实验对照。'},
+             {'id': 'n-2', 'paper_id': 'kb-2', 'title': '第二篇笔记', 'content': '关注方法的适用条件。'}]
+    if with_notes:
+        handoff['input']['notes'] = notes
     before = copy.deepcopy(handoff)
     monkeypatch.setattr(tools, '_load_f7_handoff', lambda: handoff)
     monkeypatch.setattr(tools, '_conversation_papers', lambda *_: pytest.fail('history was scanned'))
@@ -353,12 +362,20 @@ def test_f7_library_entry_uses_frozen_selection_and_current_request(
     pool = tools._read_bound(outputs['reading_reflection_pool'])
     selected = tools.material(pool, 'papers')['content']
     assert reads == ['kb-1', 'kb-2']
-    assert selected == [{**refs[0], 'id': 'kb-1', 'text': '完整正文'}, {**refs[1], 'id': 'kb-2'}]
+    expected_papers = [{**refs[0], 'id': 'kb-1', 'text': '完整正文'}, {**refs[1], 'id': 'kb-2'}]
+    if with_notes:
+        expected_papers[0]['notes'] = [notes[0]]
+        expected_papers[1]['notes'] = [notes[1]]
+    assert selected == expected_papers
     assert pool['topic'] == (topic or '第一篇；第二篇')
     assert pool['request'] == original_request
     assert pool['history'][-1]['request'] == reflection_calls[0]['request'] == expected_request
-    assert reflection_calls[0]['papers'] == [{'id': 'kb-1', 'title': '第一篇', 'text': '完整正文'},
-                                            {'id': 'kb-2', 'title': '第二篇', 'abstract': '原始摘要'}]
+    assert reflection_calls[0]['papers'] == [
+        {'id': 'kb-1', 'title': '第一篇', 'text': '完整正文', 'source_kind': 'full_text',
+         **({'notes': [notes[0]]} if with_notes else {})},
+        {'id': 'kb-2', 'title': '第二篇', 'abstract': '原始摘要', 'source_kind': 'abstract',
+         **({'notes': [notes[1]]} if with_notes else {})},
+    ]
     assert tools._read_bound(outputs['reading_reflection_document']) == '# 阅读心得\n\nkb-1、kb-2'
     assert handoff == before
     assert ctx.params == params_before
@@ -373,7 +390,7 @@ def test_f7_explicit_source_does_not_query_library(source, runtime, reflection_c
     monkeypatch.setattr(tools, '_load_f7_handoff', lambda: pytest.fail('library was queried'))
     ctx.params = {'step_id': 'reading_reflection', 'remote_inputs': {source: str(path)}}
     tools.run_paper_step()
-    assert reflection_calls[0]['papers'] == value['papers']
+    assert reflection_calls[0]['papers'] == [{**value['papers'][0], 'source_kind': 'abstract'}]
 
 
 @pytest.mark.parametrize('reference', [
@@ -492,7 +509,7 @@ def test_f7_attachment_entry_publishes_papers_and_reflection(count, user_input, 
     assert tools.material(pool, 'papers')['content'] == papers == before
     assert pool['history'][-1]['node'] == 'F7'
     assert pool['current']['papers'] in pool['history'][-1]['inputs']
-    assert reflection_calls[0]['papers'] == papers
+    assert reflection_calls[0]['papers'] == [{**paper, 'source_kind': 'full_text'} for paper in papers]
     assert reflection_calls[0]['request'] == user_input
     assert tools._read_bound(outputs['reading_reflection_document']) == '# 阅读心得\n\n' + '、'.join(
         paper['id'] for paper in papers
@@ -539,12 +556,17 @@ def test_f7_bound_papers_preserve_manuscript(binding, runtime, reflection_calls,
     monkeypatch.setattr(tools, '_conversation_papers', lambda *_: pytest.fail('history was scanned'))
     ctx.params = {'step_id': 'reading_reflection', 'current_user_input': '重点看实验设计',
                   'remote_inputs': {'paper_input' if binding == 'paper_input_pool' else binding: str(path)}}
+    if binding == 'paper_input_pool':
+        with pytest.raises(ValueError, match='paper_input.*材料池'):
+            tools.run_paper_step()
+        assert not reflection_calls and not batches
+        return
     tools.run_paper_step()
     outputs = {item['key']: item['value'] for item in batches[-1]}
     pool = tools._read_bound(outputs['reading_reflection_pool'])
     assert tools.material(pool, 'manuscript')['content'] == '# 待操作稿件\n正文'
     assert tools.material(pool, 'papers')['content'] == papers
-    assert reflection_calls[0]['papers'] == papers
+    assert reflection_calls[0]['papers'] == [{**paper, 'source_kind': 'abstract'} for paper in papers]
     assert reflection_calls[0]['topic'] == '已确认主题'
     assert reflection_calls[0]['request'] == '重点看实验设计'
     assert tools._read_bound(str(path)) == value

@@ -60,6 +60,20 @@ def prepare_papers(papers: list[dict], read_paper) -> list[dict]:
     return papers
 
 
+def _paper_source_kind(paper: dict) -> str:
+    if not (paper.get('text') or '').strip():
+        return 'abstract'
+    reading = paper.get('reading') or {}
+    if (
+        paper.get('source_kind') == 'partial_text'
+        or reading.get('truncated') is True
+        or paper.get('truncated') is True
+        or paper.get('content_type') == 'excerpt'
+    ):
+        return 'partial_text'
+    return 'full_text'
+
+
 def _paper_chunks(text: str, topic: str, request: str, paper: dict, prompt_limit: int) -> list[str]:
     return split_text_by_prompt_budget(
         text, lambda source: _note_prompt(source, topic, request, paper), prompt_limit,
@@ -74,7 +88,7 @@ def _note_prompt(source: str, topic: str, request: str, paper: dict) -> str:
             'request': request,
             'paper_id': paper['id'],
             'title': paper['title'],
-            'source_kind': 'full_text' if 'text' in paper else 'abstract',
+            'source_kind': _paper_source_kind(paper),
             'source': source,
         },
         ensure_ascii=False,
@@ -127,7 +141,11 @@ def _condensed_papers(papers: list[dict], topic: str, request: str, prompt_limit
                     groups,
                 ))
         source_field = 'text' if 'text' in paper else 'abstract'
-        source_kind = 'full-text' if source_field == 'text' else 'abstract-only'
+        source_kind = {
+            'full_text': 'full-text',
+            'partial_text': 'partial-text',
+            'abstract': 'abstract-only',
+        }[_paper_source_kind(paper)]
         result.append({
             **paper,
             source_field: f'Reading notes derived from {source_kind} material, not the original text:\n'
@@ -152,8 +170,17 @@ def run(inputs: dict) -> dict:
     report_progress(15, '正在阅读论文并整理材料')
     papers = []
     for paper in inputs['papers']:
-        source_field = 'text' if (paper.get('text') or '').strip() else 'abstract'
-        papers.append({'id': paper['id'], 'title': paper['title'], source_field: paper[source_field]})
+        source_kind = _paper_source_kind(paper)
+        source_field = 'abstract' if source_kind == 'abstract' else 'text'
+        item = {
+            'id': paper['id'],
+            'title': paper['title'],
+            source_field: paper[source_field],
+            'source_kind': source_kind,
+        }
+        if paper.get('notes'):
+            item['notes'] = paper['notes']
+        papers.append(item)
     prompt_limit = _prompt_token_limit()
     material = {
         'topic': inputs['topic'],
