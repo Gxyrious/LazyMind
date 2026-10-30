@@ -49,6 +49,17 @@ def test_markdown_stream_filters_reasoning_and_restores_split_citations_before_r
     assert sum(e['type'] == 'artifact_stream_start' for e in emitted) == 1
     assert current_events() is None
 
+    from lazymind.document_tools.artifacts import render_document
+    numbered = (body.replace('## 研究问题', '## 一、研究问题')
+                + '\n\n1. 保留正文列表\n\n## 2026 年展望\n3D 方法。\n\n'
+                '```markdown\n## 1. 保留代码示例\n```')
+    result = generate_markdown(lambda _prompt: numbered, 'prompt')
+    assert result == numbered.replace('## 一、研究问题', '## 研究问题')
+    research_topic._validate_question_markdown(result, 'initial')
+    rendered = render_document(result)
+    assert '## 1. 研究问题' in rendered['export_document']
+    assert '## 2. 2026 年展望' in rendered['export_document']
+
 
 def test_full_result_replaces_preview_once_and_can_be_withdrawn_after_generation_ends():
     emitted = []
@@ -169,6 +180,7 @@ def test_revision_clarification_waits_without_publishing_or_reporting_success(tm
     from lazymind.chat.engine.subagent.context import SubAgentContext
     from lazymind.document_tools.paper.writing.revise_document import RevisionInputRequired
     question = '请确认采用哪些审稿意见'
+
     def clarify(context, stream):
         current_events().progress(7, '正在确定修订范围')
         raise RevisionInputRequired(question)

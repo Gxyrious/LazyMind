@@ -8,6 +8,7 @@ from threading import RLock
 import time
 import uuid
 
+from ..artifacts import markdown_prose
 from ..writing import DraftMarkdownStreamEventEmitter
 
 _current = ContextVar('paper_runtime_events', default=None)
@@ -224,6 +225,7 @@ class StructuredPreview:
 def generate_markdown(model, prompt, *, bindings=None):
     """Shared Markdown transport, reasoning filtering and split citation recovery."""
     from lazyllm.tools.writer.tools.base import WriterToolBase
+    from lazyllm.tools.writer.utils import strip_heading_numbering
     events = current_events()
     pending = ''
     leading = True
@@ -258,6 +260,10 @@ def generate_markdown(model, prompt, *, bindings=None):
     ).strip()
     if re.match(r'^<think\b', text, re.I):
         raise ValueError('模型输出存在未闭合的思考内容。')
+    # Strip model-supplied section numbers, preserving body text and fenced examples.
+    for heading in reversed(list(re.finditer(r'(?m)^(#{2,6}[ \t]+)([^\r\n]+)', markdown_prose(text)))):
+        title = strip_heading_numbering(heading[2])
+        text = text[:heading.start(2)] + title + text[heading.end(2):]
     if events and pending and not leading:
         events.delta(restore(pending))
     if events and not streaming:
