@@ -56,6 +56,9 @@ func TestReadingHandoffIncludesOnlySelectedNotesAndFreezesInput(t *testing.T) {
 	if !strings.Contains(context, "reading_reflection") || !strings.Contains(context, "advance_step_and_hand_off") || strings.Contains(context, "生成能力待对接") {
 		t.Fatal("reading task retained Mock instructions", context)
 	}
+	if !strings.Contains(context, "stop for user review") || !strings.Contains(context, "including through the Continue control") || !strings.Contains(context, "if finish is the only Ready step, execute it without asking for another confirmation") {
+		t.Fatal("reading task must pause for review and honor confirmed continuation", context)
+	}
 	var input PaperTaskInput
 	if err := json.Unmarshal(handoff.InputJSON, &input); err != nil {
 		t.Fatal(err)

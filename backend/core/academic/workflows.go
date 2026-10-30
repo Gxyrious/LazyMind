@@ -1098,7 +1098,7 @@ func academicChatContext(ctx context.Context, db *gorm.DB, user, conversation st
 			return "Paper review handoff:\n" + context + "\nStart paper-writing at literature_review. F2 reads this Chat's frozen selection and full texts directly; no input transcription is needed. Publish the real review. Do not start paper_expansion or submit a mock receipt."
 		}
 		if handoff.Kind == "reflection" {
-			return "论文任务交接上下文：\n" + context + "\nUse paper-writing and select reading_reflection with advance_step_and_hand_off. The step tool reads the frozen paper selection and original user_instruction from this Chat's handoff. Do not copy this JSON into paper_input, bind it as a manuscript, or submit a Mock receipt. Do not reread published artifacts, run other steps, or finish the workflow automatically."
+			return "论文任务交接上下文：\n" + context + "\nFor the initial launch, use paper-writing and select reading_reflection with advance_step_and_hand_off. The step tool reads the frozen paper selection and original user_instruction from this Chat's handoff. Do not copy this JSON into paper_input, bind it as a manuscript, or submit a Mock receipt. After this initial reading_reflection execution, stop for user review without rereading published artifacts or advancing automatically. On subsequent turns, follow the current user request and Workflow Runtime. When the user confirms continuation, including through the Continue control, advance the returned ready_steps; if finish is the only Ready step, execute it without asking for another confirmation."
 		}
 		return "论文任务交接上下文：\n" + context + "\n读取完整交接后原样提交。材料已接收，生成能力待对接；不声称已生成正式文稿或 PPT。"
 	}
