@@ -141,6 +141,23 @@ def test_list_item_permission_does_not_include_its_neighbor():
         )]})
 
 
+def test_table_row_paragraph_locator_becomes_an_exact_fragment_without_other_rows():
+    source = ('# Paper\n\n## Appendix\n\n| Operation | Source |\n| --- | --- |\n'
+              '| Context reuse | internal-source |\n| Delivery | retained-source |')
+    row = '| Context reuse | internal-source |'
+    plan = MarkdownModifyPlan.model_validate({'scope': 'document', 'instructions': [dict(
+        content_ref={'heading_path': ['Paper', 'Appendix']}, modify_type='update', target_scope='paragraph',
+        locator_text=row, instruction='Use a study-level source label.',
+    )]})
+    fixed, ranges, repaired = revise_document._validated_ranges(source, plan)
+    assert not repaired and fixed.instructions[0].target_scope == 'fragment'
+    assert source[ranges[0][0][0]:ranges[0][0][1]] == row
+    with pytest.raises(ValueError, match='exceeds the planned'):
+        revise_document._bounded_replacements(source, ranges[0], {'replacements': [dict(
+            old_string='retained-source', new_string='Changed neighbor',
+        )]})
+
+
 def editor_for(plan, replacements):
     return SimpleNamespace(
         locate_revision_target=Mock(return_value='{}'),

@@ -904,12 +904,14 @@ def test_checked_conflict_and_pure_advice_still_reach_atomic_revision(monkeypatc
     assert editor.apply_string_replace.call_count == 1
 
 
-@pytest.mark.parametrize('ids', [['R2'], ['R1', 'R2']])
-def test_pending_issue_cannot_be_smuggled_into_a_mixed_revision_plan(ids):
+@pytest.mark.parametrize('ids,message', [
+    (['R2'], 'cover all selected issues'), (['R1', 'R3'], 'selected issue_ids'),
+])
+def test_revision_plan_covers_executable_issues_and_stays_within_selected_ids(ids, message):
     from lazymind.document_tools.paper.writing import revise_document
     plan = revise_document.MarkdownModifyPlan.model_validate(dict(scope='document', instructions=[dict(
         content_ref={'heading_path': ['论文']}, modify_type='update', target_scope='section',
         instruction='不能借合法修改执行待核纠错', meta={'issue_ids': ids})]))
-    with pytest.raises(ValueError, match='selected issue_ids'):
+    with pytest.raises(ValueError, match=message):
         revise_document._validate_review_plan(plan, [
             dict(id='R1', action_type='text_revision'), dict(id='R2', action_type='needs_material')])
