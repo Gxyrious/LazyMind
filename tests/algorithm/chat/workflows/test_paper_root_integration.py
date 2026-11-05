@@ -15,6 +15,7 @@ def test_outline_binds_explicit_requirements_before_default(monkeypatch, prompt,
     pool = workflow.pool_from_business(dict(topic='Paper', request=prompt, writing_materials='Original notes'))
     original = copy.deepcopy(pool)
     seen = []
+
     def run(step, value):
         seen.append(value)
         return dict(outline='# Paper\n\n## 摘要\n\n## 方法\n\n## 结论', is_demo=False)
@@ -29,7 +30,7 @@ def test_outline_binds_explicit_requirements_before_default(monkeypatch, prompt,
 def test_review_receives_original_research_materials():
     notes = 'PT0005→PT0007; MiniMax: 3647→2831 字。'
     pool = workflow.pool_from_business(dict(topic='Paper', writing_materials=notes,
-                                          manuscript='# Paper\n\n## 结果\n待核对。'))
+                                            manuscript='# Paper\n\n## 结果\n待核对。'))
     value = contracts.validate_input('peer_review', workflow.business_input('peer_review', pool))
     assert value['writing_materials'] == notes
 
@@ -55,14 +56,18 @@ def test_explicit_retry_is_single_use_and_stops_model_loop(conflict, handoff):
     if handoff:
         client.advance.side_effect = responses + [response, response]
     else:
-        toolkit.advance_step.side_effect = responses + [dict(status='active'), dict(status='active')]
-    with patch.object(manager, '_agentic_config', return_value=cfg), patch.object(manager, '_client', return_value=client):
+        waiting = dict(status='active', workflow_state={'display': {
+            'status': 'waiting', 'approval_step_id': 'data_analysis'}})
+        toolkit.advance_step.side_effect = responses + [waiting, waiting]
+    with (patch.object(manager, '_agentic_config', return_value=cfg),
+          patch.object(manager, '_client', return_value=client)):
         tool = (manager._handoff_tool('session', '重试') if handoff else
                 next(t for t in manager._safe_session_tools(toolkit, 'session', '重试') if t.__name__ == 'advance_step'))
         result = tool('data_analysis' if handoff else ['data_analysis'])
         assert result['_agent_control']['stop'] is True
         assert not cfg.get('user_authorized_workflow_retry')
-        tool('data_analysis' if handoff else ['data_analysis'])
+        result = tool('data_analysis' if handoff else ['data_analysis'])
+        assert result['_agent_control']['stop'] is True
     calls = client.advance.call_args_list if handoff else toolkit.advance_step.call_args_list
     origins = [c.args[0].retry_origin if handoff else c.kwargs['retry_origin'] for c in calls]
     assert origins == (['user', 'user', 'automatic'] if conflict else ['user', 'automatic'])

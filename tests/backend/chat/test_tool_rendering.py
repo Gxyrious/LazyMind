@@ -1060,20 +1060,26 @@ def test_workflow_failure_template_handles_canonical_failure():
     assert 'workflow or revision was not found' in result_text
 
 
-def test_workflow_success_template_normalizes_json_string_value():
+@pytest.mark.parametrize('outcome,expected', [
+    ('queued', 'Result: **queued**. Reason: **accepted**.'),
+    ('workflow_approval_required', 'Review the current stage before continuing.'),
+    ('workflow_input_required', 'Provide the requested input to continue.'),
+])
+def test_workflow_success_template_normalizes_json_string_value(outcome, expected):
     result_text = _tool_result_frame_text(
         {
-            'id': 'call-workflow-json',
+            'id': 'retrieval-call',
             'name': 'trigger_writer_workflow',
             'result': {
                 'ok': True,
-                'value': json.dumps({'outcome': 'queued', 'reason': 'accepted'}),
+                'value': json.dumps({'outcome': outcome, 'reason': 'accepted', 'user_notice': expected}),
             },
         },
         'en',
     )
 
-    assert 'Result: **queued**. Reason: **accepted**.' in result_text
+    preview, _ = _preview_and_payload(result_text, 'trp', 'tool_result')
+    assert expected in preview
 
 
 def test_workflow_success_template_normalizes_nested_result_value():

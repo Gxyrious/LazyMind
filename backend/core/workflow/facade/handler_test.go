@@ -328,7 +328,9 @@ func TestPrepareHTTPBlocksMissingFieldsAndRealSourceResource(t *testing.T) {
 		 "choice_policy":"fixed","allow_other":false,"choices":["Upload"],
 		 "attachment":{"material_id":"source","when_choice":"Upload","accept":[".pdf"],"required":true,"max_files":1}},
 		{"id":"format","type":"single","choices":["docx","md"],"choice_policy":"fixed","default":"docx"}
-	]},"material_producers":{"source":{"kind":"external"}},"input_expressions":{"parse":{"material":"source"}}}`)
+	]},"material_producers":{"source":{"kind":"external"},"source_alternative":{"kind":"external"},"parsed_source":{"kind":"step"}},
+	"input_expressions":{"parse":{"any":[{"material":"source"},{"material":"source_alternative"}]},
+	"write":{"any":[{"material":"source"},{"material":"parsed_source"}]}}}`)
 	if err := db.Create(&orm.WorkflowRevision{ID: "r1", WorkflowResourceID: "resource", RevisionNo: 1,
 		TreeHash: "tree", GraphHash: "graph", GraphSchemaVersion: "3", CompiledGraph: graph, CreatedAt: now,
 	}).Error; err != nil {
@@ -365,12 +367,17 @@ func TestPrepareHTTPBlocksMissingFieldsAndRealSourceResource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ready := call("complete", map[string]any{"goal": "RAG"}, map[string]any{"source": map[string]any{
+	binding := map[string]any{
 		"resource_id": resource.ID, "revision": resource.Revision, "content_hash": resource.ContentHash,
-	}})
+	}
+	ready := call("complete", map[string]any{"goal": "RAG"}, map[string]any{"source": binding})
 	if ready["status"] != "ready" || ready["workflow_revision"] != "r1" ||
 		ready["clarification_values"].(map[string]any)["format"] != "docx" {
 		t.Fatalf("complete request blocked or lost defaults: %#v", ready)
+	}
+	ready = call("alternative", map[string]any{"goal": "RAG"}, map[string]any{"source_alternative": binding})
+	if ready["status"] != "ready" {
+		t.Fatalf("an alternative source and a future step output must satisfy preparation: %#v", ready)
 	}
 	var sessions int64
 	if err := db.Table("plugin_sessions").Count(&sessions).Error; err != nil || sessions != 0 {

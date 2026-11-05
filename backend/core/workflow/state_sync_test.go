@@ -87,9 +87,11 @@ func TestDynamicNextStepDoesNotRequireApproval(t *testing.T) {
 
 func TestNativeApprovalRequiresVersionedUserDecision(t *testing.T) {
 	db, hash := humanCheckpoint(t, false)
-	rec, _ := runBatchTransition(t, db, hash, "execute", []map[string]any{{"target_step_id": "branch_c", "task_id": "ordinary-chat-attempt"}})
-	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "WORKFLOW_APPROVAL_REQUIRED") {
-		t.Fatalf("ordinary Chat bypassed approval: %s", rec.Body.String())
+	for _, target := range []string{"branch_b", "branch_c"} {
+		rec, _ := runBatchTransition(t, db, hash, "advance", []map[string]any{{"target_step_id": target, "task_id": "ordinary-chat-attempt"}})
+		if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "WORKFLOW_APPROVAL_REQUIRED") {
+			t.Fatalf("ordinary Chat bypassed approval: %s", rec.Body.String())
+		}
 	}
 	cmd := NativeControlCommand{SessionID: "batch-session", Kind: "approve", StepID: "branch_b", ExpectedStateVersion: 3}
 	if _, err := BeginNativeControlTurn(t.Context(), db.DB, "batch-user", "batch-conversation", cmd); err == nil {
@@ -128,6 +130,29 @@ func TestNativeApprovalRequiresVersionedUserDecision(t *testing.T) {
 	if s.Status != "waiting" {
 		t.Fatal("late turn overwrote pause")
 	}
+	t.Run("regenerate_pending_result", func(t *testing.T) {
+		db, hash := humanCheckpoint(t, false)
+		redraft, status := transitionWorkflowSession(t.Context(), db.DB, "batch-session", transitionCommandRequest{
+			CommandID: "user-redraft", Operation: "advance", RetryOrigin: "user", TargetStepID: "branch_b",
+			TaskID: "replacement-task", ExpectedStateVersion: 4, GraphHash: hash,
+		})
+		if status != http.StatusOK {
+			t.Fatalf("explicit regeneration rejected: %+v", redraft)
+		}
+		var previous orm.WorkflowSessionStep
+		if err := db.First(&previous, "id = ?", "review-attempt").Error; err != nil || previous.Validity != "stale" {
+			t.Fatalf("previous result was not invalidated: %+v %v", previous, err)
+		}
+		latest, err := GetLatestStep(t.Context(), db.DB, "batch-session", "branch_b")
+		if err != nil || latest.Attempt != 2 || latest.TaskID != "replacement-task" {
+			t.Fatalf("replacement attempt missing: %+v %v", latest, err)
+		}
+		var approved int64
+		db.Model(&orm.WorkflowReviewCheckpoint{}).Where("status = ?", "accepted").Count(&approved)
+		if approved != 0 {
+			t.Fatal("regeneration must not accept the previous result")
+		}
+	})
 }
 
 func TestHumanApprovalSurvivesPauseAndGraphCompletion(t *testing.T) {

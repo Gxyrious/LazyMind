@@ -686,7 +686,9 @@ func applyWorkflowTransition(ctx context.Context, tx *gorm.DB, sessionID string,
 			if err != nil {
 				return err
 			}
-			if display.ApprovalStepID != "" {
+			revisingCheckpoint := req.Operation == "rewind" && req.RetryOrigin == "user" &&
+				targets[0].TargetStepID == display.ApprovalStepID
+			if display.ApprovalStepID != "" && !revisingCheckpoint {
 				return rejectTransition(req.CommandID, &session, projection, http.StatusConflict, "WORKFLOW_APPROVAL_REQUIRED", "approve the completed step from the workflow controls before continuing", false, nil)
 			}
 			if display.Status == "paused" {

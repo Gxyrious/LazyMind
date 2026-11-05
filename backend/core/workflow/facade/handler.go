@@ -225,20 +225,6 @@ type preparationGraph struct {
 	InputExpressions      map[string]graphengine.Expression `json:"input_expressions"`
 }
 
-func collectRequiredInputMaterials(expression graphengine.Expression, materials map[string]struct{}) {
-	if expression.Material != "" {
-		materials[expression.Material] = struct{}{}
-	}
-	for _, nested := range expression.All {
-		collectRequiredInputMaterials(nested, materials)
-	}
-	for _, nested := range expression.Any {
-		// Keep the existing conservative preparation contract for alternatives:
-		// every candidate branch input must be available before the Session starts.
-		collectRequiredInputMaterials(nested, materials)
-	}
-}
-
 func missingExternalInputs(graph preparationGraph, inputBindings map[string]any) []string {
 	required := map[string]struct{}{}
 	if graph.InputExpressions == nil {
@@ -249,8 +235,21 @@ func missingExternalInputs(graph preparationGraph, inputBindings map[string]any)
 			}
 		}
 	} else {
+		available := []graphengine.MaterialValue{}
+		for materialID, producer := range graph.MaterialProducers {
+			_, bound := inputBindings[materialID]
+			// Step outputs become available during execution. Preparation checks
+			// only external prerequisites, using the same AND/OR semantics as Runtime.
+			if bound || producer.Kind == "step" || producer.Optional {
+				available = append(available, graphengine.MaterialValue{MaterialID: materialID, Valid: true})
+			}
+		}
 		for _, expression := range graph.InputExpressions {
-			collectRequiredInputMaterials(expression, required)
+			for _, group := range graphengine.Evaluate(&expression, available).MissingGroups {
+				for _, materialID := range group {
+					required[materialID] = struct{}{}
+				}
+			}
 		}
 	}
 	missing := make([]string, 0)

@@ -7,10 +7,12 @@ public Workflow SDK into ChatAgent tools and applies LazyMind's handoff rule.
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import json
 import logging
 import re
+from pathlib import Path
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Union
 
@@ -273,6 +275,9 @@ def _handoff_tool(
                     }
                 return _result_text(result)
             except WorkflowClientError as exc:
+                pending = _approval_blocked_result(exc)
+                if pending:
+                    return pending
                 if exc.code != 'STATE_VERSION_CONFLICT' or attempt > 0:
                     raise
                 state_refreshed = True
@@ -404,6 +409,11 @@ def _with_terminal_agent_control(result: Dict[str, Any]) -> Dict[str, Any]:
         }}
     workflow_state = result.get('workflow_state')
     workflow_state = workflow_state if isinstance(workflow_state, dict) else {}
+    display = workflow_state.get('display') or {}
+    if isinstance(display, dict) and display.get('status') == 'waiting' and display.get('approval_step_id'):
+        notice = '本阶段结果已保存，请在工作流面板审核后点击“继续执行”。'
+        return {**result, 'status': 'waiting', 'outcome': 'workflow_approval_required',
+                '_agent_control': {'stop': True, 'reason': 'workflow_approval_required', 'final_text': notice}}
     projection = result.get('projection')
     if not isinstance(projection, dict):
         projection = workflow_state.get('projection')
@@ -423,6 +433,14 @@ def _with_terminal_agent_control(result: Dict[str, Any]) -> Dict[str, Any]:
             'final_text': '工作流已完成，最终产物已生成。',
         },
     }
+
+
+def _approval_blocked_result(error: WorkflowClientError) -> Optional[Dict[str, Any]]:
+    if error.code != 'WORKFLOW_APPROVAL_REQUIRED':
+        return None
+    notice = '当前阶段等待审批，请在工作流面板点击“继续执行”后继续。'
+    return {'status': 'waiting', 'outcome': 'workflow_approval_required', 'user_notice': notice,
+            '_agent_control': {'stop': True, 'reason': 'workflow_approval_required', 'final_text': notice}}
 
 
 def _input_required_result(
@@ -455,6 +473,20 @@ def _input_required_result(
         return {'status': 'waiting', 'outcome': 'workflow_input_required', 'user_notice': question,
                 '_agent_control': {'stop': True, 'reason': 'workflow_input_required', 'final_text': question}}
     return None
+
+
+def _readable_text_artifact(current: Dict[str, Any]) -> Dict[str, Any]:
+    """Expose UTF-8 file contents while retaining their versioned transport metadata."""
+    value = current.get('value')
+    if not isinstance(value, dict) or value.get('storage') != 'inline_base64':
+        return current
+    suffix = Path(str(value.get('name') or value.get('filename') or '')).suffix.lower()
+    mime = str(value.get('mime_type') or '').split(';', 1)[0].lower()
+    if not (mime.startswith('text/') or mime == 'application/json'
+            or suffix in {'.md', '.markdown', '.txt', '.tex', '.json', '.csv', '.yaml', '.yml'}):
+        return current
+    text = base64.b64decode(value.get('content_base64') or '', validate=True).decode('utf-8')
+    return {**current, 'value': {**value, 'text': text}}
 
 
 def _safe_session_tools(
@@ -577,6 +609,9 @@ def _safe_session_tools(
                     result = _compact_transition_result(result)
                 return _compact_model_frontier(result)
             except WorkflowClientError as exc:
+                pending = _approval_blocked_result(exc)
+                if pending:
+                    return pending
                 if exc.code != 'STATE_VERSION_CONFLICT' or attempt > 0:
                     raise
                 state_refreshed = True
@@ -604,9 +639,10 @@ def _safe_session_tools(
 
     @_register_host_file(capability)
     def read_artifact(artifact_ref: str) -> Dict[str, Any]:
-        """Read a selected Artifact by exact slot handle such as report or images[0]."""
+        """Read a selected Artifact by exact slot handle, including decoded UTF-8 text files."""
         artifact = _artifact_by_handle(toolkit, session_id(), artifact_ref)
-        return artifact_output(toolkit.read_artifact(str(artifact.get('artifact_id') or artifact.get('id') or '')))
+        current = toolkit.read_artifact(str(artifact.get('artifact_id') or artifact.get('id') or ''))
+        return artifact_output(_readable_text_artifact(current))
 
     @_register_host_file(capability)
     def patch_artifact_text(artifact_ref: str, old_text: str, new_text: str) -> Dict[str, Any]:
@@ -621,7 +657,7 @@ def _safe_session_tools(
 
         artifact = _artifact_by_handle(toolkit, session_id(), artifact_ref)
         artifact_id = str(artifact.get('artifact_id') or artifact.get('id') or '')
-        current = toolkit.read_artifact(artifact_id)
+        current = _readable_text_artifact(toolkit.read_artifact(artifact_id))
         value = current.get('value')
         field = next((key for key in ('text', 'data')
                       if isinstance(value, dict) and isinstance(value.get(key), str)), None)
@@ -637,6 +673,11 @@ def _safe_session_tools(
             raise ValueError('old_text must match exactly once; read the current artifact and retry')
         revised = normalize_generated_markdown(text.replace(old_text, new_text, 1))
         revised_value = {**value, field: revised} if field else revised
+        if isinstance(value, dict) and value.get('storage') == 'inline_base64':
+            content = revised.encode('utf-8')
+            revised_value = {**value, 'content_base64': base64.b64encode(content).decode('ascii'),
+                             'size': len(content), 'sha256': 'sha256:' + hashlib.sha256(content).hexdigest()}
+            revised_value.pop('text', None)
         return artifact_output(toolkit.patch_artifact(
             artifact_id, int(current.get('revision') or artifact.get('revision') or 0),
             revised_value, str(current.get('content_type') or 'text'), str(current.get('caption') or ''),
@@ -1780,6 +1821,9 @@ def _workflow_trigger_tools(
                     'The Host reads the complete original file. Never transcribe, summarize, repair, '
                     'or embed the uploaded JSON in tool arguments; pass only its filename, or omit '
                     'paper_input when the request unambiguously selects one JSON attachment.'
+                    ' For research-topic entry and drafting, Markdown background materials are imported '
+                    'directly from conversation attachments. Omit paper_input for these Markdown materials. '
+                    'Do not read or transcribe them before launching the research-topic step.'
                 )
         trigger_workflow.__doc__ = (
             'Initialize this Workflow. The only argument names are input_bindings and request_context. '
