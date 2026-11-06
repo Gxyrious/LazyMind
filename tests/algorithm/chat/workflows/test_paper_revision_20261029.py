@@ -192,7 +192,7 @@ def test_recorded_title_directive_can_apply_atomically_with_body_edits(record, a
         expected = expected.replace('Original method.', 'Clarified method.')
     assert result['manuscript'] == expected
     assert prepared == before
-    editor.apply_string_replace.assert_called_once()
+    assert editor.apply_string_replace.call_count == (2 if body_edit else 1)
 
 
 @pytest.mark.parametrize('defect', ['outside', 'new_section', 'reference', 'empty_title', 'no_title_change'])
@@ -216,9 +216,10 @@ def test_title_permission_does_not_authorize_unrelated_or_invalid_changes(defect
                     writing_context={'context_id': 'title-invalid'},
                     writing_task={'query': 'Clarify title.', 'meta': {}}, selected_issues=[])
     emitted = []
-    with bind_runtime_events(emitted.append, 'revise_document_document'), pytest.raises(ValueError):
-        revise_document._modify_manuscript(prepared, {'word_target': None}, Mock(), editor=editor)
+    with bind_runtime_events(emitted.append, 'revise_document_document'):
+        result = revise_document._modify_manuscript(prepared, {'word_target': None}, Mock(), editor=editor)
+    expected = source.replace('# Original', '# Refined') if defect == 'outside' else source
+    assert result['manuscript'] == expected and result['_pending_edits']
     assert prepared['manuscript'] == source
-    assert not any(event['type'].startswith('artifact_stream') for event in emitted)
-    if defect not in {'reference', 'empty_title'}:
+    if defect not in {'reference', 'empty_title', 'outside'}:
         editor.apply_string_replace.assert_not_called()

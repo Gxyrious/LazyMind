@@ -316,23 +316,23 @@ def _validated_changes(source, plan, allowed, generated, *, allow_repair, pendin
             if pending is None:
                 raise
             pending.append('部分修改补丁未能纠正：' + str(error))
-    replacements = StringReplaceSet.model_validate(generated)
-    texts = repair_reader_provenance([item.new_string for item in replacements.replacements], material_identifiers)
-    for replacement, text in zip(replacements.replacements, texts):
-        replacement.new_string = repair_generated_citation_links(text, candidates)
-    generated = replacements.model_dump()
-    if pending is None:
-        return _bounded_replacements(source, allowed, generated)
     accepted = []
     for raw in generated.get('replacements', []):
         try:
             _bounded_replacements(source, allowed, {'replacements': accepted + [raw]})
         except ValueError as error:
+            if pending is None:
+                raise
             pending.append('修改补丁未应用，已保留原文：' + str(error))
         else:
             accepted.append(raw)
-    return (_bounded_replacements(source, allowed, {'replacements': accepted})
-            if accepted else ({'replacements': []}, []))
+    if not accepted and pending is not None:
+        return {'replacements': []}, []
+    replacements = StringReplaceSet.model_validate({'replacements': accepted})
+    texts = repair_reader_provenance([item.new_string for item in replacements.replacements], material_identifiers)
+    for replacement, text in zip(replacements.replacements, texts):
+        replacement.new_string = repair_generated_citation_links(text, candidates)
+    return _bounded_replacements(source, allowed, replacements.model_dump())
 
 
 def _modify_manuscript(prepared: dict, constraints, toolkit, *, editor=None):
@@ -405,7 +405,7 @@ def _modify_manuscript(prepared: dict, constraints, toolkit, *, editor=None):
     try:
         generated = json.loads(editor.generate_string_replace_set(
             markdown_document=source, modify_plan_json=plan.model_dump_json(), writing_context_json=context_json))
-        changes, located_changes = _validated_changes(
+        _, located_changes = _validated_changes(
             source, plan, allowed, generated, allow_repair=not repaired, pending=pending,
             candidates=prepared['reference_candidates'],
             material_identifiers=prepared.get('material_identifiers', []))
@@ -425,7 +425,7 @@ def _modify_manuscript(prepared: dict, constraints, toolkit, *, editor=None):
                 pending.append(f"{issue['id']}：本轮未产生有效修改，保留原文")
     report_progress(80, '正在逐项应用可执行的修改')
     body = source
-    for start, end, replacement in located_changes:
+    for start, end, replacement in reversed(located_changes):
         raw = replacement.model_dump()
         try:
             if plan.title_instruction and start <= title.end() and end >= title.start():

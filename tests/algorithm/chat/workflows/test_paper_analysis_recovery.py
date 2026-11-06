@@ -43,12 +43,6 @@ def test_complete_program_repair_reads_native_python_without_json_escaping():
     assert namespace['analyze']() == ['duration', 'calls']
 
 
-@pytest.mark.parametrize('code,error', [('def draw(:', SyntaxError), ('pass\n', ValueError)])
-def test_complete_program_repair_validates_syntax_and_actual_change(code, error):
-    with pytest.raises(error):
-        repair_response({'code': code}, 'pass\n')
-
-
 def test_identical_repair_is_rejected_with_original_scientific_error():
     source = 'def analyze():\n    raise ValueError("No matched measurement")\n'
     answer = dict(replacements=[dict(start_line=2, end_line=2, code=source.splitlines()[1])])

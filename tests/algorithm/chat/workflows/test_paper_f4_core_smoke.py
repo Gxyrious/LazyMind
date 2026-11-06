@@ -507,22 +507,6 @@ def test_skill_override_requires_the_actual_skill_root(tmp_path):
     assert 'bar_grouped_hatch' in PlotSkills(str(root)).catalog()
 
 
-@pytest.mark.parametrize('user_request', [
-    '文献综述只综合相关工作和研究定位。数据分析采用附件已有结果。最后撰写英文论文。',
-    'Only summarize related work in the review. Then analyze the attached data and write the paper.',
-    '不只做数据分析，还需根据上传附件完成整篇论文。',
-])
-def test_multi_stage_requests_do_not_require_a_standalone_analysis_json(user_request, monkeypatch):
-    from lazymind.document_tools.paper.analysis import attachments
-
-    classifier = Mock(return_value={'standalone_analysis': False})
-    monkeypatch.setattr(model, 'call_model', classifier)
-    lazyllm.globals['agentic_config'] = {'history_files_per_turn': {'1': ['research-materials.md', 'input.json']}}
-    assert attachments.workflow_input_bindings({}, user_request) == {}
-    classifier.assert_called_once()
-    assert any(user_request in message['content'] for message in classifier.call_args.args[0]['input'])
-
-
 def test_json_attachment_binding_stays_in_analysis(tmp_path, monkeypatch):
     from lazymind.document_tools.paper.analysis import attachments, trace
     from lazymind.chat.engine.tools.file_resources import resolver

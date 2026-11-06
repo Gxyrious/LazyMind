@@ -12,7 +12,7 @@ from lazymind.document_tools.paper.review import crossref, retrieval
 def works(monkeypatch):
     payload = {'total-results': 7, 'items': [dict(
         DOI='10.1234/example', title=['Collaborative <i>writing</i>'],
-        abstract='<jats:p>Actual abstract with A &amp; B.</jats:p>',
+        abstract='<jats:p>' + 'Actual abstract with A &amp; B. ' * 1000 + '</jats:p>',
         author=[{'given': 'Ada', 'family': 'Researcher'}, {'name': 'Study Group'}],
         published={'date-parts': [[2025, 6]]}, **{'container-title': ['Writing Proceedings']},
     )]}
@@ -36,7 +36,7 @@ def test_crossref_search_binds_metadata_and_full_abstract_without_another_reques
     assert papers[0]['authors'] == ['Ada Researcher', 'Study Group']
     assert papers[0]['year'] == 2025 and papers[0]['venue'] == 'Writing Proceedings'
     result = retrieval.read_sciverse(provider, papers[0], warnings)
-    assert result['text'] == 'Actual abstract with A & B.'
+    assert result['text'] == ('Actual abstract with A & B. ' * 1000).strip()
     assert result['reading']['content_type'] == 'abstract'
     assert result['reading']['truncated'] is False
     assert payload == original
@@ -53,18 +53,6 @@ def test_crossref_does_not_admit_incomplete_or_unreadable_records(works, missing
     payload['items'][0].pop(missing)
     papers, _ = retrieval.search_sciverse(crossref.CrossrefSearch(), {'writing': 3}, None, None, [])
     assert papers == []
-
-
-def test_crossref_retains_long_abstract_through_existing_content_pagination(works):
-    payload, request = works
-    text = 'A full deposited abstract. ' * 1000
-    payload['items'][0]['abstract'] = '<jats:p>' + text + '</jats:p>'
-    provider = crossref.CrossrefSearch()
-    papers, _ = retrieval.search_sciverse(provider, {'writing': 3}, None, None, [])
-    result = retrieval.read_sciverse(provider, papers[0], [])
-    assert result['text'] == text.strip()
-    assert result['reading']['truncated'] is False
-    assert request.call_count == 1
 
 
 def test_crossref_http_failure_cannot_create_scholarly_evidence(monkeypatch):

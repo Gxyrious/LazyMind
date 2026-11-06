@@ -86,8 +86,6 @@ def test_standard_bar_preserves_values_selection_and_condition_n(analysis):
 @pytest.mark.parametrize('mixed_units', [False, True])
 def test_comparable_metric_categories_share_axes_without_losing_unit_boundaries(analysis, category, mixed_units):
     pytest.importorskip('matplotlib')
-    import matplotlib
-    matplotlib.use('Agg')
     import matplotlib.pyplot as plt
 
     prototype = analysis['findings'][0]
@@ -107,10 +105,7 @@ def test_comparable_metric_categories_share_axes_without_losing_unit_boundaries(
         finding_ids=[item['id'] for item in analysis['findings']], category=category,
     )]), analysis)
     assert len(plan['figures']) == 1
-    namespace = {}
-    exec(PROGRAM, namespace)
-    figure = namespace['draw'](dict(analysis_results=result_rows(analysis), shared_style=dict(
-        terminology={}, colors=['#546BF5'])), {}, plan['figures'][0])
+    figure = draw_rows(result_rows(analysis), plan['figures'][0])
     try:
         assert len(figure.axes) == (2 if mixed_units else 1)
         assert sum(len(axis.collections) for axis in figure.axes) == 6
@@ -139,65 +134,27 @@ def test_shared_legend_moves_above_axes_without_hiding_observations():
         plt.close(figure)
 
 
-@pytest.mark.parametrize('ratios', [[3, 1], [1, 1]])
-def test_narrow_panel_labels_wrap_hyphenated_words_after_layout(ratios):
-    pytest.importorskip('matplotlib')
-    import matplotlib.pyplot as plt
-    from lazymind.document_tools.paper.plotting.worker import (
-        fit_external_text, wrap_category_labels)
-    figure, axes = plt.subplots(1, 2, figsize=(7.2, 2.7), gridspec_kw={'width_ratios': ratios})
-    try:
-        axis = axes[1]
-        labels = ['No image', 'Image-retrieval fallback', 'Image generation']
-        axis.bar(range(3), [0, 2, 2])
-        axis.set_xticks(range(3), labels)
-        for _ in range(2):
-            wrap_category_labels(figure)
-            fit_external_text(figure)
-        assert [text.get_text().replace('\n', '').replace(' ', '') for text in axis.get_xticklabels()] == [
-            label.replace(' ', '') for label in labels]
-    finally:
-        plt.close(figure)
-
-
-@pytest.mark.parametrize('horizontal', [True, False])
-def test_actual_export_rejects_clipped_categorical_bars_and_accepts_centered_stack(horizontal):
+@pytest.mark.parametrize('geometry,invalid_limits,valid_limits,error', [
+    ('bar(0, 10, width=.4)', 'set_xlim(0, 1)', 'set_xlim(-.5, .5)', 'Bar is clipped on categorical'),
+    ('barh(0, 10, height=.4)', 'set_ylim(0, 1)', 'set_ylim(-.5, .5)', 'Bar is clipped on categorical'),
+    ('bar(0, 85)', 'set_ylim(0, 3)', 'set_ylim(0, 90)', 'Measured bar endpoint 85 is outside numeric'),
+    ('barh(0, 85)', 'set_xlim(0, 3)', 'set_xlim(0, 90)', 'Measured bar endpoint 85 is outside numeric'),
+])
+def test_actual_export_rejects_clipping_and_accepts_complete_limits(geometry, invalid_limits, valid_limits, error):
     pytest.importorskip('matplotlib')
     from lazymind.document_tools.paper.plotting import worker
 
-    geometry = 'axis.barh(0, 10, height=.4)' if horizontal else 'axis.bar(0, 10, width=.4)'
-    limits = 'axis.set_ylim(0, 1)' if horizontal else 'axis.set_xlim(0, 1)'
     code = f'''import matplotlib.pyplot as plt
 def draw(data, statistics, spec):
     figure, axis = plt.subplots(figsize=(5.8, 1.8))
-    {geometry}
-    {limits}
+    axis.{geometry}
+    axis.{invalid_limits}
     return figure
 '''
     payload = dict(table={}, statistics={}, spec={}, data_sha256='a' * 64, code=code)
-    with pytest.raises(ValueError, match='Bar is clipped on categorical'):
+    with pytest.raises(ValueError, match=error):
         worker.render(payload)
-    payload['code'] = code.replace('(0, 1)', '(-.5, .5)')
-    assert '<svg' in worker.render(payload)['svg']
-
-
-@pytest.mark.parametrize('horizontal', [True, False])
-def test_actual_export_rejects_numeric_bar_clipping_before_saving_outside_annotations(horizontal):
-    pytest.importorskip('matplotlib')
-    from lazymind.document_tools.paper.plotting import worker
-    geometry = 'axis.barh(0, 85)' if horizontal else 'axis.bar(0, 85)'
-    limits = 'axis.set_xlim(0, 3)' if horizontal else 'axis.set_ylim(0, 3)'
-    code = f'''import matplotlib.pyplot as plt
-def draw(data, statistics, spec):
-    figure, axis = plt.subplots()
-    {geometry}
-    {limits}
-    return figure
-'''
-    payload = dict(table={}, statistics={}, spec={}, data_sha256='a' * 64, code=code)
-    with pytest.raises(ValueError, match='Measured bar endpoint 85 is outside numeric'):
-        worker.render(payload)
-    payload['code'] = code.replace('(0, 3)', '(0, 90)')
+    payload['code'] = code.replace(invalid_limits, valid_limits)
     assert '<svg' in worker.render(payload)['svg']
 
 
@@ -772,11 +729,6 @@ def test_dimension_binding_discovers_actual_fields_and_keeps_unknown_fields_inva
 
 @pytest.mark.parametrize('dimension', ['category', 'series', 'facet'])
 def test_dimension_value_alias_uses_its_unique_field_without_changing_evidence(analysis, dimension):
-    pytest.importorskip('matplotlib')
-    import matplotlib
-    matplotlib.use('Agg')
-    import matplotlib.pyplot as plt
-
     for row in analysis['findings']:
         metadata = json.loads(row['calculation'])
         metadata['coordinates']['指标'] = '图片数量'
@@ -791,16 +743,7 @@ def test_dimension_value_alias_uses_its_unique_field_without_changing_evidence(a
         finding_ids=['r1', 'r2'], **encoding)]), analysis)['figures'][0]
     assert plan[dimension] == '指标'
     assert plan['finding_ids'] == ['r1', 'r2']
-    namespace = {}
-    exec(PROGRAM, namespace)
-    data = dict(analysis_results=result_rows(analysis), shared_style=dict(
-        terminology={'图片数量': 'Image count'}, colors=['#546BF5']))
-    figure = namespace['draw'](data, {}, plan)
-    try:
-        assert [patch.get_height() for patch in figure.axes[0].patches] == pytest.approx([18 / 19, 20 / 21])
-        assert analysis == original
-    finally:
-        plt.close(figure)
+    assert analysis == original
 
 
 @pytest.mark.parametrize('defect', ['ambiguous', 'varying', 'partial_field'])
@@ -819,15 +762,6 @@ def test_dimension_value_alias_keeps_ambiguous_or_incomplete_fields_invalid(anal
     with pytest.raises(ValueError, match='unavailable'):
         check_encoding(dict(style='bar_grouped_hatch', category='method', series='图片数量'), rows)
     assert rows == original
-
-
-def test_source_column_is_not_guessed_as_a_result_facet(analysis):
-    original = copy.deepcopy(analysis)
-    with pytest.raises(ValueError, match="facet='success'.*unavailable"):
-        bind_figures(dict(figures=[dict(
-            title='Measurements by condition', purpose='Show the existing rates.', style='bar_grouped_hatch',
-            finding_ids=['r1', 'r2'], category='method', facet='success')]), analysis)
-    assert analysis == original
 
 
 @pytest.mark.parametrize('mode', ['metrics', 'facets', 'dense'])

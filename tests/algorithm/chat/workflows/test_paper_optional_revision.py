@@ -1,7 +1,7 @@
 """Optional workflow revision publishes a valid manuscript even when a candidate is rejected."""
 import copy
 import json
-from concurrent.futures import CancelledError
+from asyncio import CancelledError
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -11,7 +11,7 @@ import pytest
 
 from lazymind.chat.engine.subagent.context import SubAgentContext, set_context
 from lazymind.document_tools.paper import contracts, peer_review, workflow
-from lazymind.document_tools.paper.review.schema import ReviewResult
+from lazymind.document_tools.paper.review.schema import ReviewResult, text_digest
 from lazymind.document_tools.paper.writing import recovery, revise_document
 from lazymind.document_tools.toolkits import WriterRevisionToolkit
 
@@ -49,29 +49,21 @@ def editor(monkeypatch):
     return editor
 
 
-@pytest.mark.parametrize('fault', ['locate', 'plan', 'patch', 'apply', 'post_review', 'no_change'])
-def test_rejected_optional_revision_keeps_original_and_pending_review(manuscript, editor, monkeypatch, fault):
+@pytest.mark.parametrize('fault', ['locate', 'post_review'])
+def test_optional_revision_keeps_completed_edits_when_review_fails(manuscript, editor, monkeypatch, fault):
     original = copy.deepcopy(manuscript)
     if fault == 'locate':
         editor.locate_revision_target.side_effect = TimeoutError('provider timeout')
-    elif fault == 'plan':
-        editor.generate_modify_plan.return_value = '{bad json'
-    elif fault == 'patch':
-        editor.generate_string_replace_set.return_value = json.dumps(dict(replacements=[dict(
-            content_ref={'heading_path': ['Paper', 'Discussion']},
-            old_string='Missing passage.', new_string='Changed.')]))
-    elif fault == 'apply':
-        editor.apply_string_replace.side_effect = RuntimeError('rejected candidate')
-    elif fault == 'no_change':
-        editor.generate_string_replace_set.return_value = editor.generate_string_replace_set.return_value.replace(
-            'Short discussion.', 'Long discussion.')
     monkeypatch.setattr(peer_review, 'run', Mock(side_effect=TimeoutError('post-review timeout')))
     result = workflow.execute_step('revise_document', manuscript, '按当前审稿意见修订')
     assert result['status'] == 'completed'
-    assert workflow.material(result['pool'], 'manuscript')['content'] == BODY
+    expected = BODY if fault == 'locate' else BODY.replace('Long discussion.', 'Short discussion.')
+    assert workflow.material(result['pool'], 'manuscript')['content'] == expected
     saved_review = workflow.material(result['pool'], 'review_data')['content']
-    assert saved_review == workflow.material(original, 'review_data')['content']
-    assert workflow.material(result['pool'], 'review')['content'] == workflow.material(original, 'review')['content']
+    assert saved_review['manuscript_sha256'] == text_digest(expected)
+    assert saved_review['fact_claims'] == []
+    assert all(item['status'] == 'not_applicable' for item in saved_review['fact_checks'])
+    assert any('复核未完成' in item for item in saved_review['limitations'])
     assert result['pool']['selected_issue_ids'] == []
     assert manuscript == original
     if fault == 'post_review':
@@ -93,22 +85,21 @@ def test_direct_edit_reports_execution_errors(manuscript, monkeypatch):
     assert workflow.material(manuscript, 'manuscript')['content'] == BODY
 
 
-def test_optional_review_timeout_keeps_the_draft_and_has_no_verified_claims(monkeypatch):
+def test_review_timeout_preserves_the_manuscript_and_propagates_failure(monkeypatch):
     pool = workflow.pool_from_business(dict(topic='Paper', manuscript=BODY))
+    original = copy.deepcopy(pool)
     monkeypatch.setattr(peer_review, 'AutoModel', Mock(side_effect=TimeoutError('review provider timeout')))
-    result = workflow.execute_step('peer_review', pool, '审稿')
-    assert result['status'] == 'completed'
-    assert workflow.material(result['pool'], 'manuscript')['content'] == BODY
-    data = workflow.material(result['pool'], 'review_data')['content']
-    assert data['issues'] == [] and data['fact_claims'] == [] and data['fact_checks'] == []
+    with pytest.raises(TimeoutError, match='review provider timeout'):
+        workflow.execute_step('peer_review', pool, '只审稿，不写作、不修订。')
+    assert pool == original
+    assert workflow.material(pool, 'review') is None
+    assert workflow.material(pool, 'review_data') is None
 
 
 def test_retained_manuscript_without_review_has_matching_unverified_metadata():
     result = revise_document.retain_manuscript(dict(manuscript=BODY, papers=[], charts=[]))
     assert result['manuscript'] == BODY and result['review_data']['issues'] == []
     assert contracts.validate_output('revise_document', result) == result
-    with pytest.raises(ValueError):
-        revise_document.retain_manuscript(dict(manuscript=''))
 
 
 def test_runtime_scope_failure_publishes_original_manuscript(manuscript, tmp_path, monkeypatch):

@@ -447,7 +447,7 @@ def execute_step(step: str, pool: dict, request: str = '', fail: bool = False, *
     elif module == 'experiment':
         output = run_algorithm(step, business_input(step, pool, request), on_event=on_event,
                                allow_execution=allow_execution)
-    elif module in {'peer_review', 'revise_document'}:
+    elif module == 'revise_document':
         from .writing.revise_document import retain_manuscript
         optional_inputs = business_input(step, pool, request)
         retained_inputs = {**optional_inputs, **{
@@ -460,8 +460,7 @@ def execute_step(step: str, pool: dict, request: str = '', fail: bool = False, *
             except CancelledError:
                 raise
             except Exception as error:
-                if not optional_inputs.get('manuscript') or (
-                        module == 'revise_document' and not optional_inputs.get('selected_issue_ids')):
+                if not optional_inputs.get('manuscript') or not optional_inputs.get('selected_issue_ids'):
                     raise
                 LOG.warning(f'Optional paper step {module} retained the current manuscript '
                             f'{diagnostics.safe_error(error)}')

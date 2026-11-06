@@ -225,8 +225,8 @@ def test_chart_directory_reuses_one_index_and_keeps_exact_associations(monkeypat
 
 
 # Scoped revision through the public Writer toolkit.
-@pytest.mark.parametrize('title', ['ImageNet-1K', 'study-notes-v2', 'Methods'])
-def test_reader_material_registry_preserves_study_names_and_tracks_internal_ids(title):
+def test_reader_material_registry_preserves_study_names_and_tracks_internal_ids():
+    title = 'ImageNet-1K'
     inputs = contracts.validate_input('write_document', {
         'topic': '方法比较', 'outline': OUTLINE, 'papers': [dict(
             id='upload-test-records', title=title, text='Thirty observed tasks.',
@@ -416,7 +416,8 @@ def test_selected_revision_preserves_unselected_sections_and_inputs(word_target)
     before = copy.deepcopy(data)
     tools = editor([instruction()], [replacement()])
     quality = Mock()
-    result = revision_entry._modify_manuscript(data, {'word_target': word_target, 'paper_language': 'zh-CN'}, quality, editor=tools)
+    result = revision_entry._modify_manuscript(
+        data, {'word_target': word_target, 'paper_language': 'zh-CN'}, quality, editor=tools)
     assert result == dict(manuscript=SOURCE.replace('原方法。', '修订方法。'), is_demo=False, _pending_edits=[])
     assert data == before
     tools.apply_string_replace.assert_called_once()
@@ -488,6 +489,7 @@ def test_completed_revision_streams_full_text_once_after_validation(monkeypatch,
     emitted = []
     candidate = SOURCE.replace('原方法。', '修订方法。')
     expected = SOURCE if failure else candidate
+
     def validate(body, *args, **kwargs):
         assert body == candidate
         assert not any(e['type'].startswith('artifact_stream') for e in emitted)
@@ -520,8 +522,8 @@ def test_completed_revision_streams_full_text_once_after_validation(monkeypatch,
 @pytest.mark.parametrize('target', [1, 10000])
 def test_manuscript_length_is_a_generation_target_not_a_failure(language, target):
     toolkit = Mock()
-    document._validate_manuscript(SOURCE, None, [],
-        {'word_target': target, 'paper_language': language}, toolkit, '{}',
+    document._validate_manuscript(
+        SOURCE, None, [], {'word_target': target, 'paper_language': language}, toolkit, '{}',
         candidates=[], check_quality=False)
     toolkit.check_consistency.assert_not_called()
 

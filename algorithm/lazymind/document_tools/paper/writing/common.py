@@ -27,6 +27,7 @@ from ..publication import (
     figure_catalog,
     normalize_source_citations,
     protect_reference_region,
+    split_references,
     validate_citations,
     validate_unmanaged_additions,
     markdown_prose as _markdown_prose,

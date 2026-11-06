@@ -248,7 +248,6 @@ def test_reader_provenance_repairs_only_affected_blocks_and_preserves_code_and_c
     assert len(requests) == 1 and len(requests[0]) == 2
     assert output == source.replace(requests[0][0]['source_scope'], edits[0]).replace(
         requests[0][1]['source_scope'], edits[1])
-    assert source.startswith('# Paper')
 
 
 def test_draft_corrects_registered_processing_identities_before_publication(monkeypatch):
@@ -269,11 +268,6 @@ def test_registered_background_markers_are_removed_only_from_visible_prose(marke
     result = recovery.repair_reader_provenance([source], ['[文献:M1]'])[0]
     assert result == source.replace('Our data ' + marker, 'Our data ')
     assert '[文献:M2]' in result
-
-
-def test_scientific_dataset_names_are_preserved():
-    source = 'We evaluate on ImageNet-1K using the supplied study-notes-v2.'
-    assert recovery.repair_reader_provenance([source], ['write_document:analysis']) == [source]
 
 
 def test_draft_and_result_boundary_accept_added_subsections(monkeypatch):

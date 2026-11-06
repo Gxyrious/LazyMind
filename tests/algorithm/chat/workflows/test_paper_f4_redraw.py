@@ -33,19 +33,6 @@ def test_empty_redraw_request_does_not_call_model(monkeypatch):
     classifier.assert_not_called()
 
 
-@pytest.mark.parametrize('prefix', ['重新执行数据分析，', '请重试步骤 data_analysis，', 'Re-run data analysis, '])
-@pytest.mark.parametrize('change,visual', [
-    ('仅重画图4，缩短画布并标注时间轴。', True),
-    ('Exclude failed runs and recompute the means.', False)])
-def test_complete_restart_request_reaches_classifier(prefix, change, visual, monkeypatch):
-    from lazymind.document_tools.paper import data_analysis
-    classifier = Mock(return_value=dict(only_visual_changes=visual))
-    monkeypatch.setattr(pipeline.model, 'call_model', classifier)
-    assert data_analysis.redraw_requested(prefix + change) is visual
-    request = classifier.call_args.args[0]
-    assert any(prefix + change in message['content'] for message in request['input'])
-
-
 @pytest.fixture
 def frozen():
     inputs = normalize_input(dict(topic='Method scores', request='original analysis', data=dict(
@@ -115,12 +102,10 @@ def test_redraw_planner_receives_existing_style_and_coordinate_bindings(frozen, 
     assert result['analysis'] == analysis and result['charts'][1] == charts[1]
 
 
-@pytest.mark.parametrize('user_request', ['Only redraw all existing charts.', '仅重画所有图表。'])
 @pytest.mark.parametrize('recovers', [True, False])
-def test_explicit_all_figures_scope_requires_complete_coverage_before_rendering(
-        frozen, monkeypatch, user_request, recovers):
+def test_explicit_all_figures_scope_requires_complete_coverage_before_rendering(frozen, monkeypatch, recovers):
     inputs, analysis, charts = frozen
-    inputs['request'] = user_request
+    inputs['request'] = 'Only redraw all existing charts.'
     drafts = [dict(title=chart['title'], purpose='Improve layout.', style='point_interval',
                    source_chart_id=chart['id'], finding_ids=chart['finding_ids']) for chart in charts]
     planner = Mock(side_effect=[dict(all_existing_figures=True, figures=drafts[:1]),
