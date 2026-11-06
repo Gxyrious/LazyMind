@@ -20,6 +20,7 @@ from lazymind.chat.engine.agent_runtime.conversation_env import ConversationEnvS
 from lazymind.chat.engine.agent_runtime.env_runtime import inject_runtime_env
 from lazymind.chat.engine.tools.conversation_workspace import chat_agent_workspace
 from lazyllm import LOG, set_trace_context
+from lazymind.chat.engine.agent_runtime.executor import AGENT_MODULE_TRACE
 from fastapi.responses import StreamingResponse
 from lazymind.chat.config import (
     IMAGE_EXTENSIONS,
@@ -797,7 +798,7 @@ def _resolve_task_profile_with_model(
 ) -> Any:
     set_trace_context({
         'trace_id': trace_id,
-        'session_id': session_id or trace_id,
+        'session_id': trace_id or session_id,
         'sampled': True,
     })
 
@@ -1786,18 +1787,8 @@ async def _handle_chat_impl(
             workflow_skill_dir = workflow_skills_dir()
     set_trace_context({
         'trace_id': conversation_id or conversation.session_id,
-        'session_id': conversation.session_id, 'sampled': True,
-        'module_trace': {
-            'by_class': {
-                'FunctionCall': False, 'ToolManager': False,
-                'Pipeline': False, 'Diverter': False,
-                'AgentInvocation': False,
-            },
-            'by_name': {
-                '_build_history': False, '_post_action': False,
-                '_safe_call': False, '_indexed_call': False,
-            },
-        },
+        'session_id': conversation_id or conversation.session_id, 'sampled': True,
+        'module_trace': AGENT_MODULE_TRACE,
         'request_tags': ['handle_chat'],
         'trace_metadata': {
             'conversation_id': conversation_id,
@@ -2386,13 +2377,11 @@ async def _handle_chat_impl(
                         # returns the configured model copy carrying this agent's
                         # prompt, formatter, tools, and complete chat history.
                         install_stream_interrupt_hook(executor.runtime_llm(react_agent))
-                        initial_agent_stream = lazyllm.enable_trace(
-                            AgentInvocation(executor, react_agent, current_plan),
+                        initial_agent_stream = AgentInvocation(executor, react_agent, current_plan).stream(
                             # Continuations share the stable outer run correlation ID.
                             trace_id=translator.run.run_id,
-                            session_id=conversation.session_id,
+                            session_id=conversation_id or conversation.session_id,
                             request_tags=['handle_chat', 'agent'],
-                            debug_capture_payload=False,
                         )
                         guarded_agent_stream = guard_workflow_agent_stream(
                             initial_agent_stream,
