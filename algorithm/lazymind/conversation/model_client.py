@@ -52,7 +52,8 @@ def execute(request: Any, operation: Callable) -> ConversationResult:
         with new_session(f'conversation_{task_id}'):
             trace_id = request.options.get('trace_id', '')
             lazyllm.set_trace_context({
-                'trace_id': task_id, 'sampled': True,
+                'trace_id': trace_id or task_id, 'sampled': True,
+                'session_id': trace_id or task_id,
                 'request_tags': ['conversation-metadata'],
                 'trace_metadata': {'origin_trace_id': trace_id},
             })

@@ -1792,6 +1792,7 @@ async def _handle_chat_impl(
         'request_tags': ['handle_chat'],
         'trace_metadata': {
             'conversation_id': conversation_id,
+            'run_id': run_id,
             'task_profile_source': task_profile.source if task_profile else 'disabled',
             'task_profile': task_profile.to_trace_dict() if task_profile else {},
             'router_latency_ms': task_profile.router_latency_ms if task_profile else 0,
@@ -2378,8 +2379,8 @@ async def _handle_chat_impl(
                         # prompt, formatter, tools, and complete chat history.
                         install_stream_interrupt_hook(executor.runtime_llm(react_agent))
                         initial_agent_stream = AgentInvocation(executor, react_agent, current_plan).stream(
-                            # Continuations share the stable outer run correlation ID.
-                            trace_id=translator.run.run_id,
+                            # Turns and their workflow tasks share the conversation trace.
+                            trace_id=conversation_id or conversation.session_id,
                             session_id=conversation_id or conversation.session_id,
                             request_tags=['handle_chat', 'agent'],
                         )
